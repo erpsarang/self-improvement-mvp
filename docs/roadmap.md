@@ -44,7 +44,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 - Trusted Rail이 기록한 immutable `published_head_sha`를 검증 입력으로 사용합니다.
 - checkout 및 검증 대상은 exact SHA match를 만족해야 합니다.
 - 검증 명령, 결과와 대상 SHA를 provenance로 결합합니다.
-- 실패 결과는 Review 진입이나 이미 완료된 PUBLISH의 검증 성공으로 오인되지 않습니다.
+- 실패 결과는 Review 진입이나 이미 완료된 PUBLISH의 검증 성공으로 오인되지 않으며, 전환 거부 또는 Human 경계로 처리합니다. 검증 실패가 REVIEW 없이 `STOPPED`로 전환되는 경로는 허용하지 않습니다.
 
 ## Phase 4 — Semantic REVIEW / FIX
 
@@ -79,6 +79,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 **증명할 능력:** 실행과 검증 결과에서 학습해 프레임워크 자체의 개선 candidate를 만들되 자기 승인 문제를 만들지 않습니다.
 
 - `LEARN`은 verified 결과와 review provenance를 근거로 합니다.
+- `LEARN`은 `PASS → MERGE_READY` 상태 전환을 대체하지 않는 별도 후속 흐름이며 Human-only Merge 경계를 우회하지 않습니다.
 - Improver가 제안한 변경은 다른 untrusted candidate와 동일하게 취급합니다.
 - `SELF-IMPROVEMENT`는 Human Approval, 독립 VERIFY / REVIEW와 Trusted Rail을 우회할 수 없습니다.
 - 개선 전후의 기준과 효과를 추적해 반복이 실제 개선인지 평가합니다.

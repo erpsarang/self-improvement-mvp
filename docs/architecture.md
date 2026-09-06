@@ -101,10 +101,11 @@ GRAPH는 개발 과정의 구조를 표현하고 LOOP는 그 구조를 다시 �
 ```text
 REQUIREMENT → PLAN → IMPLEMENT → SEAL → PUBLISH → VERIFY exact published SHA → REVIEW
 REVIEW ── LOCAL_FIX <= 2 ──► FIX → SEAL → PUBLISH → VERIFY exact published SHA → REVIEW
-REVIEW ── PASS ──► LEARN → IMPROVE → next bounded LOOP
+REVIEW ── PASS ──► MERGE_READY → Human Merge (Human-only)
+reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMPROVE → next bounded LOOP
 ```
 
-이 그림은 목표 모델이며 현재 GRAPH Engine이나 LOOP Engine의 실제 구현을 의미하지 않습니다. 현재 `LOCAL_FIX <= 2` 전환은 향후 LOOP가 준수해야 할 bounded repetition의 도메인 선례입니다. 이후에도 `STRUCTURAL_CHANGE`, 실행 한도 소진, 검증 실패는 자동 확장이 아니라 `STOPPED` 또는 Human 경계로 이어집니다.
+이 그림은 목표 모델이며 현재 GRAPH Engine이나 LOOP Engine의 실제 구현을 의미하지 않습니다. 현재 `LOCAL_FIX <= 2` 전환은 향후 LOOP가 준수해야 할 bounded repetition의 도메인 선례입니다. `LEARN`은 reviewed result와 provenance를 소비하는 별도 후속 흐름이며, `PASS → MERGE_READY` 상태 전환이나 Human-only Merge 경계를 대체하지 않습니다. `STRUCTURAL_CHANGE`와 `LOCAL_FIX` 한도 소진만 REVIEW decision에서 `STOPPED`로 전환합니다. 검증 실패는 상태 전환을 거부하고 Human 경계에서 처리하며, REVIEW를 거치지 않고 `STOPPED`로 전환하지 않습니다.
 
 ## 현재 구현 구성 요소
 

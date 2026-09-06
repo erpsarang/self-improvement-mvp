@@ -13,9 +13,8 @@ REQUIREMENT
 → VERIFY
 → REVIEW
 → 필요 시 FIX → SEAL → PUBLISH → VERIFY → REVIEW
-→ LEARN
-→ IMPROVE
-→ LOOP
+→ PASS → MERGE_READY → Human Merge (Human-only)
+검토 결과·provenance ── 별도 후속 흐름 ──→ LEARN → IMPROVE → LOOP
 ```
 
 이 흐름은 특정 애플리케이션이나 AI 실행 도구에 종속되지 않습니다. 현재의 작은 도메인 모델에서 시작해 향후 SAP RAP 같은 실제 개발 대상에도 같은 신뢰 원칙을 적용하는 것이 목표입니다.
@@ -82,6 +81,7 @@ Issue
 - `IMPLEMENT` / `FIX`에는 GitHub write credential을 제공하지 않습니다.
 - untrusted candidate patch는 trusted `SEAL` 이후에만 Trusted Rail의 `PUBLISH` 대상이 됩니다.
 - `VERIFY`는 immutable `published_head_sha`와 exact match인 대상만 성공시킵니다.
+- `VERIFY` 실패는 전환 거부 또는 Human 경계로 처리하며, REVIEW 없이 `STOPPED`로 전환하지 않습니다.
 - Semantic Review는 verified SHA만 검토합니다.
 - `FIX`는 최대 2회이며 `LOCAL FIX`와 `STRUCTURAL CHANGE`를 구분합니다. 각 `FIX` 후에는 반드시 `SEAL → PUBLISH → VERIFY exact published SHA → REVIEW`를 다시 거친 뒤, 그 재검토 decision에서만 `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`로 전환합니다.
 
