@@ -16,7 +16,25 @@ test("새 AUTHORIZE artifact가 있는 경우에만 Codex와 candidate 생성 �
   const guardedSteps = workflow.match(/if: steps\.authorization_artifact\.outputs\.should_run == 'true'/g) ?? [];
   assert.ok(guardedSteps.length >= 8);
   assert.match(workflow, /uses: openai\/codex-action@v1/);
-  assert.match(workflow, /git diff --binary --full-index "\$BASE_SHA" -- \./);
+});
+
+test("untrusted job은 Git patch를 만들지 않고 dependency를 제외한 workspace snapshot만 남긴다", () => {
+  assert.doesNotMatch(workflow, /git add -N \./);
+  const implementSection = workflow.split("\n  record:\n")[0] ?? "";
+  assert.doesNotMatch(implementSection, /git diff/);
+  assert.match(workflow, /name: untrusted workspace snapshot 저장/);
+  assert.match(workflow, /!node_modules\/\*\*/);
+  assert.match(workflow, /include-hidden-files: true/);
+});
+
+test("candidate patch는 clean worktree의 Git metadata와 외부 helper 비활성화 상태에서 생성한다", () => {
+  assert.match(workflow, /git worktree add --detach "\$PATCH_WORKTREE" "\$BASE_SHA"/);
+  assert.match(workflow, /rsync -a --delete/);
+  assert.match(workflow, /GIT_CONFIG_NOSYSTEM=1/);
+  assert.match(workflow, /GIT_CONFIG_GLOBAL=\/dev\/null/);
+  assert.match(workflow, /core\.hooksPath=\/dev\/null/);
+  assert.match(workflow, /--no-ext-diff --no-textconv/);
+  assert.match(workflow, /ls-files --others -z/);
 });
 
 test("IMPLEMENT workflow는 GitHub write 권한과 publish 경로를 갖지 않는다", () => {
