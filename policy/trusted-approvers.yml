@@ -1,7 +1,7 @@
-version: 1
+version: 2
 
 approvers:
   # GitHub's immutable numeric account ID is the authorization identity.
   # Verify this value against the account before changing this policy.
-  - id: 178057708
+  - id: 8370921
     login: erpsarang
