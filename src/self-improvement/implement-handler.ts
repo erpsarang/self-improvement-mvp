@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AuthorizationProvenance } from "./authorization.js";
 import { createImplementProvenance, validateAuthorizationForImplement } from "./implement.js";
 
@@ -26,6 +27,10 @@ function required(name: string): string {
   return value;
 }
 
+function runtimePath(name: string): string {
+  return join(required("IMPLEMENT_RUNTIME_DIR"), name);
+}
+
 async function githubGet(path: string): Promise<Response> {
   const token = required("GITHUB_TOKEN");
   const repository = required("GITHUB_REPOSITORY");
@@ -41,6 +46,7 @@ async function githubGet(path: string): Promise<Response> {
 }
 
 export async function prepareImplement(): Promise<void> {
+  await mkdir(required("IMPLEMENT_RUNTIME_DIR"), { recursive: true });
   const event = JSON.parse(await readFile(required("GITHUB_EVENT_PATH"), "utf8")) as WorkflowRunEvent;
   const authorization = JSON.parse(await readFile(required("AUTHORIZE_JSON"), "utf8")) as AuthorizationProvenance;
   const source = event.workflow_run;
@@ -69,13 +75,14 @@ export async function prepareImplement(): Promise<void> {
     issue.body ?? "",
   ].join("\n");
 
+  // codex-action의 prompt-file은 repository-relative path를 사용한다.
   await writeFile("codex-prompt.txt", `${prompt}\n`);
-  await writeFile("implement-input.json", `${JSON.stringify({ authorization, issue: { number: issue.number, title: issue.title, state: issue.state } }, null, 2)}\n`);
+  await writeFile(runtimePath("implement-input.json"), `${JSON.stringify({ authorization, issue: { number: issue.number, title: issue.title, state: issue.state } }, null, 2)}\n`);
 }
 
 export async function finalizeImplement(): Promise<void> {
-  const input = JSON.parse(await readFile("implement-input.json", "utf8")) as { authorization: AuthorizationProvenance };
-  const patch = await readFile("candidate.patch");
+  const input = JSON.parse(await readFile(runtimePath("implement-input.json"), "utf8")) as { authorization: AuthorizationProvenance };
+  const patch = await readFile(runtimePath("candidate.patch"));
   const provenance = createImplementProvenance({
     authorization: input.authorization,
     implementRun: {
@@ -85,7 +92,7 @@ export async function finalizeImplement(): Promise<void> {
     candidatePatch: patch,
     aiResultId: required("AI_RESULT_ID"),
   });
-  await writeFile("implement.json", `${JSON.stringify(provenance, null, 2)}\n`);
+  await writeFile(runtimePath("implement.json"), `${JSON.stringify(provenance, null, 2)}\n`);
 }
 
 if (process.argv[1]?.endsWith("implement-handler.ts")) {
