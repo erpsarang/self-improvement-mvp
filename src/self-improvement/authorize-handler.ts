@@ -16,8 +16,18 @@ export const pointerFor = (commentId: number, runId: number, runAttempt: number)
 
 export interface IssueCommentEvent {
   readonly action: string;
-  readonly issue: { readonly number: number; readonly pull_request?: unknown };
-  readonly comment: { readonly id: number; readonly body: string; readonly created_at: string; readonly user: { readonly id: number; readonly login: string } };
+  readonly issue: {
+    readonly number: number;
+    readonly title: string;
+    readonly body: string | null;
+    readonly pull_request?: unknown;
+  };
+  readonly comment: {
+    readonly id: number;
+    readonly body: string;
+    readonly created_at: string;
+    readonly user: { readonly id: number; readonly login: string };
+  };
 }
 
 export interface AuthorizationIssueComment {
@@ -83,8 +93,13 @@ export async function handleAuthorization(
   }
   const trustedApprover = policy.approvers.find(({ id }) => id === approval.user.id);
   if (!trustedApprover) return "ignored";
+
+  // title/body come from the immutable issue_comment event payload that caused this
+  // authorization run. Later Issue edits must never change the authorized task.
   const provenance = authorize({
     issueNumber: approval.issueNumber,
+    issueTitle: event.issue.title,
+    issueBody: event.issue.body,
     approvalCommentId: approval.id,
     approverId: approval.user.id,
     approver: approval.user.login,
@@ -94,10 +109,17 @@ export async function handleAuthorization(
   }, policy);
 
   const artifacts = await store.listArtifacts(approval.id, identity.runId);
-  const existingArtifact = artifacts.find((artifact) => isTrustedAuthorizationArtifact(artifact, artifact.provenance) &&
-      artifact.provenance.approvalCommentId === approval.id && artifact.provenance.issueNumber === approval.issueNumber &&
-      artifact.provenance.approverId === approval.user.id && artifact.provenance.approver === approval.user.login && artifact.provenance.approvalCommand === approval.body &&
-      artifact.provenance.policyVersion === policy.version && artifact.provenance.policySnapshot === provenance.policySnapshot);
+  const existingArtifact = artifacts.find((artifact) =>
+    isTrustedAuthorizationArtifact(artifact, artifact.provenance) &&
+    artifact.provenance.approvalCommentId === approval.id &&
+    artifact.provenance.issueNumber === approval.issueNumber &&
+    artifact.provenance.approverId === approval.user.id &&
+    artifact.provenance.approver === approval.user.login &&
+    artifact.provenance.approvalCommand === approval.body &&
+    artifact.provenance.policyVersion === policy.version &&
+    artifact.provenance.policySnapshot === provenance.policySnapshot &&
+    artifact.provenance.requirements?.digest === provenance.requirements.digest
+  );
   if (existingArtifact) {
     const pointer = pointerFor(approval.id, existingArtifact.run.runId, existingArtifact.run.runAttempt);
     if (!await store.hasPointer(approval.issueNumber, pointer)) await store.stagePointer(pointer);
