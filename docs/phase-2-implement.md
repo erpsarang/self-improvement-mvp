@@ -8,7 +8,8 @@ Human SI-승인
 → authorize.json
 → workflow_run
 → Untrusted IMPLEMENT
-→ candidate.patch
+→ workspace snapshot
+→ clean Git worktree에서 candidate.patch 생성
 → clean provenance record
 → candidate.patch + implement.json
 ```
@@ -20,8 +21,11 @@ Human SI-승인
 - Codex는 `permission-profile: ":workspace"`에서 실행하며 commit, push, PR 생성, merge를 지시하지 않는다.
 - `SI-승인` 시점의 Issue title/body를 AUTHORIZE provenance에 snapshot하고 SHA-256 digest로 고정한다.
 - IMPLEMENT prompt는 현재 mutable Issue 내용이 아니라 승인된 requirements snapshot만 사용한다.
-- candidate patch는 index 상태가 아니라 exact authorized base SHA 대비 `git diff --binary --full-index`로 생성한다.
-- Codex가 수정한 workspace에서는 `implement.json`을 만들지 않는다. 별도 clean exact-SHA job이 untrusted patch를 적용하거나 실행하지 않고 digest/provenance만 기록한다.
+- Codex가 끝난 workspace에서는 `git add`, `git diff`, finalizer를 실행하지 않는다. `node_modules/`, `.git/`, runtime prompt를 제외한 workspace snapshot만 artifact로 넘긴다.
+- 별도 clean job이 승인된 exact SHA를 다시 checkout하고 clean Git metadata로 임시 worktree를 만든 뒤 workspace snapshot을 데이터로만 반영한다.
+- candidate patch 생성 시 repository-local untrusted Git config를 사용하지 않으며 system/global config, hooks, external diff, textconv를 비활성화한다.
+- tracked 변경/삭제는 exact authorized base SHA 대비 diff로, 새 untracked 파일은 `git ls-files --others` + `git diff --no-index`로 별도 포함한다.
+- clean job이 생성한 `candidate.patch`는 적용하거나 실행하지 않고 clean `implement-handler.ts`가 digest/provenance만 기록한다.
 - 결과는 repository에 push하지 않고 Actions artifact의 `candidate.patch`와 `implement.json`으로만 남긴다.
 - candidate artifact는 untrusted output이며 후속 Trusted `SEAL`을 통과하기 전에는 PUBLISH 대상으로 인정하지 않는다.
 
