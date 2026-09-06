@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   handleAuthorization,
+  hasTrustedAuthorizationMarker,
+  isTrustedAuthorizationComment,
   markerFor,
   parseTrustedApproverPolicy,
   type AuthorizationCommentStore,
@@ -20,12 +22,22 @@ const event = (body = "SI-승인", login = "erpsarang"): IssueCommentEvent => ({
   },
 });
 
-function memoryStore(initial: string[] = []): AuthorizationCommentStore & { bodies: string[] } {
-  const bodies = [...initial];
+const workflowAuthor = { login: "github-actions[bot]", type: "Bot" } as const;
+// Even a forged payload claiming the reserved login is untrusted without the Bot type.
+const userAuthor = { login: "github-actions[bot]", type: "User" } as const;
+
+function memoryStore(
+  initial: Array<{ body: string; user: { login: string; type: string } }> = [],
+): AuthorizationCommentStore & { bodies: string[] } {
+  const comments = [...initial];
+  const bodies = comments.map(({ body }) => body);
   return {
     bodies,
-    async listBodies() { return bodies; },
-    async create(_issueNumber, body) { bodies.push(body); },
+    async list() { return comments; },
+    async create(_issueNumber, body) {
+      bodies.push(body);
+      comments.push({ body, user: workflowAuthor });
+    },
   };
 }
 
@@ -41,6 +53,27 @@ test("정확한 SI-승인으로 machine-readable AUTHORIZE provenance를 기록�
 test("같은 approval event 재처리는 comment를 중복 생성하지 않는다", async () => {
   const store = memoryStore();
   assert.equal(await handleAuthorization(event(), policy, store), "authorized");
+  assert.equal(await handleAuthorization(event(), policy, store), "already-authorized");
+  assert.equal(store.bodies.length, 1);
+});
+
+test("사용자가 위조한 marker/JSON은 AUTHORIZE로 신뢰하지 않고 승인을 차단하지 않는다", async () => {
+  const forgedBody = `${markerFor(101)}\n\`\`\`json\n{"type":"AUTHORIZE"}\n\`\`\``;
+  const forgedComment = { body: forgedBody, user: userAuthor };
+  const store = memoryStore([forgedComment]);
+
+  assert.equal(isTrustedAuthorizationComment(forgedComment), false);
+  assert.equal(hasTrustedAuthorizationMarker(forgedComment, 101), false);
+  assert.equal(await handleAuthorization(event(), policy, store), "authorized");
+  assert.equal(store.bodies.length, 2);
+});
+
+test("workflow bot이 작성한 기존 marker만 idempotency provenance로 인정한다", async () => {
+  const trustedComment = { body: markerFor(101), user: workflowAuthor };
+  const store = memoryStore([trustedComment]);
+
+  assert.equal(isTrustedAuthorizationComment(trustedComment), true);
+  assert.equal(hasTrustedAuthorizationMarker(trustedComment, 101), true);
   assert.equal(await handleAuthorization(event(), policy, store), "already-authorized");
   assert.equal(store.bodies.length, 1);
 });

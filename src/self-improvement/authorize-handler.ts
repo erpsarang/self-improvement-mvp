@@ -21,8 +21,38 @@ export interface IssueCommentEvent {
 }
 
 export interface AuthorizationCommentStore {
-  listBodies(issueNumber: number): Promise<readonly string[]>;
+  list(issueNumber: number): Promise<readonly AuthorizationIssueComment[]>;
   create(issueNumber: number, body: string): Promise<void>;
+}
+
+export interface AuthorizationIssueComment {
+  readonly body: string;
+  readonly user: {
+    readonly login: string;
+    readonly type: string;
+  };
+}
+
+/**
+ * AUTHORIZE provenance의 공통 trust boundary.
+ *
+ * Marker나 JSON의 모양만으로 provenance를 신뢰해서는 안 된다. 이후 phase에서
+ * AUTHORIZE comment를 읽을 때도 이 검사를 함께 사용해야 한다.
+ */
+export function isTrustedAuthorizationComment(
+  comment: AuthorizationIssueComment,
+): boolean {
+  return comment.user.login === "github-actions[bot]" && comment.user.type === "Bot";
+}
+
+export function hasTrustedAuthorizationMarker(
+  comment: AuthorizationIssueComment,
+  approvalCommentId: number,
+): boolean {
+  return (
+    isTrustedAuthorizationComment(comment) &&
+    comment.body.includes(markerFor(approvalCommentId))
+  );
 }
 
 export type HandleResult = "authorized" | "already-authorized" | "ignored";
@@ -52,7 +82,11 @@ export async function handleAuthorization(
     policy,
   );
   const marker = markerFor(event.comment.id);
-  if ((await store.listBodies(event.issue.number)).some((body) => body.includes(marker))) {
+  if (
+    (await store.list(event.issue.number)).some((comment) =>
+      hasTrustedAuthorizationMarker(comment, event.comment.id),
+    )
+  ) {
     return "already-authorized";
   }
 
@@ -103,13 +137,21 @@ async function main(): Promise<void> {
     return response;
   };
   const store: AuthorizationCommentStore = {
-    async listBodies(issueNumber) {
-      const bodies: string[] = [];
+    async list(issueNumber) {
+      const allComments: AuthorizationIssueComment[] = [];
       for (let page = 1; ; page += 1) {
         const response = await request(`/issues/${issueNumber}/comments?per_page=100&page=${page}`);
-        const comments = (await response.json()) as Array<{ body?: string }>;
-        bodies.push(...comments.map(({ body }) => body ?? ""));
-        if (comments.length < 100) return bodies;
+        const comments = (await response.json()) as Array<{
+          body?: string;
+          user?: { login?: string; type?: string };
+        }>;
+        allComments.push(
+          ...comments.map(({ body, user }) => ({
+            body: body ?? "",
+            user: { login: user?.login ?? "", type: user?.type ?? "" },
+          })),
+        );
+        if (comments.length < 100) return allComments;
       }
     },
     async create(issueNumber, body) {
