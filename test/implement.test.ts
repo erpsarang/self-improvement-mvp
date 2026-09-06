@@ -49,12 +49,28 @@ test("실패하거나 identity가 다른 AUTHORIZE는 fail-closed 한다", () =>
   }
 });
 
+test("malformed AUTHORIZE provenance는 fail-closed 한다", () => {
+  const malformed: AuthorizationProvenance[] = [
+    { ...authorization, issueNumber: 0 },
+    { ...authorization, approvalCommentId: 0 },
+    { ...authorization, policyVersion: 0 },
+    { ...authorization, policySnapshot: "bad" },
+    { ...authorization, approvalCommand: "승인" as "SI-승인" },
+    { ...authorization, approvedAt: "not-a-date" },
+    { ...authorization, githubSha: "bad" },
+    { ...authorization, runId: 0 },
+  ];
+  for (const candidate of malformed) {
+    assert.throws(() => validateAuthorizationForImplement(candidate, sourceRun));
+  }
+});
+
 test("candidate patch digest와 source authorization provenance를 IMPLEMENT에 결합한다", () => {
   const provenance = createImplementProvenance({
     authorization,
     implementRun: { runId: 500, runAttempt: 1 },
     candidatePatch: "diff --git a/a b/a\n",
-    aiResultId: "codex-result-1",
+    aiResultId: "codex-action-run:500:1",
   });
 
   assert.equal(provenance.type, "IMPLEMENT");
@@ -72,7 +88,8 @@ test("candidate patch digest와 source authorization provenance를 IMPLEMENT에 
   assert.equal(provenance.aiExecution.provider, "openai-codex-action");
 });
 
-test("AI 실행 결과 식별자와 IMPLEMENT workflow identity가 없으면 거부한다", () => {
-  assert.throws(() => createImplementProvenance({ authorization, implementRun: { runId: 1, runAttempt: 1 }, candidatePatch: "", aiResultId: "" }));
-  assert.throws(() => createImplementProvenance({ authorization, implementRun: { runId: 0, runAttempt: 1 }, candidatePatch: "", aiResultId: "x" }));
+test("빈 candidate, AI 결과 식별자, 잘못된 IMPLEMENT workflow identity는 거부한다", () => {
+  assert.throws(() => createImplementProvenance({ authorization, implementRun: { runId: 1, runAttempt: 1 }, candidatePatch: "diff", aiResultId: "" }));
+  assert.throws(() => createImplementProvenance({ authorization, implementRun: { runId: 0, runAttempt: 1 }, candidatePatch: "diff", aiResultId: "x" }));
+  assert.throws(() => createImplementProvenance({ authorization, implementRun: { runId: 1, runAttempt: 1 }, candidatePatch: "", aiResultId: "x" }));
 });
