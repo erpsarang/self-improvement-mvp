@@ -258,7 +258,7 @@ jobs:
               set +e
               git -c core.hooksPath=/dev/null diff \
                 --no-index --binary --full-index --no-ext-diff --no-textconv \
-                /dev/null "$file" >> "$PATCH_FILE"
+                -- /dev/null "$file" >> "$PATCH_FILE"
               status=$?
               set -e
               if [ "$status" -gt 1 ]; then
