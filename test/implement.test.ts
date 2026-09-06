@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AuthorizationProvenance } from "../src/self-improvement/authorization.js";
+import { requirementsSnapshot, type AuthorizationProvenance } from "../src/self-improvement/authorization.js";
 import {
   createImplementProvenance,
   validateAuthorizationForImplement,
   type SourceWorkflowRun,
 } from "../src/self-improvement/implement.js";
 
+const requirements = requirementsSnapshot("승인된 요구사항", "정확한 본문");
 const authorization: AuthorizationProvenance = {
   type: "AUTHORIZE",
   issueNumber: 10,
+  requirements,
   approvalCommentId: 5560484125,
   approverId: 8370921,
   approver: "erpsarang",
@@ -59,6 +61,8 @@ test("malformed AUTHORIZE provenance는 fail-closed 한다", () => {
     { ...authorization, approvedAt: "not-a-date" },
     { ...authorization, githubSha: "bad" },
     { ...authorization, runId: 0 },
+    { ...authorization, requirements: { ...requirements, digest: "bad" } },
+    { ...authorization, requirements: { ...requirements, title: "변조된 요구사항" } },
   ];
   for (const candidate of malformed) {
     assert.throws(() => validateAuthorizationForImplement(candidate, sourceRun));
@@ -82,6 +86,7 @@ test("candidate patch digest와 source authorization provenance를 IMPLEMENT에 
     runAttempt: authorization.runAttempt,
     approvalCommentId: authorization.approvalCommentId,
     policySnapshot: authorization.policySnapshot,
+    requirementsDigest: requirements.digest,
   });
   assert.match(provenance.candidatePatchDigest, /^sha256:[0-9a-f]{64}$/);
   assert.equal(provenance.implementWorkflow.workflowPath, ".github/workflows/implement.yml");
