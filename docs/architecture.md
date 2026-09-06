@@ -113,11 +113,13 @@ reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMP
 - `src/self-improvement/state.ts`: 허용된 전환, exact SHA와 `FIX` 횟수 제한을 적용합니다.
 - `src/self-improvement/review-decision.ts`: `PASS`, `LOCAL_FIX`, `STRUCTURAL_CHANGE`만 review decision으로 허용합니다.
 - `policy/trusted-approvers.yml`: live collaborator permission 조회를 대신하는 versioned policy입니다.
+- `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 최소 권한(`contents: read`, `issues: write`)으로 처리합니다.
+- `src/self-improvement/authorize-handler.ts`: approval comment ID marker로 idempotency를 보장하고 machine-readable `AUTHORIZE` provenance comment를 기록합니다.
 
 디렉터리 이름 `self-improvement`는 현재 실험 트랙을 나타냅니다. 이번 문서 재정의는 repository rename이나 대규모 코드 리팩터링을 요구하지 않습니다.
 
 ## 비목표
 
-현재 문서 정렬은 GitHub Actions나 기존 코드 동작을 변경하지 않습니다. repository rename, Codex 실행 방식 변경, 실제 GRAPH / LOOP Engine, branch/PR 자동 생성, write token 제공, 실제 artifact `SEAL` / `PUBLISH`, Self-Improvement 자동화 확장과 Auto Merge는 범위 밖입니다.
+현재 자동화는 Human Authorization만 구현합니다. repository rename, Codex `IMPLEMENT` / `FIX`, 실제 GRAPH / LOOP Engine, branch/PR 자동 생성, `SEAL` / `PUBLISH`, exact SHA `VERIFY`, Semantic Review, `MERGE_READY`, Auto Merge는 범위 밖입니다.
 
 전체 단계의 증명 목표는 [Roadmap](roadmap.md)에 정의합니다.

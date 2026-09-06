@@ -103,4 +103,6 @@ Phase는 구현 항목 체크리스트가 아니라 프레임워크가 차례로
 
 ## 현재 범위
 
-현재는 Phase 0의 상태 머신, Trust Model, invariant와 Phase 1의 `SI-승인 → AUTHORIZE` 도메인 모델을 테스트로 고정한 상태입니다. GitHub Actions, Codex 실행 방식, branch/PR 생성, 실제 `SEAL` / `PUBLISH`, GRAPH / LOOP 실행, Candidate Generator와 Auto Merge는 현재 범위에 포함하지 않습니다.
+현재 Phase 1은 Human이 Issue에 남긴 정확한 `SI-승인`을 versioned trusted approver policy로 검증하고, approval comment ID 기반의 deterministic marker와 JSON provenance를 Issue comment에 기록합니다. 같은 approval event의 재실행은 기존 marker를 재사용하는 no-op이며 live collaborator permission을 조회하지 않습니다.
+
+이 자동화는 `AUTHORIZE` 상태만 기록합니다. Codex `IMPLEMENT` / `FIX`, branch 또는 PR 생성, `SEAL`, `PUBLISH`, exact SHA `VERIFY`, Semantic Review, `MERGE_READY`, Auto Merge는 현재 범위에 포함하지 않습니다.

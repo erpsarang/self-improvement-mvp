@@ -11,6 +11,8 @@ test("versioned trusted approver의 SI-승인을 provenance로 기록한다", ()
   assert.deepEqual(
     authorize(
       {
+        issueNumber: 3,
+        approvalCommentId: 101,
         approver: "erpsarang",
         command: APPROVAL_COMMAND,
         approvedAt: "2026-09-06T00:00:00Z",
@@ -18,9 +20,13 @@ test("versioned trusted approver의 SI-승인을 provenance로 기록한다", ()
       policy,
     ),
     {
+      type: "AUTHORIZE",
+      issueNumber: 3,
+      approvalCommentId: 101,
       approver: "erpsarang",
       policyVersion: 1,
       approvedAt: "2026-09-06T00:00:00Z",
+      approvalCommand: APPROVAL_COMMAND,
     },
   );
 });
@@ -29,6 +35,8 @@ test("승인 명령이 없거나 approver가 신뢰되지 않으면 거부한다
   assert.throws(() =>
     authorize(
       {
+        issueNumber: 3,
+        approvalCommentId: 101,
         approver: "erpsarang",
         command: "approve",
         approvedAt: "2026-09-06T00:00:00Z",
@@ -39,6 +47,8 @@ test("승인 명령이 없거나 approver가 신뢰되지 않으면 거부한다
   assert.throws(() =>
     authorize(
       {
+        issueNumber: 3,
+        approvalCommentId: 101,
         approver: "intruder",
         command: APPROVAL_COMMAND,
         approvedAt: "2026-09-06T00:00:00Z",
@@ -57,7 +67,7 @@ test("approvedAt은 실제로 존재하는 엄격한 RFC 3339 timestamp여야 �
   ]) {
     assert.throws(() =>
       authorize(
-        { approver: "erpsarang", command: APPROVAL_COMMAND, approvedAt },
+        { issueNumber: 3, approvalCommentId: 101, approver: "erpsarang", command: APPROVAL_COMMAND, approvedAt },
         policy,
       ),
     );
@@ -66,6 +76,8 @@ test("approvedAt은 실제로 존재하는 엄격한 RFC 3339 timestamp여야 �
   assert.equal(
     authorize(
       {
+        issueNumber: 3,
+        approvalCommentId: 101,
         approver: "erpsarang",
         command: APPROVAL_COMMAND,
         approvedAt: "2024-02-29T23:59:59.123+09:00",

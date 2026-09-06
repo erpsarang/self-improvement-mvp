@@ -8,9 +8,13 @@ import {
 } from "../src/self-improvement/state.js";
 
 const provenance: AuthorizationProvenance = {
+  type: "AUTHORIZE",
+  issueNumber: 3,
+  approvalCommentId: 101,
   approver: "erpsarang",
   policyVersion: 1,
   approvedAt: "2026-09-06T00:00:00Z",
+  approvalCommand: "SI-승인",
 };
 const sha = "a".repeat(40);
 

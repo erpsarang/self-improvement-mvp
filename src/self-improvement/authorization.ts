@@ -6,15 +6,21 @@ export interface TrustedApproverPolicy {
 }
 
 export interface AuthorizationRequest {
+  readonly issueNumber: number;
+  readonly approvalCommentId: number;
   readonly approver: string;
   readonly command: string;
   readonly approvedAt: string;
 }
 
 export interface AuthorizationProvenance {
+  readonly type: "AUTHORIZE";
+  readonly issueNumber: number;
+  readonly approvalCommentId: number;
   readonly approver: string;
   readonly policyVersion: number;
   readonly approvedAt: string;
+  readonly approvalCommand: typeof APPROVAL_COMMAND;
 }
 
 const RFC3339_TIMESTAMP =
@@ -70,7 +76,7 @@ export function authorize(
   if (!Number.isInteger(policy.version) || policy.version < 1) {
     throw new Error("trusted approver policy version은 양의 정수여야 합니다");
   }
-  if (request.command.trim() !== APPROVAL_COMMAND) {
+  if (request.command !== APPROVAL_COMMAND) {
     throw new Error(`승인 명령은 ${APPROVAL_COMMAND}이어야 합니다`);
   }
   if (!policy.approvers.includes(request.approver)) {
@@ -81,8 +87,12 @@ export function authorize(
   }
 
   return Object.freeze({
+    type: "AUTHORIZE" as const,
+    issueNumber: request.issueNumber,
+    approvalCommentId: request.approvalCommentId,
     approver: request.approver,
     policyVersion: policy.version,
     approvedAt: request.approvedAt,
+    approvalCommand: APPROVAL_COMMAND,
   });
 }
