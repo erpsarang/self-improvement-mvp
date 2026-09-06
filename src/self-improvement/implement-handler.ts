@@ -15,10 +15,7 @@ interface WorkflowRunEvent {
 
 interface IssuePayload {
   readonly number: number;
-  readonly title: string;
-  readonly body: string | null;
   readonly pull_request?: unknown;
-  readonly state: string;
 }
 
 function required(name: string): string {
@@ -58,6 +55,8 @@ export async function prepareImplement(): Promise<void> {
     conclusion: source.conclusion,
   });
 
+  // Current Issue content is intentionally not used for implementation. We only
+  // re-fetch identity/type so a deleted or PR-shaped target fails closed.
   const issue = await (await githubGet(`/issues/${authorization.issueNumber}`)).json() as IssuePayload;
   if (issue.number !== authorization.issueNumber || issue.pull_request !== undefined) {
     throw new Error("승인 대상은 실제 일반 Issue여야 합니다");
@@ -65,19 +64,22 @@ export async function prepareImplement(): Promise<void> {
 
   const prompt = [
     "당신은 AI Development Framework의 untrusted Implementer입니다.",
-    "아래 승인된 Issue 요구사항만 구현하세요.",
+    "아래 승인 시점에 고정된 Issue 요구사항만 구현하세요.",
     "GitHub에 commit, push, branch 생성, PR 생성, merge를 시도하지 마세요.",
     "작업 디렉터리의 파일만 수정하세요. 기존 테스트가 있으면 실행하고 실패 원인을 해결하세요.",
     "SEAL, PUBLISH, VERIFY, REVIEW, MERGE_READY는 수행하지 마세요.",
     "",
-    `Issue #${issue.number}: ${issue.title}`,
+    `Issue #${authorization.issueNumber}: ${authorization.requirements.title}`,
     "",
-    issue.body ?? "",
+    authorization.requirements.body ?? "",
   ].join("\n");
 
   // codex-action의 prompt-file은 repository-relative path를 사용한다.
   await writeFile("codex-prompt.txt", `${prompt}\n`);
-  await writeFile(runtimePath("implement-input.json"), `${JSON.stringify({ authorization, issue: { number: issue.number, title: issue.title, state: issue.state } }, null, 2)}\n`);
+  await writeFile(
+    runtimePath("implement-input.json"),
+    `${JSON.stringify({ authorization }, null, 2)}\n`,
+  );
 }
 
 export async function finalizeImplement(): Promise<void> {
