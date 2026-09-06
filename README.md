@@ -103,6 +103,6 @@ Phase는 구현 항목 체크리스트가 아니라 프레임워크가 차례로
 
 ## 현재 범위
 
-현재 Phase 1은 Human이 Issue에 남긴 정확한 `SI-승인`을 versioned trusted approver policy로 검증하고, approval comment ID 기반의 deterministic marker와 JSON provenance를 Issue comment에 기록합니다. 같은 approval event의 재실행은 기존 marker를 재사용하는 no-op이며 live collaborator permission을 조회하지 않습니다.
+현재 Phase 1은 Human이 Issue에 남긴 정확한 `SI-승인`을 GitHub API로 다시 조회하고 versioned trusted approver policy로 검증합니다. `AUTHORIZE` provenance는 trusted `authorize.yml` run에 귀속된 Actions artifact에 저장하며, Issue comment에는 run과 artifact를 찾는 최소 pointer만 남깁니다. 같은 approval event의 재실행은 검증 가능한 기존 artifact를 재사용하는 no-op이며 live collaborator permission을 조회하지 않습니다.
 
 이 자동화는 `AUTHORIZE` 상태만 기록합니다. Codex `IMPLEMENT` / `FIX`, branch 또는 PR 생성, `SEAL`, `PUBLISH`, exact SHA `VERIFY`, Semantic Review, `MERGE_READY`, Auto Merge는 현재 범위에 포함하지 않습니다.

@@ -13,6 +13,11 @@ export interface AuthorizationRequest {
   readonly approver: string;
   readonly command: string;
   readonly approvedAt: string;
+  readonly repository: string;
+  readonly workflowPath: ".github/workflows/authorize.yml";
+  readonly runId: number;
+  readonly runAttempt: number;
+  readonly githubSha: string;
 }
 
 export interface AuthorizationProvenance {
@@ -24,6 +29,11 @@ export interface AuthorizationProvenance {
   readonly policySnapshot: string;
   readonly approvedAt: string;
   readonly approvalCommand: typeof APPROVAL_COMMAND;
+  readonly repository: string;
+  readonly workflowPath: ".github/workflows/authorize.yml";
+  readonly runId: number;
+  readonly runAttempt: number;
+  readonly githubSha: string;
 }
 
 /** The digest binds provenance to the exact policy data used for authorization. */
@@ -95,6 +105,10 @@ export function authorize(
   if (!isValidTimestamp(request.approvedAt)) {
     throw new Error("approvedAt은 유효한 날짜여야 합니다");
   }
+  if (!/^[^/]+\/[^/]+$/.test(request.repository) || !Number.isInteger(request.runId) || request.runId < 1 ||
+      !Number.isInteger(request.runAttempt) || request.runAttempt < 1 || !/^[0-9a-f]{40}$/.test(request.githubSha)) {
+    throw new Error("workflow identity가 올바르지 않습니다");
+  }
 
   return Object.freeze({
     type: "AUTHORIZE" as const,
@@ -105,5 +119,10 @@ export function authorize(
     policySnapshot: policySnapshot(policy),
     approvedAt: request.approvedAt,
     approvalCommand: APPROVAL_COMMAND,
+    repository: request.repository,
+    workflowPath: request.workflowPath,
+    runId: request.runId,
+    runAttempt: request.runAttempt,
+    githubSha: request.githubSha,
   });
 }

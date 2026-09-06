@@ -85,7 +85,7 @@ Semantic Review                  verified SHA only
 
 ### 상태와 Provenance의 결합
 
-1. `AUTHORIZE`는 approver, policy version, 승인 시각을 authorization provenance로 남깁니다.
+1. `AUTHORIZE`는 재조회한 원본 approval, approver, policy snapshot, 승인 시각과 trusted workflow run identity를 Actions artifact provenance로 남깁니다.
 2. untrusted `IMPLEMENT` / `FIX` 결과는 직접 공개되지 않고 trusted `SEAL`을 통과합니다.
 3. Trusted Rail의 `PUBLISH` 결과인 immutable `published_head_sha`를 상태에 기록합니다.
 4. `VERIFY`는 실제 대상 SHA가 `published_head_sha`와 exact match일 때만 다음 상태를 허용합니다.
@@ -113,8 +113,8 @@ reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMP
 - `src/self-improvement/state.ts`: 허용된 전환, exact SHA와 `FIX` 횟수 제한을 적용합니다.
 - `src/self-improvement/review-decision.ts`: `PASS`, `LOCAL_FIX`, `STRUCTURAL_CHANGE`만 review decision으로 허용합니다.
 - `policy/trusted-approvers.yml`: live collaborator permission 조회를 대신하는 versioned policy입니다.
-- `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 최소 권한(`contents: read`, `issues: write`)으로 처리합니다.
-- `src/self-improvement/authorize-handler.ts`: approval comment ID marker로 idempotency를 보장하고 machine-readable `AUTHORIZE` provenance comment를 기록합니다.
+- `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 artifact 조회에 필요한 최소 권한(`contents: read`, `actions: read`, `issues: write`)으로 처리합니다.
+- `src/self-improvement/authorize-handler.ts`: 원본 approval을 재검증하고 trusted workflow artifact로 idempotency를 보장하며 Issue에는 artifact pointer만 기록합니다.
 
 디렉터리 이름 `self-improvement`는 현재 실험 트랙을 나타냅니다. 이번 문서 재정의는 repository rename이나 대규모 코드 리팩터링을 요구하지 않습니다.
 
