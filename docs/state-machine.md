@@ -1,0 +1,30 @@
+# 상태 머신
+
+## 상태
+
+`CANDIDATE`, `AUTHORIZED`, `IMPLEMENTING`, `SEALED`, `PUBLISHED`, `VERIFIED`, `REVIEWING`, `FIXING`, `MERGE_READY`, `STOPPED`, `MERGED`를 정의한다. 초기 `fixCount`는 `0`이다.
+
+## 허용 전환
+
+```text
+CANDIDATE --AUTHORIZE--> AUTHORIZED
+AUTHORIZED --START_IMPLEMENT--> IMPLEMENTING
+IMPLEMENTING --SEAL--> SEALED
+SEALED --RECORD_PUBLISHED--> PUBLISHED
+PUBLISHED --VERIFY exact SHA--> VERIFIED
+VERIFIED --START_REVIEW--> REVIEWING
+REVIEWING --PASS--> MERGE_READY
+REVIEWING --LOCAL_FIX (fixCount < 2)--> FIXING
+FIXING --SEAL--> SEALED
+REVIEWING --STRUCTURAL_CHANGE--> STOPPED
+REVIEWING --LOCAL_FIX (fixCount >= 2)--> STOPPED
+MERGE_READY --RECORD_HUMAN_MERGE--> MERGED
+```
+
+각 `LOCAL_FIX` 진입 때 `fixCount`를 증가시킨다. 첫 번째와 두 번째 FIX는 허용하지만, 두 번을 소진한 뒤 세 번째 `LOCAL_FIX` decision은 실행하지 않고 `STOPPED`로 전환한다.
+
+## 금지 전환
+
+정의되지 않은 모든 전환은 오류다. 따라서 `CANDIDATE → IMPLEMENTING`, `IMPLEMENTING → PUBLISHED`, `PUBLISHED → REVIEWING`, `REVIEWING → MERGED`, `STOPPED → FIXING`은 거부된다. candidate는 `SEAL`을 우회할 수 없고 Semantic Review는 exact SHA `VERIFY`를 우회할 수 없다.
+
+상태 머신에는 자동 merge 이벤트가 없다. `RECORD_HUMAN_MERGE`는 오직 `MERGE_READY`에서 Human이 완료한 merge를 기록하는 이벤트이며 merge를 수행하지 않는다.
