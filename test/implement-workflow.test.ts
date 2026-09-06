@@ -51,6 +51,10 @@ test("candidate patch는 clean worktree의 Git metadata와 외부 helper 비활�
   assert.match(workflow, /ls-files --others -z/);
 });
 
+test("untracked 파일명은 -- 뒤에 전달해 Git option으로 해석되지 않게 한다", () => {
+  assert.match(workflow, /-- \/dev\/null "\$file" >> "\$PATCH_FILE"/);
+});
+
 test("IMPLEMENT workflow는 GitHub write 권한과 publish 경로를 갖지 않는다", () => {
   assert.match(workflow, /permissions:\n  contents: read\n  actions: read\n  issues: read/);
   assert.doesNotMatch(workflow, /contents: write|pull-requests: write|issues: write|git push|gh pr create|AUTO_MERGE/);
