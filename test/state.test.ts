@@ -10,6 +10,11 @@ import {
 const provenance: AuthorizationProvenance = {
   type: "AUTHORIZE",
   issueNumber: 3,
+  requirements: {
+    title: "승인된 요구사항",
+    body: "정확한 본문",
+    digest: "sha256:" + "a".repeat(64),
+  },
   approvalCommentId: 101,
   approverId: 178057708,
   approver: "erpsarang",
