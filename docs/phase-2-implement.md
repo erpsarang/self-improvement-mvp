@@ -8,7 +8,7 @@ Human SI-승인
 → authorize.json
 → workflow_run
 → Untrusted IMPLEMENT
-→ workspace snapshot
+→ mode 보존 workspace.tar.gz
 → clean Git worktree에서 candidate.patch 생성
 → clean provenance record
 → candidate.patch + implement.json
@@ -21,8 +21,9 @@ Human SI-승인
 - Codex는 `permission-profile: ":workspace"`에서 실행하며 commit, push, PR 생성, merge를 지시하지 않는다.
 - `SI-승인` 시점의 Issue title/body를 AUTHORIZE provenance에 snapshot하고 SHA-256 digest로 고정한다.
 - IMPLEMENT prompt는 현재 mutable Issue 내용이 아니라 승인된 requirements snapshot만 사용한다.
-- Codex가 끝난 workspace에서는 `git add`, `git diff`, finalizer를 실행하지 않는다. `node_modules/`, `.git/`, runtime prompt를 제외한 workspace snapshot만 artifact로 넘긴다.
-- 별도 clean job이 승인된 exact SHA를 다시 checkout하고 clean Git metadata로 임시 worktree를 만든 뒤 workspace snapshot을 데이터로만 반영한다.
+- Codex가 끝난 workspace에서는 `git add`, `git diff`, finalizer를 실행하지 않는다.
+- `node_modules/`, `.git/`, runtime prompt를 제외한 workspace를 `tar.gz`로 묶어 파일 mode와 symlink metadata를 보존한 채 artifact로 넘긴다.
+- 별도 clean job이 승인된 exact SHA를 다시 checkout하고 clean Git metadata로 임시 worktree를 만든 뒤 tar snapshot을 데이터로만 반영한다.
 - candidate patch 생성 시 repository-local untrusted Git config를 사용하지 않으며 system/global config, hooks, external diff, textconv를 비활성화한다.
 - tracked 변경/삭제는 exact authorized base SHA 대비 diff로, 새 untracked 파일은 `git ls-files --others` + `git diff --no-index`로 별도 포함한다.
 - clean job이 생성한 `candidate.patch`는 적용하거나 실행하지 않고 clean `implement-handler.ts`가 digest/provenance만 기록한다.
@@ -33,7 +34,7 @@ Human SI-승인
 
 `IMPLEMENT`는 `Trusted AUTHORIZE` workflow의 successful `workflow_run`만 수신한다. source run에서 생성된 AUTHORIZE artifact를 선택하고, `authorize.json`의 repository, workflow path, run ID, run attempt, exact SHA, approval command, policy snapshot, requirements digest를 검증한다. 승인 대상 Issue도 GitHub API로 다시 조회해 일반 Issue인지 확인한다.
 
-동일 AUTHORIZE run의 rerun이 이전 attempt artifact를 재사용한 경우에는 새로운 IMPLEMENT를 시작하지 않고 정상 no-op 처리한다. 현재 attempt용 artifact가 없고 이전 artifact도 정확히 하나로 식별되지 않으면 fail-closed 한다.
+일반 Issue/PR 댓글 때문에 `authorize` job 자체가 `skipped`된 경우에는 artifact 0개를 정상 no-op으로 처리한다. 동일 AUTHORIZE run의 rerun이 이전 attempt artifact를 재사용한 경우에도 새로운 IMPLEMENT를 시작하지 않고 정상 no-op 처리한다. 반대로 AUTHORIZE job이 실제 실행됐는데 artifact가 없거나 artifact 조합이 모호하면 fail-closed 한다.
 
 검증이 하나라도 실패하면 Codex를 실행하지 않는다.
 
