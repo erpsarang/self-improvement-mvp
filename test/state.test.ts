@@ -73,6 +73,20 @@ test("exact SHA VERIFY 및 VERIFY 우회를 강제한다", () => {
   );
 });
 
+test("SHA 표기를 소문자로 정규화한 뒤 동일 객체인지 검증한다", () => {
+  let state = transition(
+    transition(authorized(), { type: "START_IMPLEMENT" }),
+    { type: "SEAL" },
+  );
+  state = transition(state, {
+    type: "RECORD_PUBLISHED",
+    publishedHeadSha: "A".repeat(40),
+  });
+  assert.equal(state.publishedHeadSha, sha);
+  state = transition(state, { type: "VERIFY", targetSha: sha });
+  assert.equal(state.verifiedSha, sha);
+});
+
 test("첫 번째와 두 번째 LOCAL_FIX만 허용하고 세 번째에는 STOPPED가 된다", () => {
   let state = transition(reviewing(), {
     type: "REVIEW_DECISION",

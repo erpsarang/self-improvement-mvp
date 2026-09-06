@@ -81,15 +81,16 @@ export function transition(
         ...(snapshot.authorization
           ? { authorization: snapshot.authorization }
           : {}),
-        publishedHeadSha: event.publishedHeadSha,
+        publishedHeadSha: event.publishedHeadSha.toLowerCase(),
       };
     case "VERIFY":
       if (snapshot.state !== "PUBLISHED") return invalid(snapshot, event);
-      if (event.targetSha !== snapshot.publishedHeadSha)
+      const targetSha = event.targetSha.toLowerCase();
+      if (targetSha !== snapshot.publishedHeadSha)
         throw new Error(
           "검증 대상 SHA가 published_head_sha와 일치하지 않습니다",
         );
-      return { ...snapshot, state: "VERIFIED", verifiedSha: event.targetSha };
+      return { ...snapshot, state: "VERIFIED", verifiedSha: targetSha };
     case "START_REVIEW":
       if (
         snapshot.state !== "VERIFIED" ||
