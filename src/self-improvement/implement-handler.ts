@@ -1,0 +1,96 @@
+import { readFile, writeFile } from "node:fs/promises";
+import type { AuthorizationProvenance } from "./authorization.js";
+import { createImplementProvenance, validateAuthorizationForImplement } from "./implement.js";
+
+interface WorkflowRunEvent {
+  readonly workflow_run: {
+    readonly id: number;
+    readonly run_attempt: number;
+    readonly head_sha: string;
+    readonly conclusion: string;
+    readonly repository: { readonly full_name: string };
+  };
+}
+
+interface IssuePayload {
+  readonly number: number;
+  readonly title: string;
+  readonly body: string | null;
+  readonly pull_request?: unknown;
+  readonly state: string;
+}
+
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name}이 필요합니다`);
+  return value;
+}
+
+async function githubGet(path: string): Promise<Response> {
+  const token = required("GITHUB_TOKEN");
+  const repository = required("GITHUB_REPOSITORY");
+  const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) throw new Error(`GitHub API 오류: ${response.status}`);
+  return response;
+}
+
+export async function prepareImplement(): Promise<void> {
+  const event = JSON.parse(await readFile(required("GITHUB_EVENT_PATH"), "utf8")) as WorkflowRunEvent;
+  const authorization = JSON.parse(await readFile(required("AUTHORIZE_JSON"), "utf8")) as AuthorizationProvenance;
+  const source = event.workflow_run;
+  validateAuthorizationForImplement(authorization, {
+    id: source.id,
+    runAttempt: source.run_attempt,
+    headSha: source.head_sha,
+    repository: source.repository.full_name,
+    conclusion: source.conclusion,
+  });
+
+  const issue = await (await githubGet(`/issues/${authorization.issueNumber}`)).json() as IssuePayload;
+  if (issue.number !== authorization.issueNumber || issue.pull_request !== undefined) {
+    throw new Error("승인 대상은 실제 일반 Issue여야 합니다");
+  }
+
+  const prompt = [
+    "당신은 AI Development Framework의 untrusted Implementer입니다.",
+    "아래 승인된 Issue 요구사항만 구현하세요.",
+    "GitHub에 commit, push, branch 생성, PR 생성, merge를 시도하지 마세요.",
+    "작업 디렉터리의 파일만 수정하세요. 기존 테스트가 있으면 실행하고 실패 원인을 해결하세요.",
+    "SEAL, PUBLISH, VERIFY, REVIEW, MERGE_READY는 수행하지 마세요.",
+    "",
+    `Issue #${issue.number}: ${issue.title}`,
+    "",
+    issue.body ?? "",
+  ].join("\n");
+
+  await writeFile("codex-prompt.txt", `${prompt}\n`);
+  await writeFile("implement-input.json", `${JSON.stringify({ authorization, issue: { number: issue.number, title: issue.title, state: issue.state } }, null, 2)}\n`);
+}
+
+export async function finalizeImplement(): Promise<void> {
+  const input = JSON.parse(await readFile("implement-input.json", "utf8")) as { authorization: AuthorizationProvenance };
+  const patch = await readFile("candidate.patch");
+  const provenance = createImplementProvenance({
+    authorization: input.authorization,
+    implementRun: {
+      runId: Number(required("GITHUB_RUN_ID")),
+      runAttempt: Number(required("GITHUB_RUN_ATTEMPT")),
+    },
+    candidatePatch: patch,
+    aiResultId: required("AI_RESULT_ID"),
+  });
+  await writeFile("implement.json", `${JSON.stringify(provenance, null, 2)}\n`);
+}
+
+if (process.argv[1]?.endsWith("implement-handler.ts")) {
+  const mode = process.argv[2];
+  if (mode === "prepare") await prepareImplement();
+  else if (mode === "finalize") await finalizeImplement();
+  else throw new Error("prepare 또는 finalize mode가 필요합니다");
+}
