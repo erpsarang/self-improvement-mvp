@@ -18,18 +18,13 @@ jobs:
       github.event.workflow_run.event == 'issue_comment'
     runs-on: ubuntu-latest
     outputs:
-      authorization-artifact-name: ${{ steps.authorization_artifact.outputs.name }}
+      authorization_artifact_name: ${{ steps.authorization_artifact.outputs.name }}
+      should_run: ${{ steps.authorization_artifact.outputs.should_run }}
     env:
       IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
 
     steps:
-      - name: 승인 시점 exact SHA checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-
-      - name: AUTHORIZE artifact 정확히 1개 선택
+      - name: AUTHORIZE artifact 선택 또는 rerun no-op 판정
         id: authorization_artifact
         uses: actions/github-script@v7
         with:
@@ -47,19 +42,43 @@ jobs:
               per_page: 100,
             });
 
-            const expected = new RegExp(`^authorize-approval-\\d+-attempt-${run.run_attempt}$`);
-            const matches = data.artifacts.filter(
-              (artifact) => !artifact.expired && expected.test(artifact.name),
-            );
+            const pattern = /^authorize-approval-(\d+)-attempt-([1-9]\d*)$/;
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match ? { artifact, attempt: Number(match[2]) } : null;
+              })
+              .filter(Boolean);
 
-            if (matches.length !== 1) {
-              core.setFailed(`expected exactly one AUTHORIZE artifact, found ${matches.length}`);
+            const current = matches.filter(({ attempt }) => attempt === run.run_attempt);
+            const prior = matches.filter(({ attempt }) => attempt < run.run_attempt);
+
+            if (current.length === 1 && matches.length === 1) {
+              core.setOutput('name', current[0].artifact.name);
+              core.setOutput('should_run', 'true');
               return;
             }
 
-            core.setOutput('name', matches[0].name);
+            if (current.length === 0 && prior.length === 1 && matches.length === 1) {
+              core.info(`AUTHORIZE attempt ${run.run_attempt} reused ${prior[0].artifact.name}; IMPLEMENT is a no-op`);
+              core.setOutput('should_run', 'false');
+              return;
+            }
+
+            core.setFailed(
+              `expected one current AUTHORIZE artifact or one earlier replay artifact; current=${current.length}, prior=${prior.length}, total=${matches.length}`,
+            );
+
+      - name: 승인 시점 exact SHA checkout
+        if: steps.authorization_artifact.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
 
       - name: AUTHORIZE artifact 다운로드
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ steps.authorization_artifact.outputs.name }}
@@ -69,6 +88,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: AUTHORIZE artifact 구조 확인
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -80,21 +100,26 @@ jobs:
           fi
           cp "${files[0]}" "$IMPLEMENT_RUNTIME_DIR/authorize.json"
 
-      - uses: actions/setup-node@v4
+      - name: Node 설정
+        if: steps.authorization_artifact.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
       - name: 의존성 설치
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         run: npm ci
 
       - name: AUTHORIZE provenance 검증 및 IMPLEMENT 입력 준비
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         run: npm exec -- tsx src/self-improvement/implement-handler.ts prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
           AUTHORIZE_JSON: ${{ runner.temp }}/implement/authorize.json
 
       - name: Untrusted Codex IMPLEMENT
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         id: codex
         uses: openai/codex-action@v1
         with:
@@ -103,6 +128,7 @@ jobs:
           prompt-file: codex-prompt.txt
 
       - name: exact authorized base 기준 candidate patch 생성
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         shell: bash
         env:
           BASE_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -117,6 +143,7 @@ jobs:
           fi
 
       - name: untrusted patch 임시 artifact 저장
+        if: steps.authorization_artifact.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: implement-untrusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
@@ -126,6 +153,7 @@ jobs:
   record:
     name: clean IMPLEMENT provenance 기록
     needs: implement
+    if: needs.implement.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     env:
       IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
@@ -140,7 +168,7 @@ jobs:
       - name: AUTHORIZE artifact 재다운로드
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.implement.outputs.authorization-artifact-name }}
+          name: ${{ needs.implement.outputs.authorization_artifact_name }}
           path: ${{ runner.temp }}/authorize
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -164,7 +192,8 @@ jobs:
           name: implement-untrusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/implement
 
-      - uses: actions/setup-node@v4
+      - name: Node 설정
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
