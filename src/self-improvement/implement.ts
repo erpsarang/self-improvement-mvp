@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AuthorizationProvenance } from "./authorization.js";
+import { requirementsSnapshot, type AuthorizationProvenance } from "./authorization.js";
 
 export const AUTHORIZE_WORKFLOW_PATH = ".github/workflows/authorize.yml" as const;
 export const IMPLEMENT_WORKFLOW_PATH = ".github/workflows/implement.yml" as const;
@@ -27,6 +27,7 @@ export interface ImplementProvenance {
     readonly runAttempt: number;
     readonly approvalCommentId: number;
     readonly policySnapshot: string;
+    readonly requirementsDigest: string;
   };
   readonly implementWorkflow: {
     readonly workflowPath: typeof IMPLEMENT_WORKFLOW_PATH;
@@ -69,6 +70,18 @@ export function validateAuthorizationForImplement(
   }
   if (authorization.approvalCommand !== "SI-승인") throw new Error("승인 명령이 올바르지 않습니다");
   if (!validDigest(authorization.policySnapshot)) throw new Error("policy snapshot이 올바르지 않습니다");
+  if (!authorization.requirements || typeof authorization.requirements.title !== "string" ||
+      !(authorization.requirements.body === null || typeof authorization.requirements.body === "string") ||
+      !validDigest(authorization.requirements.digest)) {
+    throw new Error("승인된 요구사항 snapshot이 올바르지 않습니다");
+  }
+  const expectedRequirements = requirementsSnapshot(
+    authorization.requirements.title,
+    authorization.requirements.body,
+  );
+  if (expectedRequirements.digest !== authorization.requirements.digest) {
+    throw new Error("승인된 요구사항 digest가 일치하지 않습니다");
+  }
   if (!Number.isFinite(Date.parse(authorization.approvedAt))) throw new Error("승인 시각이 올바르지 않습니다");
   if (!validRepository(authorization.repository) || !validSha(authorization.githubSha) ||
       !positiveInteger(authorization.runId) || !positiveInteger(authorization.runAttempt)) {
@@ -109,6 +122,7 @@ export function createImplementProvenance(input: {
       runAttempt: input.authorization.runAttempt,
       approvalCommentId: input.authorization.approvalCommentId,
       policySnapshot: input.authorization.policySnapshot,
+      requirementsDigest: input.authorization.requirements.digest,
     },
     implementWorkflow: {
       workflowPath: IMPLEMENT_WORKFLOW_PATH,
