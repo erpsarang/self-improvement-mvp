@@ -40,12 +40,40 @@ export interface ImplementProvenance {
   };
 }
 
+function positiveInteger(value: number): boolean {
+  return Number.isInteger(value) && value > 0;
+}
+
+function validRepository(value: string): boolean {
+  return /^[^/]+\/[^/]+$/.test(value);
+}
+
+function validSha(value: string): boolean {
+  return /^[0-9a-f]{40}$/.test(value);
+}
+
+function validDigest(value: string): boolean {
+  return /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
 export function validateAuthorizationForImplement(
   authorization: AuthorizationProvenance,
   sourceRun: SourceWorkflowRun,
 ): AuthorizationProvenance {
+  if (!authorization || typeof authorization !== "object") throw new Error("AUTHORIZE provenance가 없습니다");
   if (sourceRun.conclusion !== "success") throw new Error("AUTHORIZE workflow가 성공하지 않았습니다");
   if (authorization.type !== "AUTHORIZE") throw new Error("AUTHORIZE provenance가 아닙니다");
+  if (!positiveInteger(authorization.issueNumber) || !positiveInteger(authorization.approvalCommentId) ||
+      !positiveInteger(authorization.approverId) || !positiveInteger(authorization.policyVersion)) {
+    throw new Error("AUTHORIZE provenance identity가 올바르지 않습니다");
+  }
+  if (authorization.approvalCommand !== "SI-승인") throw new Error("승인 명령이 올바르지 않습니다");
+  if (!validDigest(authorization.policySnapshot)) throw new Error("policy snapshot이 올바르지 않습니다");
+  if (!Number.isFinite(Date.parse(authorization.approvedAt))) throw new Error("승인 시각이 올바르지 않습니다");
+  if (!validRepository(authorization.repository) || !validSha(authorization.githubSha) ||
+      !positiveInteger(authorization.runId) || !positiveInteger(authorization.runAttempt)) {
+    throw new Error("AUTHORIZE workflow identity가 올바르지 않습니다");
+  }
   if (authorization.repository !== sourceRun.repository) throw new Error("repository가 일치하지 않습니다");
   if (authorization.workflowPath !== AUTHORIZE_WORKFLOW_PATH) throw new Error("AUTHORIZE workflow path가 일치하지 않습니다");
   if (authorization.runId !== sourceRun.id) throw new Error("AUTHORIZE run ID가 일치하지 않습니다");
@@ -65,10 +93,12 @@ export function createImplementProvenance(input: {
   readonly aiResultId: string;
 }): ImplementProvenance {
   if (!input.aiResultId.trim()) throw new Error("AI 실행 결과 식별자가 필요합니다");
-  if (!Number.isInteger(input.implementRun.runId) || input.implementRun.runId < 1 ||
-      !Number.isInteger(input.implementRun.runAttempt) || input.implementRun.runAttempt < 1) {
+  if (!positiveInteger(input.implementRun.runId) || !positiveInteger(input.implementRun.runAttempt)) {
     throw new Error("IMPLEMENT workflow identity가 올바르지 않습니다");
   }
+  const patchSize = typeof input.candidatePatch === "string" ? Buffer.byteLength(input.candidatePatch) : input.candidatePatch.length;
+  if (patchSize === 0) throw new Error("candidate patch가 비어 있습니다");
+
   return Object.freeze({
     type: "IMPLEMENT" as const,
     repository: input.authorization.repository,
