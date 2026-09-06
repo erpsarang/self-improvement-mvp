@@ -5,9 +5,10 @@ import { artifactNameFor, getAuthorizationComment, GitHubApiError, handleAuthori
 
 const policy = { version: 1, approvers: [{ id: 178057708, login: "erpsarang" }] } as const;
 const identity: WorkflowIdentity = { repository: "owner/repo", workflowPath: WORKFLOW_PATH, runId: 42, runAttempt: 1, githubSha: "a".repeat(40) };
-const event = (body = "SI-승인", login = "erpsarang"): IssueCommentEvent => ({ action: "created", issue: { number: 3 }, comment: { id: 101, body, created_at: "2026-09-06T00:00:00Z", user: { id: login === "erpsarang" ? 178057708 : 999, login } } });
+const issueSnapshot = { number: 3, title: "승인된 요구사항", body: "정확한 본문" } as const;
+const event = (body = "SI-승인", login = "erpsarang"): IssueCommentEvent => ({ action: "created", issue: issueSnapshot, comment: { id: 101, body, created_at: "2026-09-06T00:00:00Z", user: { id: login === "erpsarang" ? 178057708 : 999, login } } });
 const approval = (overrides: Partial<AuthorizationIssueComment> = {}): AuthorizationIssueComment => ({ id: 101, issueNumber: 3, isPullRequest: false, body: "SI-승인", createdAt: "2026-09-06T00:00:00Z", user: { id: 178057708, login: "erpsarang", type: "User" }, ...overrides });
-const provenance = (run = identity) => authorize({ issueNumber: 3, approvalCommentId: 101, approverId: 178057708, approver: "erpsarang", command: "SI-승인", approvedAt: "2026-09-06T00:00:00Z", ...run }, policy);
+const provenance = (run = identity) => authorize({ issueNumber: 3, issueTitle: issueSnapshot.title, issueBody: issueSnapshot.body, approvalCommentId: 101, approverId: 178057708, approver: "erpsarang", command: "SI-승인", approvedAt: "2026-09-06T00:00:00Z", ...run }, policy);
 const artifact = (run = identity, overrides: Partial<AuthorizationArtifact> = {}): AuthorizationArtifact => ({ name: artifactNameFor(101, run.runAttempt), provenance: provenance(run), run, ...overrides });
 
 function memoryStore(original: AuthorizationIssueComment | null = approval(), artifacts: AuthorizationArtifact[] = [], existingPointers: string[] = []): AuthorizationStore & { pointers: string[]; written: unknown[] } {
@@ -80,7 +81,7 @@ test("기존 artifact metadata/archive 조회 실패는 전파해 중복 AUTHORI
 test("forged bot Issue comment는 trust anchor가 아니며 artifact metadata 위조도 거부한다", async () => {
   const forged = artifact(identity, { run: { ...identity, workflowPath: ".github/workflows/other.yml" as typeof WORKFLOW_PATH } });
   assert.equal(isTrustedAuthorizationArtifact(forged, provenance()), false);
-  const store = memoryStore(); // comments are deliberately not an input to trust decisions
+  const store = memoryStore();
   assert.equal(await handleAuthorization(event(), policy, identity, store), "authorized");
 });
 
@@ -109,6 +110,7 @@ test("login이 변경되어도 immutable user ID로 신뢰하고 현재 login을
 });
 
 test("exact SI-승인, trusted approver 및 Issue만 처리한다", async () => {
-  for (const candidate of [event("SI-승인 "), event("승인"), { ...event(), issue: { number: 3, pull_request: {} } }]) assert.equal(await handleAuthorization(candidate, policy, identity, memoryStore()), "ignored");
+  const prEvent: IssueCommentEvent = { ...event(), issue: { ...event().issue, pull_request: {} } };
+  for (const candidate of [event("SI-승인 "), event("승인"), prEvent]) assert.equal(await handleAuthorization(candidate, policy, identity, memoryStore()), "ignored");
   assert.equal(await handleAuthorization(event("SI-승인", "intruder"), policy, identity, memoryStore(approval({ user: { id: 999, login: "intruder", type: "User" } }))), "ignored");
 });
