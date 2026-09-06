@@ -116,6 +116,8 @@ reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMP
 - `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 artifact 조회에 필요한 최소 권한(`contents: read`, `actions: read`, `issues: write`)으로 처리합니다.
 - `src/self-improvement/authorize-handler.ts`: 원본 approval을 재검증하고 trusted workflow artifact로 idempotency를 보장하며 Issue에는 artifact pointer만 기록합니다.
 
+Phase 1의 Actions artifact는 보존 기간 동안 사용하는 operational trust anchor입니다. retention 만료 뒤의 장기 감사 provenance는 보장하지 않으며, durable/append-only provenance store 또는 동등한 장기 검증 수단은 후속 Framework 설계 TODO입니다.
+
 디렉터리 이름 `self-improvement`는 현재 실험 트랙을 나타냅니다. 이번 문서 재정의는 repository rename이나 대규모 코드 리팩터링을 요구하지 않습니다.
 
 ## 비목표

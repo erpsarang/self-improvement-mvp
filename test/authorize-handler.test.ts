@@ -8,7 +8,7 @@ const identity: WorkflowIdentity = { repository: "owner/repo", workflowPath: WOR
 const event = (body = "SI-승인", login = "erpsarang"): IssueCommentEvent => ({ action: "created", issue: { number: 3 }, comment: { id: 101, body, created_at: "2026-09-06T00:00:00Z", user: { login } } });
 const approval = (overrides: Partial<AuthorizationIssueComment> = {}): AuthorizationIssueComment => ({ id: 101, issueNumber: 3, isPullRequest: false, body: "SI-승인", createdAt: "2026-09-06T00:00:00Z", user: { login: "erpsarang", type: "User" }, ...overrides });
 const provenance = (run = identity) => authorize({ issueNumber: 3, approvalCommentId: 101, approver: "erpsarang", command: "SI-승인", approvedAt: "2026-09-06T00:00:00Z", ...run }, policy);
-const artifact = (overrides: Partial<AuthorizationArtifact> = {}): AuthorizationArtifact => ({ name: artifactNameFor(101), provenance: provenance(), run: identity, ...overrides });
+const artifact = (run = identity, overrides: Partial<AuthorizationArtifact> = {}): AuthorizationArtifact => ({ name: artifactNameFor(101, run.runAttempt), provenance: provenance(run), run, ...overrides });
 
 function memoryStore(original: AuthorizationIssueComment | null = approval(), artifacts: AuthorizationArtifact[] = []): AuthorizationStore & { pointers: string[]; written: unknown[] } {
   const pointers: string[] = [], written: unknown[] = [];
@@ -40,8 +40,19 @@ test("검증 가능한 trusted workflow artifact replay만 already-authorized이
   assert.equal(store.written.length, 0);
 });
 
+test("같은 run의 rerun은 artifact 생성 attempt를 검증하고 중복 AUTHORIZE하지 않는다", async () => {
+  const firstAttempt = artifact(identity);
+  const rerunIdentity = { ...identity, runAttempt: 2 };
+  const store = memoryStore(approval(), [firstAttempt]);
+  assert.equal(await handleAuthorization(event(), policy, rerunIdentity, store), "already-authorized");
+  assert.equal(store.written.length, 0);
+  assert.equal(store.pointers.length, 0);
+  assert.equal(isTrustedAuthorizationArtifact(firstAttempt, firstAttempt.provenance), true);
+  assert.equal(isTrustedAuthorizationArtifact({ ...firstAttempt, name: artifactNameFor(101, 2) }, firstAttempt.provenance), false);
+});
+
 test("forged bot Issue comment는 trust anchor가 아니며 artifact metadata 위조도 거부한다", async () => {
-  const forged = artifact({ run: { ...identity, workflowPath: ".github/workflows/other.yml" as typeof WORKFLOW_PATH } });
+  const forged = artifact(identity, { run: { ...identity, workflowPath: ".github/workflows/other.yml" as typeof WORKFLOW_PATH } });
   assert.equal(isTrustedAuthorizationArtifact(forged, provenance()), false);
   const store = memoryStore(); // comments are deliberately not an input to trust decisions
   assert.equal(await handleAuthorization(event(), policy, identity, store), "authorized");
