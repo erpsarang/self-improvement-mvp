@@ -42,18 +42,22 @@ async function githubGet(path: string): Promise<Response> {
   return response;
 }
 
-export async function prepareImplement(): Promise<void> {
-  await mkdir(required("IMPLEMENT_RUNTIME_DIR"), { recursive: true });
+async function loadValidatedAuthorization(): Promise<AuthorizationProvenance> {
   const event = JSON.parse(await readFile(required("GITHUB_EVENT_PATH"), "utf8")) as WorkflowRunEvent;
   const authorization = JSON.parse(await readFile(required("AUTHORIZE_JSON"), "utf8")) as AuthorizationProvenance;
   const source = event.workflow_run;
-  validateAuthorizationForImplement(authorization, {
+  return validateAuthorizationForImplement(authorization, {
     id: source.id,
     runAttempt: source.run_attempt,
     headSha: source.head_sha,
     repository: source.repository.full_name,
     conclusion: source.conclusion,
   });
+}
+
+export async function prepareImplement(): Promise<void> {
+  await mkdir(required("IMPLEMENT_RUNTIME_DIR"), { recursive: true });
+  const authorization = await loadValidatedAuthorization();
 
   // Current Issue content is intentionally not used for implementation. We only
   // re-fetch identity/type so a deleted or PR-shaped target fails closed.
@@ -76,17 +80,16 @@ export async function prepareImplement(): Promise<void> {
 
   // codex-action의 prompt-file은 repository-relative path를 사용한다.
   await writeFile("codex-prompt.txt", `${prompt}\n`);
-  await writeFile(
-    runtimePath("implement-input.json"),
-    `${JSON.stringify({ authorization }, null, 2)}\n`,
-  );
 }
 
 export async function finalizeImplement(): Promise<void> {
-  const input = JSON.parse(await readFile(runtimePath("implement-input.json"), "utf8")) as { authorization: AuthorizationProvenance };
+  await mkdir(required("IMPLEMENT_RUNTIME_DIR"), { recursive: true });
+  // This function is intended to run from a fresh exact-SHA checkout in a
+  // separate job. The untrusted candidate patch is data only and is never applied.
+  const authorization = await loadValidatedAuthorization();
   const patch = await readFile(runtimePath("candidate.patch"));
   const provenance = createImplementProvenance({
-    authorization: input.authorization,
+    authorization,
     implementRun: {
       runId: Number(required("GITHUB_RUN_ID")),
       runAttempt: Number(required("GITHUB_RUN_ATTEMPT")),
