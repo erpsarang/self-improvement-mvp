@@ -126,6 +126,19 @@ test("알 수 없는 review decision은 LOCAL_FIX로 처리하지 않고 거부�
   );
 });
 
+test("알 수 없는 workflow event type은 상태를 잃지 않고 거부한다", () => {
+  const state = initialState();
+  const unsupportedEvent = {
+    type: "START_REVEIW",
+  } as unknown as Parameters<typeof transition>[1];
+
+  assert.throws(
+    () => transition(state, unsupportedEvent),
+    /지원하지 않는 workflow event type입니다: START_REVEIW/,
+  );
+  assert.deepEqual(state, initialState());
+});
+
 test("REVIEWING에서 직접 MERGED로 전환하거나 Auto Merge할 수 없다", () => {
   assert.throws(() => transition(reviewing(), { type: "RECORD_HUMAN_MERGE" }));
   assert.equal(JSON.stringify(reviewing()).includes("AUTO_MERGE"), false);

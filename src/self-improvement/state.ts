@@ -114,4 +114,9 @@ export function transition(
       if (snapshot.state !== "MERGE_READY") return invalid(snapshot, event);
       return { ...snapshot, state: "MERGED" };
   }
+
+  const unsupportedType = (event as { readonly type?: unknown }).type;
+  throw new Error(
+    `지원하지 않는 workflow event type입니다: ${String(unsupportedType)}`,
+  );
 }
