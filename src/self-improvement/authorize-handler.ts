@@ -22,11 +22,16 @@ export interface IssueCommentEvent {
 
 export interface AuthorizationCommentStore {
   list(issueNumber: number): Promise<readonly AuthorizationIssueComment[]>;
+  get(commentId: number): Promise<AuthorizationIssueComment | undefined>;
   create(issueNumber: number, body: string): Promise<void>;
 }
 
 export interface AuthorizationIssueComment {
+  readonly id: number;
+  readonly issueNumber: number;
+  readonly isPullRequest: boolean;
   readonly body: string;
+  readonly createdAt: string;
   readonly user: {
     readonly login: string;
     readonly type: string;
@@ -39,20 +44,37 @@ export interface AuthorizationIssueComment {
  * Marker나 JSON의 모양만으로 provenance를 신뢰해서는 안 된다. 이후 phase에서
  * AUTHORIZE comment를 읽을 때도 이 검사를 함께 사용해야 한다.
  */
-export function isTrustedAuthorizationComment(
-  comment: AuthorizationIssueComment,
-): boolean {
-  return comment.user.login === "github-actions[bot]" && comment.user.type === "Bot";
-}
-
-export function hasTrustedAuthorizationMarker(
+export async function isTrustedAuthorizationComment(
   comment: AuthorizationIssueComment,
   approvalCommentId: number,
-): boolean {
-  return (
-    isTrustedAuthorizationComment(comment) &&
-    comment.body.includes(markerFor(approvalCommentId))
-  );
+  issueNumber: number,
+  policy: TrustedApproverPolicy,
+  store: AuthorizationCommentStore,
+): Promise<boolean> {
+  if (comment.user.login !== "github-actions[bot]" || comment.user.type !== "Bot") return false;
+
+  const match = /^<!-- self-improvement:AUTHORIZE:approval-comment:(\d+) -->\n```json\n([\s\S]+)\n```$/.exec(comment.body);
+  if (!match || Number(match[1]) !== approvalCommentId) return false;
+  let recorded: unknown;
+  try { recorded = JSON.parse(match[2]!); } catch { return false; }
+
+  const approval = await store.get(approvalCommentId);
+  if (
+    !approval || approval.id !== approvalCommentId || approval.issueNumber !== issueNumber ||
+    approval.isPullRequest || approval.body !== APPROVAL_COMMAND
+  ) return false;
+  try {
+    const expected = authorize({
+      issueNumber,
+      approvalCommentId,
+      approver: approval.user.login,
+      command: approval.body,
+      approvedAt: approval.createdAt,
+    }, policy);
+    return JSON.stringify(recorded) === JSON.stringify(expected);
+  } catch {
+    return false;
+  }
 }
 
 export type HandleResult = "authorized" | "already-authorized" | "ignored";
@@ -83,9 +105,9 @@ export async function handleAuthorization(
   );
   const marker = markerFor(event.comment.id);
   if (
-    (await store.list(event.issue.number)).some((comment) =>
-      hasTrustedAuthorizationMarker(comment, event.comment.id),
-    )
+    (await Promise.all((await store.list(event.issue.number)).map((comment) =>
+      isTrustedAuthorizationComment(comment, event.comment.id, event.issue.number, policy, store),
+    ))).some(Boolean)
   ) {
     return "already-authorized";
   }
@@ -103,7 +125,7 @@ function formatAuthorizationComment(
 
 export function parseTrustedApproverPolicy(source: string): TrustedApproverPolicy {
   const version = /^version:\s*(\d+)\s*$/m.exec(source)?.[1];
-  const approversBlock = /^approvers:\s*$([\s\S]*)/m.exec(source)?.[1] ?? "";
+  const approversBlock = /^approvers:\s*$\n((?:(?:[ \t]+.*)?\n?)*)/m.exec(source)?.[1] ?? "";
   const approvers = [...approversBlock.matchAll(/^\s+-\s+([A-Za-z0-9-]+)\s*$/gm)].map(
     (match) => match[1]!,
   );
@@ -142,17 +164,30 @@ async function main(): Promise<void> {
       for (let page = 1; ; page += 1) {
         const response = await request(`/issues/${issueNumber}/comments?per_page=100&page=${page}`);
         const comments = (await response.json()) as Array<{
-          body?: string;
+          id?: number; body?: string; created_at?: string;
           user?: { login?: string; type?: string };
         }>;
         allComments.push(
-          ...comments.map(({ body, user }) => ({
+          ...comments.map(({ id, body, created_at, user }) => ({
+            id: id ?? 0,
+            issueNumber,
+            isPullRequest: false,
             body: body ?? "",
+            createdAt: created_at ?? "",
             user: { login: user?.login ?? "", type: user?.type ?? "" },
           })),
         );
         if (comments.length < 100) return allComments;
       }
+    },
+    async get(commentId) {
+      const response = await request(`/issues/comments/${commentId}`);
+      const comment = await response.json() as { id?: number; body?: string; created_at?: string; issue_url?: string; user?: { login?: string; type?: string } };
+      const issueNumber = Number(/\/issues\/(\d+)$/.exec(comment.issue_url ?? "")?.[1]);
+      if (!Number.isInteger(issueNumber)) return undefined;
+      const issueResponse = await request(`/issues/${issueNumber}`);
+      const issue = await issueResponse.json() as { pull_request?: unknown };
+      return { id: comment.id ?? 0, issueNumber, isPullRequest: issue.pull_request !== undefined, body: comment.body ?? "", createdAt: comment.created_at ?? "", user: { login: comment.user?.login ?? "", type: comment.user?.type ?? "" } };
     },
     async create(issueNumber, body) {
       await request(`/issues/${issueNumber}/comments`, {

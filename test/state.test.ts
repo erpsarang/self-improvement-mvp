@@ -13,6 +13,7 @@ const provenance: AuthorizationProvenance = {
   approvalCommentId: 101,
   approver: "erpsarang",
   policyVersion: 1,
+  policySnapshot: "sha256:test",
   approvedAt: "2026-09-06T00:00:00Z",
   approvalCommand: "SI-승인",
 };

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const APPROVAL_COMMAND = "SI-승인" as const;
 
 export interface TrustedApproverPolicy {
@@ -19,8 +21,16 @@ export interface AuthorizationProvenance {
   readonly approvalCommentId: number;
   readonly approver: string;
   readonly policyVersion: number;
+  readonly policySnapshot: string;
   readonly approvedAt: string;
   readonly approvalCommand: typeof APPROVAL_COMMAND;
+}
+
+/** The digest binds provenance to the exact policy data used for authorization. */
+export function policySnapshot(policy: TrustedApproverPolicy): string {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify({ version: policy.version, approvers: policy.approvers }))
+    .digest("hex")}`;
 }
 
 const RFC3339_TIMESTAMP =
@@ -92,6 +102,7 @@ export function authorize(
     approvalCommentId: request.approvalCommentId,
     approver: request.approver,
     policyVersion: policy.version,
+    policySnapshot: policySnapshot(policy),
     approvedAt: request.approvedAt,
     approvalCommand: APPROVAL_COMMAND,
   });

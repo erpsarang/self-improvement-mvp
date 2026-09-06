@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   APPROVAL_COMMAND,
   authorize,
+  policySnapshot,
 } from "../src/self-improvement/authorization.js";
 
 const policy = { version: 1, approvers: ["erpsarang"] } as const;
@@ -25,6 +26,7 @@ test("versioned trusted approver의 SI-승인을 provenance로 기록한다", ()
       approvalCommentId: 101,
       approver: "erpsarang",
       policyVersion: 1,
+      policySnapshot: policySnapshot(policy),
       approvedAt: "2026-09-06T00:00:00Z",
       approvalCommand: APPROVAL_COMMAND,
     },
