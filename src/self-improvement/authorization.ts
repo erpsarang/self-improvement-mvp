@@ -13,8 +13,16 @@ export interface TrustedApproverPolicy {
   readonly approvers: readonly TrustedApprover[];
 }
 
+export interface ApprovedRequirements {
+  readonly title: string;
+  readonly body: string | null;
+  readonly digest: string;
+}
+
 export interface AuthorizationRequest {
   readonly issueNumber: number;
+  readonly issueTitle: string;
+  readonly issueBody: string | null;
   readonly approvalCommentId: number;
   readonly approverId: number;
   readonly approver: string;
@@ -30,6 +38,7 @@ export interface AuthorizationRequest {
 export interface AuthorizationProvenance {
   readonly type: "AUTHORIZE";
   readonly issueNumber: number;
+  readonly requirements: ApprovedRequirements;
   readonly approvalCommentId: number;
   readonly approverId: number;
   readonly approver: string;
@@ -51,6 +60,16 @@ export function policySnapshot(policy: TrustedApproverPolicy): string {
     .digest("hex")}`;
 }
 
+/** Bind authorization to the exact Issue requirements visible when SI-승인 was created. */
+export function requirementsSnapshot(title: string, body: string | null): ApprovedRequirements {
+  if (!title.trim()) throw new Error("Issue title이 필요합니다");
+  return Object.freeze({
+    title,
+    body,
+    digest: `sha256:${createHash("sha256").update(JSON.stringify({ title, body })).digest("hex")}`,
+  });
+}
+
 const RFC3339_TIMESTAMP =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
@@ -67,20 +86,7 @@ function isValidTimestamp(value: string): boolean {
   const offsetHour = Number(match[7] ?? 0);
   const offsetMinute = Number(match[8] ?? 0);
   const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const daysInMonth = [
-    31,
-    leapYear ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ];
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
   return (
     month >= 1 &&
@@ -113,6 +119,10 @@ export function authorize(
   if (!isValidTimestamp(request.approvedAt)) {
     throw new Error("approvedAt은 유효한 날짜여야 합니다");
   }
+  if (!Number.isInteger(request.issueNumber) || request.issueNumber < 1 ||
+      !Number.isInteger(request.approvalCommentId) || request.approvalCommentId < 1) {
+    throw new Error("Issue identity가 올바르지 않습니다");
+  }
   if (!/^[^/]+\/[^/]+$/.test(request.repository) || !Number.isInteger(request.runId) || request.runId < 1 ||
       !Number.isInteger(request.runAttempt) || request.runAttempt < 1 || !/^[0-9a-f]{40}$/.test(request.githubSha)) {
     throw new Error("workflow identity가 올바르지 않습니다");
@@ -121,6 +131,7 @@ export function authorize(
   return Object.freeze({
     type: "AUTHORIZE" as const,
     issueNumber: request.issueNumber,
+    requirements: requirementsSnapshot(request.issueTitle, request.issueBody),
     approvalCommentId: request.approvalCommentId,
     approverId: request.approverId,
     approver: request.approver,
