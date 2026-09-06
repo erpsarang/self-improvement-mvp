@@ -85,7 +85,7 @@ Semantic Review                  verified SHA only
 
 ### 상태와 Provenance의 결합
 
-1. `AUTHORIZE`는 approver, policy version, 승인 시각을 authorization provenance로 남깁니다.
+1. `AUTHORIZE`는 재조회한 원본 approval, approver, policy snapshot, 승인 시각과 trusted workflow run identity를 Actions artifact provenance로 남깁니다.
 2. untrusted `IMPLEMENT` / `FIX` 결과는 직접 공개되지 않고 trusted `SEAL`을 통과합니다.
 3. Trusted Rail의 `PUBLISH` 결과인 immutable `published_head_sha`를 상태에 기록합니다.
 4. `VERIFY`는 실제 대상 SHA가 `published_head_sha`와 exact match일 때만 다음 상태를 허용합니다.
@@ -113,11 +113,15 @@ reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMP
 - `src/self-improvement/state.ts`: 허용된 전환, exact SHA와 `FIX` 횟수 제한을 적용합니다.
 - `src/self-improvement/review-decision.ts`: `PASS`, `LOCAL_FIX`, `STRUCTURAL_CHANGE`만 review decision으로 허용합니다.
 - `policy/trusted-approvers.yml`: live collaborator permission 조회를 대신하는 versioned policy입니다.
+- `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 artifact 조회에 필요한 최소 권한(`contents: read`, `actions: read`, `issues: write`)으로 처리합니다.
+- `src/self-improvement/authorize-handler.ts`: 원본 approval을 재검증하고 trusted workflow artifact로 idempotency를 보장하며 Issue에는 artifact pointer만 기록합니다.
+
+Phase 1의 Actions artifact는 보존 기간 동안 사용하는 operational trust anchor입니다. retention 만료 뒤의 장기 감사 provenance는 보장하지 않으며, durable/append-only provenance store 또는 동등한 장기 검증 수단은 후속 Framework 설계 TODO입니다.
 
 디렉터리 이름 `self-improvement`는 현재 실험 트랙을 나타냅니다. 이번 문서 재정의는 repository rename이나 대규모 코드 리팩터링을 요구하지 않습니다.
 
 ## 비목표
 
-현재 문서 정렬은 GitHub Actions나 기존 코드 동작을 변경하지 않습니다. repository rename, Codex 실행 방식 변경, 실제 GRAPH / LOOP Engine, branch/PR 자동 생성, write token 제공, 실제 artifact `SEAL` / `PUBLISH`, Self-Improvement 자동화 확장과 Auto Merge는 범위 밖입니다.
+현재 자동화는 Human Authorization만 구현합니다. repository rename, Codex `IMPLEMENT` / `FIX`, 실제 GRAPH / LOOP Engine, branch/PR 자동 생성, `SEAL` / `PUBLISH`, exact SHA `VERIFY`, Semantic Review, `MERGE_READY`, Auto Merge는 범위 밖입니다.
 
 전체 단계의 증명 목표는 [Roadmap](roadmap.md)에 정의합니다.

@@ -8,9 +8,20 @@ import {
 } from "../src/self-improvement/state.js";
 
 const provenance: AuthorizationProvenance = {
+  type: "AUTHORIZE",
+  issueNumber: 3,
+  approvalCommentId: 101,
+  approverId: 178057708,
   approver: "erpsarang",
   policyVersion: 1,
+  policySnapshot: "sha256:test",
   approvedAt: "2026-09-06T00:00:00Z",
+  approvalCommand: "SI-승인",
+  repository: "owner/repo",
+  workflowPath: ".github/workflows/authorize.yml",
+  runId: 42,
+  runAttempt: 1,
+  githubSha: "a".repeat(40),
 };
 const sha = "a".repeat(40);
 

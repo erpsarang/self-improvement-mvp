@@ -1,0 +1,50 @@
+name: Trusted AUTHORIZE
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: authorize-${{ github.event.comment.id }}
+
+jobs:
+  authorize:
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.comment.body == 'SI-승인'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Trusted AUTHORIZE 기록
+        run: npm exec -- tsx src/self-improvement/authorize-handler.ts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: AUTHORIZE provenance artifact 저장
+        if: hashFiles('authorize.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: authorize-approval-${{ github.event.comment.id }}-attempt-${{ github.run_attempt }}
+          path: authorize.json
+          if-no-files-found: error
+      - name: Artifact pointer 기록
+        if: hashFiles('authorize-pointer.txt') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fs.readFileSync('authorize-pointer.txt', 'utf8').trim(),
+            });

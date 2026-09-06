@@ -6,7 +6,9 @@
 
 ## Trusted execution
 
-`AUTHORIZE`, `SEAL`, `PUBLISH`는 Trusted Rail이 담당한다. `AUTHORIZE`는 repository에서 version 관리되는 trusted approver policy를 사용하며 live collaborator permission에 의존하지 않는다. 승인 provenance에는 approver, policy version, 승인 시각을 보존한다.
+`AUTHORIZE`, `SEAL`, `PUBLISH`는 Trusted Rail이 담당한다. `AUTHORIZE`는 repository에서 version 관리되는 trusted approver policy를 사용하며 live collaborator permission에 의존하지 않는다. Policy는 재사용 가능한 login 대신 immutable GitHub numeric user ID를 권한 identity로 사용하고 login은 설명 메타데이터로만 보존한다. 승인 provenance에는 재조회한 approval, approver ID와 현재 login, exact policy digest, 승인 시각, repository와 trusted workflow run/creation-attempt identity를 보존하고, 신뢰 원본은 Issue comment가 아니라 Actions artifact이다.
+
+Actions artifact는 Phase 1 운영 기간의 trust anchor이며 영구 ledger가 아니다. retention 만료 후 장기 provenance 감사까지 보장하지 않으며, durable/append-only provenance는 후속 Framework 설계 과제이다(TODO).
 
 candidate patch는 trusted `SEAL`을 거쳐야만 PUBLISH 대상으로 간주된다. 현재 MVP는 이 경계를 상태 전환으로 강제할 뿐 실제 SEAL 또는 PUBLISH를 실행하지 않는다.
 
