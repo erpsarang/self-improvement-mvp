@@ -29,7 +29,7 @@ Self-Improvement는 아키텍처 전체의 이름이 아닙니다. 다른 capabi
 
 ### Core
 
-- **GRAPH Engine**: `REQUIREMENT → PLAN → IMPLEMENT → VERIFY → REVIEW → FIX → PUBLISH` 같은 단계, 분기, 의존 산출물과 실행 역할을 선언하는 orchestration model입니다. GRAPH는 권한을 부여하지 않으며 Trust Model이 허용한 전환만 조정합니다.
+- **GRAPH Engine**: `REQUIREMENT → PLAN → IMPLEMENT → SEAL → PUBLISH → VERIFY exact published SHA → REVIEW` 같은 단계, 분기, 의존 산출물과 실행 역할을 선언하는 orchestration model입니다. GRAPH는 권한을 부여하지 않으며 Trust Model이 허용한 전환만 조정합니다.
 - **LOOP Engine**: GRAPH의 실행 결과를 `LEARN → IMPROVE`로 연결하고 다음 실행에 반영하는 반복 모델입니다. 무한 자율 실행이 아니라 상태, 횟수 제한, 종료 조건과 Human Approval을 따르는 bounded loop입니다.
 - **Trust Model**: trusted와 untrusted 실행을 분리하고 credential 및 publish 권한을 제한합니다.
 - **Human Approval**: Human의 의사 결정을 검증 가능한 실행 권한으로 바꾸되, 시작 승인과 최종 Merge 경계를 AI에 넘기지 않습니다.
@@ -48,11 +48,13 @@ Self-Improvement는 아키텍처 전체의 이름이 아닙니다. 다른 capabi
 | Reviewer | verified 결과의 의미적 적합성 판정 | REVIEW | 구현과 가능한 한 분리 |
 | Improver | 결과에서 개선 candidate 제안 | `SELF-IMPROVEMENT` | 스스로 승인·공개·merge할 수 없음 |
 
-`PUBLISH`는 candidate 생성 역할의 권한이 아니라 Trusted Rail capability입니다. Role은 책임 주체를, capability는 수행 가능한 동작을 뜻합니다. 하나의 Agent가 여러 Role을 구현할 수 있더라도 논리적 책임과 신뢰 경계는 유지합니다.
+capability의 정규 집합은 `PLAN`, `IMPLEMENT`, `VERIFY`, `REVIEW`, `FIX`, `PUBLISH`, `SELF-IMPROVEMENT`입니다. `PUBLISH`는 candidate 생성 Role의 권한이 아니라 Trusted Rail에 배치된 capability입니다. Role은 책임 주체를, capability는 수행 가능한 동작 권한을 뜻합니다. 하나의 Agent가 여러 Role을 구현할 수 있더라도 논리적 책임과 신뢰 경계는 유지합니다.
+
+Human Authorization은 capability 집합의 항목이 아니라 Human Approval을 검증 가능한 실행 권한으로 변환하는 인가 경계입니다. `AUTHORIZE`, `SEAL`, `RECORD_PUBLISHED`, `START_REVIEW`는 State Model의 event 또는 Trust Boundary이고, `REQUIREMENT`, `LEARN`, `IMPROVE`는 GRAPH / LOOP의 입력·node이므로 capability와 구분합니다.
 
 ## Core Trust Layer의 현재 수직 단면
 
-Issue #1의 상태 머신과 Trust Boundary는 별도의 Self-Improvement 전용 구조가 아니라 **Core Trust Layer**의 첫 구현입니다. Issue #3의 `SI-승인 → AUTHORIZE`는 그 위에서 동작하는 **Human Authorization** capability의 첫 구현입니다.
+Issue #1의 상태 머신과 Trust Boundary는 별도의 Self-Improvement 전용 구조가 아니라 **Core Trust Layer**의 첫 구현입니다. Issue #3의 `SI-승인 → AUTHORIZE`는 그 위에서 동작하는 **Human Authorization** 인가 경계의 첫 구현입니다.
 
 ```text
 Human SI-승인                     Human Approval
@@ -94,13 +96,9 @@ Human Merge                      Human-only boundary
 GRAPH는 개발 과정의 구조를 표현하고 LOOP는 그 구조를 다시 실행하는 조건을 표현합니다.
 
 ```text
-REQUIREMENT → PLAN → IMPLEMENT → VERIFY → REVIEW ── PASS ──► PUBLISH
-                           ▲                    │
-                           └──── FIX ◄─────────┘
-                                                    │
-                                      LEARN → IMPROVE
-                                                    │
-                                      next bounded LOOP
+REQUIREMENT → PLAN → IMPLEMENT → SEAL → PUBLISH → VERIFY exact published SHA → REVIEW
+REVIEW ── LOCAL_FIX <= 2 ──► FIX → SEAL → PUBLISH → VERIFY exact published SHA → REVIEW
+REVIEW ── PASS ──► LEARN → IMPROVE → next bounded LOOP
 ```
 
 이 그림은 목표 모델이며 현재 GRAPH Engine이나 LOOP Engine의 실제 구현을 의미하지 않습니다. 현재 `LOCAL_FIX <= 2` 전환은 향후 LOOP가 준수해야 할 bounded repetition의 도메인 선례입니다. 이후에도 `STRUCTURAL_CHANGE`, 실행 한도 소진, 검증 실패는 자동 확장이 아니라 `STOPPED` 또는 Human 경계로 이어집니다.

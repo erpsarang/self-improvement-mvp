@@ -21,7 +21,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 
 **증명할 능력:** 명시적인 Human 의사만 실행 시작 권한으로 전환하고, 그 근거를 재현·감사할 수 있습니다.
 
-- `SI-승인 → AUTHORIZE`를 Human Authorization capability의 첫 사례로 사용합니다.
+- `SI-승인 → AUTHORIZE`를 capability와 별개인 Human Authorization 인가 경계의 첫 사례로 사용합니다.
 - approver, versioned trusted approver policy, 승인 시각을 provenance로 연결합니다.
 - live collaborator permission 변화에 의존하지 않고 입력 정규화와 정책 검증을 거칩니다.
 - 시작 승인이 최종 Merge 권한까지 포괄하지 않도록 Human 경계를 둘로 분리합니다.
@@ -44,7 +44,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 - Trusted Rail이 기록한 immutable `published_head_sha`를 검증 입력으로 사용합니다.
 - checkout 및 검증 대상은 exact SHA match를 만족해야 합니다.
 - 검증 명령, 결과와 대상 SHA를 provenance로 결합합니다.
-- 실패 결과는 Review나 PUBLISH 성공으로 오인되지 않습니다.
+- 실패 결과는 Review 진입이나 이미 완료된 PUBLISH의 검증 성공으로 오인되지 않습니다.
 
 ## Phase 4 — Semantic REVIEW / FIX
 
@@ -59,7 +59,8 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 
 **증명할 능력:** 개발 단계, 역할, 조건, 산출물과 분기를 명시적인 GRAPH로 표현하고 신뢰 경계를 보존하며 조정할 수 있습니다.
 
-- `REQUIREMENT`, `PLAN`, `IMPLEMENT`, `VERIFY`, `REVIEW`, `FIX`, `PUBLISH`의 의존 관계를 표현합니다.
+- `REQUIREMENT → PLAN → IMPLEMENT → SEAL → PUBLISH → VERIFY exact published SHA → REVIEW`의 의존 관계와 Review 후 bounded `FIX` 분기를 표현합니다.
+- `PLAN`, `IMPLEMENT`, `VERIFY`, `REVIEW`, `FIX`, `PUBLISH`, `SELF-IMPROVEMENT`를 capability로 분류합니다. Human Authorization은 인가 경계, `AUTHORIZE` / `SEAL` / `RECORD_PUBLISHED`는 state event 또는 trust event, `REQUIREMENT` / `LEARN` / `IMPROVE`는 workflow 입력·node로 구분합니다.
 - 각 node가 필요한 입력 provenance와 생성할 출력을 선언합니다.
 - Agent 배치는 capability 권한을 자동 확대하지 않습니다.
 - State Model에 없는 edge와 Trust Model을 우회하는 실행을 거부합니다.

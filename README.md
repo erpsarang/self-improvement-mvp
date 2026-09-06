@@ -8,10 +8,11 @@ AI를 이용해 소프트웨어의 요구사항 해석, 설계, 구현, 검증, 
 REQUIREMENT
 → PLAN
 → IMPLEMENT
+→ SEAL
+→ PUBLISH
 → VERIFY
 → REVIEW
-→ FIX
-→ PUBLISH
+→ 필요 시 FIX → SEAL → PUBLISH → VERIFY → REVIEW
 → LEARN
 → IMPROVE
 → LOOP
@@ -37,10 +38,8 @@ AI Development Framework
 │  ├─ Reviewer
 │  └─ Improver
 └─ Capabilities
-   ├─ IMPLEMENT
-   ├─ VERIFY
-   ├─ FIX
-   ├─ PUBLISH
+   ├─ PLAN / IMPLEMENT / VERIFY / REVIEW
+   ├─ FIX / PUBLISH
    └─ SELF-IMPROVEMENT
 ```
 
@@ -48,7 +47,8 @@ AI Development Framework
 - **LOOP**는 GRAPH 실행 결과를 `LEARN`과 `IMPROVE`로 되돌려 반복하는 execution model입니다.
 - **Trust Model**과 **State Model**은 GRAPH와 LOOP가 허용된 경계를 우회하지 못하게 합니다.
 - **Human Approval**은 AI가 대신할 수 없는 명시적 권한 경계이며, **Provenance**는 어떤 승인과 exact SHA를 근거로 실행했는지 추적하게 합니다.
-- **Agents / Roles**는 책임을 표현하고, **Capabilities**는 각 역할이 경계 안에서 수행할 수 있는 동작을 표현합니다. 특히 `IMPLEMENT` / `FIX`와 `VERIFY` / `REVIEW`는 가능한 한 역할과 신뢰 경계를 분리합니다.
+- **Agents / Roles**는 책임 주체를 표현하고, **Capabilities**는 그 주체에게 부여할 수 있는 동작 권한을 표현합니다. 이 문서의 capability 집합은 `PLAN`, `IMPLEMENT`, `VERIFY`, `REVIEW`, `FIX`, `PUBLISH`, `SELF-IMPROVEMENT`입니다. 특히 `IMPLEMENT` / `FIX`와 `VERIFY` / `REVIEW`는 가능한 한 역할과 신뢰 경계를 분리합니다.
+- **Human Authorization**은 capability가 아니라 Human Approval을 실행 권한으로 바꾸는 별도의 인가 경계입니다. `AUTHORIZE`, `SEAL`, `RECORD_PUBLISHED` 같은 이름은 State Model이 다루는 event이거나 Trust Boundary이며, 대문자로 표기됐다고 모두 capability인 것은 아닙니다. `REQUIREMENT`, `LEARN`, `IMPROVE`는 workflow의 입력·node입니다.
 
 상세한 레이어 관계는 [아키텍처](docs/architecture.md), 단계별 증명 목표는 [Roadmap](docs/roadmap.md)에서 설명합니다.
 
@@ -71,7 +71,7 @@ Issue
 ```
 
 - Issue #1의 상태 머신과 Trust Boundary는 모든 capability가 공유하는 **Core Trust Layer**의 첫 구현입니다.
-- Issue #3의 `SI-승인 → AUTHORIZE`는 **Human Authorization** capability의 첫 구현입니다.
+- Issue #3의 `SI-승인 → AUTHORIZE`는 **Human Authorization** 인가 경계의 첫 구현입니다.
 - `state.ts` 등 현재 코드는 외부 자동화를 실행하지 않고 상태와 invariant만 검증합니다. GRAPH Engine과 LOOP Engine은 아직 구현하지 않습니다.
 
 ## 변하지 않는 신뢰 원칙
