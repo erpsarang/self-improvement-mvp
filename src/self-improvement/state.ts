@@ -1,5 +1,5 @@
 import type { AuthorizationProvenance } from "./authorization.js";
-import type { ReviewDecision } from "./review-decision.js";
+import { isReviewDecision, type ReviewDecision } from "./review-decision.js";
 
 export const WORKFLOW_STATES = [
   "CANDIDATE",
@@ -100,6 +100,10 @@ export function transition(
       return { ...snapshot, state: "REVIEWING" };
     case "REVIEW_DECISION":
       if (snapshot.state !== "REVIEWING") return invalid(snapshot, event);
+      if (!isReviewDecision(event.decision))
+        throw new Error(
+          `지원하지 않는 review decision입니다: ${event.decision}`,
+        );
       if (event.decision === "PASS")
         return { ...snapshot, state: "MERGE_READY" };
       if (event.decision === "STRUCTURAL_CHANGE")

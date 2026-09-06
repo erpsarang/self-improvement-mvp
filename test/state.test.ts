@@ -114,6 +114,18 @@ test("STRUCTURAL_CHANGE는 FIX 없이 STOPPED가 된다", () => {
   assert.throws(() => transition(stopped, { type: "SEAL" }));
 });
 
+test("알 수 없는 review decision은 LOCAL_FIX로 처리하지 않고 거부한다", () => {
+  const unsupportedEvent = {
+    type: "REVIEW_DECISION",
+    decision: "AUTO_MERGE",
+  } as unknown as Parameters<typeof transition>[1];
+
+  assert.throws(
+    () => transition(reviewing(), unsupportedEvent),
+    /지원하지 않는 review decision입니다: AUTO_MERGE/,
+  );
+});
+
 test("REVIEWING에서 직접 MERGED로 전환하거나 Auto Merge할 수 없다", () => {
   assert.throws(() => transition(reviewing(), { type: "RECORD_HUMAN_MERGE" }));
   assert.equal(JSON.stringify(reviewing()).includes("AUTO_MERGE"), false);
