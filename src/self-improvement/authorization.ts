@@ -2,14 +2,21 @@ import { createHash } from "node:crypto";
 
 export const APPROVAL_COMMAND = "SI-승인" as const;
 
+export interface TrustedApprover {
+  /** Immutable GitHub database ID; login is descriptive and may change. */
+  readonly id: number;
+  readonly login: string;
+}
+
 export interface TrustedApproverPolicy {
   readonly version: number;
-  readonly approvers: readonly string[];
+  readonly approvers: readonly TrustedApprover[];
 }
 
 export interface AuthorizationRequest {
   readonly issueNumber: number;
   readonly approvalCommentId: number;
+  readonly approverId: number;
   readonly approver: string;
   readonly command: string;
   readonly approvedAt: string;
@@ -24,6 +31,7 @@ export interface AuthorizationProvenance {
   readonly type: "AUTHORIZE";
   readonly issueNumber: number;
   readonly approvalCommentId: number;
+  readonly approverId: number;
   readonly approver: string;
   readonly policyVersion: number;
   readonly policySnapshot: string;
@@ -99,7 +107,7 @@ export function authorize(
   if (request.command !== APPROVAL_COMMAND) {
     throw new Error(`승인 명령은 ${APPROVAL_COMMAND}이어야 합니다`);
   }
-  if (!policy.approvers.includes(request.approver)) {
+  if (!policy.approvers.some(({ id }) => id === request.approverId)) {
     throw new Error("trusted approver가 아닙니다");
   }
   if (!isValidTimestamp(request.approvedAt)) {
@@ -114,6 +122,7 @@ export function authorize(
     type: "AUTHORIZE" as const,
     issueNumber: request.issueNumber,
     approvalCommentId: request.approvalCommentId,
+    approverId: request.approverId,
     approver: request.approver,
     policyVersion: policy.version,
     policySnapshot: policySnapshot(policy),

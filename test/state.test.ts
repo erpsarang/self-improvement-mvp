@@ -11,6 +11,7 @@ const provenance: AuthorizationProvenance = {
   type: "AUTHORIZE",
   issueNumber: 3,
   approvalCommentId: 101,
+  approverId: 178057708,
   approver: "erpsarang",
   policyVersion: 1,
   policySnapshot: "sha256:test",

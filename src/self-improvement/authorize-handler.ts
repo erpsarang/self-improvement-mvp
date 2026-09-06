@@ -17,7 +17,7 @@ export const pointerFor = (commentId: number, runId: number, runAttempt: number)
 export interface IssueCommentEvent {
   readonly action: string;
   readonly issue: { readonly number: number; readonly pull_request?: unknown };
-  readonly comment: { readonly id: number; readonly body: string; readonly created_at: string; readonly user: { readonly login: string } };
+  readonly comment: { readonly id: number; readonly body: string; readonly created_at: string; readonly user: { readonly id: number; readonly login: string } };
 }
 
 export interface AuthorizationIssueComment {
@@ -26,7 +26,7 @@ export interface AuthorizationIssueComment {
   readonly isPullRequest: boolean;
   readonly body: string;
   readonly createdAt: string;
-  readonly user: { readonly login: string; readonly type: string };
+  readonly user: { readonly id: number; readonly login: string; readonly type: string };
 }
 
 export interface WorkflowIdentity {
@@ -78,13 +78,15 @@ export async function handleAuthorization(
 
   const approval = await store.getComment(event.comment.id);
   if (!approval || approval.id !== event.comment.id || approval.issueNumber !== event.issue.number ||
-      approval.isPullRequest || approval.body !== APPROVAL_COMMAND || approval.user.login !== event.comment.user.login) {
+      approval.isPullRequest || approval.body !== APPROVAL_COMMAND || approval.user.id !== event.comment.user.id) {
     return "ignored";
   }
-  if (!policy.approvers.includes(approval.user.login)) return "ignored";
+  const trustedApprover = policy.approvers.find(({ id }) => id === approval.user.id);
+  if (!trustedApprover) return "ignored";
   const provenance = authorize({
     issueNumber: approval.issueNumber,
     approvalCommentId: approval.id,
+    approverId: approval.user.id,
     approver: approval.user.login,
     command: approval.body,
     approvedAt: approval.createdAt,
@@ -94,7 +96,7 @@ export async function handleAuthorization(
   const artifacts = await store.listArtifacts(approval.id, identity.runId);
   const existingArtifact = artifacts.find((artifact) => isTrustedAuthorizationArtifact(artifact, artifact.provenance) &&
       artifact.provenance.approvalCommentId === approval.id && artifact.provenance.issueNumber === approval.issueNumber &&
-      artifact.provenance.approver === approval.user.login && artifact.provenance.approvalCommand === approval.body &&
+      artifact.provenance.approverId === approval.user.id && artifact.provenance.approver === approval.user.login && artifact.provenance.approvalCommand === approval.body &&
       artifact.provenance.policyVersion === policy.version && artifact.provenance.policySnapshot === provenance.policySnapshot);
   if (existingArtifact) {
     const pointer = pointerFor(approval.id, existingArtifact.run.runId, existingArtifact.run.runAttempt);
@@ -107,41 +109,36 @@ export async function handleAuthorization(
   return "authorized";
 }
 
-/** Strict supported YAML subset: top-level version and a flat string array only. */
+/** Strict supported YAML subset: top-level version and a flat array of {id, login} records only. */
 export function parseTrustedApproverPolicy(source: string): TrustedApproverPolicy {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   let version: number | undefined;
-  let approvers: string[] | undefined;
+  let approvers: Array<{ id: number; login: string }> | undefined;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
     if (/^\s*(?:#.*)?$/.test(line)) continue;
     const versionMatch = /^version:\s*([1-9]\d*)\s*(?:#.*)?$/.exec(line);
     if (versionMatch) { if (version !== undefined) throw new Error("duplicate version"); version = Number(versionMatch[1]); continue; }
-    const inline = /^approvers:\s*\[(.*)\]\s*(?:#.*)?$/.exec(line);
-    if (inline) {
-      if (approvers !== undefined) throw new Error("duplicate approvers");
-      approvers = inline[1]!.trim() === "" ? [] : inline[1]!.split(",").map((item) => {
-        const match = /^\s*["']([A-Za-z0-9-]+)["']\s*$/.exec(item);
-        if (!match) throw new Error("approvers must be quoted strings");
-        return match[1]!;
-      });
-      continue;
-    }
     if (/^approvers:\s*(?:#.*)?$/.test(line)) {
       if (approvers !== undefined) throw new Error("duplicate approvers");
       approvers = [];
       while (i + 1 < lines.length && /^(?:\s|$)/.test(lines[i + 1]!)) {
-        const child = lines[++i]!;
-        if (/^\s*(?:#.*)?$/.test(child)) continue;
-        const item = /^  -\s+(?:["']([A-Za-z0-9-]+)["']|([A-Za-z0-9-]+))\s*(?:#.*)?$/.exec(child);
-        if (!item) throw new Error("approvers must be a flat string array");
-        approvers.push((item[1] ?? item[2])!);
+        const first = lines[++i]!;
+        if (/^\s*(?:#.*)?$/.test(first)) continue;
+        const idMatch = /^  - id:\s*([1-9]\d*)\s*(?:#.*)?$/.exec(first);
+        if (!idMatch || i + 1 >= lines.length) throw new Error("approvers must contain id/login records");
+        const loginMatch = /^    login:\s*(?:["']([A-Za-z0-9-]+)["']|([A-Za-z0-9-]+))\s*(?:#.*)?$/.exec(lines[++i]!);
+        const id = Number(idMatch[1]);
+        if (!loginMatch || !Number.isSafeInteger(id)) throw new Error("approvers must contain id/login records");
+        approvers.push({ id, login: (loginMatch[1] ?? loginMatch[2])! });
       }
       continue;
     }
     throw new Error("unsupported trusted approver policy YAML");
   }
-  if (version === undefined || !approvers?.length || new Set(approvers).size !== approvers.length) throw new Error("trusted approver policy 형식이 올바르지 않습니다");
+  if (version === undefined || !approvers?.length ||
+      new Set(approvers.map(({ id }) => id)).size !== approvers.length ||
+      new Set(approvers.map(({ login }) => login)).size !== approvers.length) throw new Error("trusted approver policy 형식이 올바르지 않습니다");
   return { version, approvers };
 }
 
@@ -165,11 +162,11 @@ export async function getAuthorizationComment(
     if (error instanceof GitHubApiError && error.status === 404) return undefined;
     throw error;
   }
-  const c = await response.json() as { id?: number; body?: string; created_at?: string; issue_url?: string; user?: { login?: string; type?: string } };
+  const c = await response.json() as { id?: number; body?: string; created_at?: string; issue_url?: string; user?: { id?: number; login?: string; type?: string } };
   const issueNumber = Number(/\/issues\/(\d+)$/.exec(c.issue_url ?? "")?.[1]);
   if (!Number.isInteger(issueNumber)) return undefined;
   const issue = await (await request(`/issues/${issueNumber}`)).json() as { pull_request?: unknown };
-  return { id: c.id ?? 0, issueNumber, isPullRequest: issue.pull_request !== undefined, body: c.body ?? "", createdAt: c.created_at ?? "", user: { login: c.user?.login ?? "", type: c.user?.type ?? "" } };
+  return { id: c.id ?? 0, issueNumber, isPullRequest: issue.pull_request !== undefined, body: c.body ?? "", createdAt: c.created_at ?? "", user: { id: c.user?.id ?? 0, login: c.user?.login ?? "", type: c.user?.type ?? "" } };
 }
 
 async function main(): Promise<void> {
