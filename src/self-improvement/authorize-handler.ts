@@ -45,6 +45,7 @@ export interface AuthorizationArtifact {
 
 export interface AuthorizationStore {
   getComment(commentId: number): Promise<AuthorizationIssueComment | undefined>;
+  hasPointer(issueNumber: number, body: string): Promise<boolean>;
   listArtifacts(commentId: number, runId: number): Promise<readonly AuthorizationArtifact[]>;
   stagePointer(body: string): Promise<void>;
   writeProvenance(provenance: AuthorizationProvenance): Promise<void>;
@@ -91,10 +92,13 @@ export async function handleAuthorization(
   }, policy);
 
   const artifacts = await store.listArtifacts(approval.id, identity.runId);
-  if (artifacts.some((artifact) => isTrustedAuthorizationArtifact(artifact, artifact.provenance) &&
+  const existingArtifact = artifacts.find((artifact) => isTrustedAuthorizationArtifact(artifact, artifact.provenance) &&
       artifact.provenance.approvalCommentId === approval.id && artifact.provenance.issueNumber === approval.issueNumber &&
       artifact.provenance.approver === approval.user.login && artifact.provenance.approvalCommand === approval.body &&
-      artifact.provenance.policyVersion === policy.version && artifact.provenance.policySnapshot === provenance.policySnapshot)) {
+      artifact.provenance.policyVersion === policy.version && artifact.provenance.policySnapshot === provenance.policySnapshot);
+  if (existingArtifact) {
+    const pointer = pointerFor(approval.id, existingArtifact.run.runId, existingArtifact.run.runAttempt);
+    if (!await store.hasPointer(approval.issueNumber, pointer)) await store.stagePointer(pointer);
     return "already-authorized";
   }
 
@@ -141,6 +145,33 @@ export function parseTrustedApproverPolicy(source: string): TrustedApproverPolic
   return { version, approvers };
 }
 
+export class GitHubApiError extends Error {
+  constructor(readonly status: number) {
+    super(`GitHub API 오류: ${status}`);
+  }
+}
+
+type GitHubRequest = (path: string, init?: RequestInit) => Promise<Response>;
+
+/** A deleted approval is absent; every other API failure remains fail-closed. */
+export async function getAuthorizationComment(
+  commentId: number,
+  request: GitHubRequest,
+): Promise<AuthorizationIssueComment | undefined> {
+  let response: Response;
+  try {
+    response = await request(`/issues/comments/${commentId}`);
+  } catch (error) {
+    if (error instanceof GitHubApiError && error.status === 404) return undefined;
+    throw error;
+  }
+  const c = await response.json() as { id?: number; body?: string; created_at?: string; issue_url?: string; user?: { login?: string; type?: string } };
+  const issueNumber = Number(/\/issues\/(\d+)$/.exec(c.issue_url ?? "")?.[1]);
+  if (!Number.isInteger(issueNumber)) return undefined;
+  const issue = await (await request(`/issues/${issueNumber}`)).json() as { pull_request?: unknown };
+  return { id: c.id ?? 0, issueNumber, isPullRequest: issue.pull_request !== undefined, body: c.body ?? "", createdAt: c.created_at ?? "", user: { login: c.user?.login ?? "", type: c.user?.type ?? "" } };
+}
+
 async function main(): Promise<void> {
   const eventPath = process.env.GITHUB_EVENT_PATH;
   const repository = process.env.GITHUB_REPOSITORY;
@@ -153,17 +184,17 @@ async function main(): Promise<void> {
   const policy = parseTrustedApproverPolicy(await readFile("policy/trusted-approvers.yml", "utf8"));
   const request = async (path: string, init?: RequestInit): Promise<Response> => {
     const response = await fetch(`https://api.github.com/repos/${repository}${path}`, { ...init, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...init?.headers } });
-    if (!response.ok) throw new Error(`GitHub API 오류: ${response.status}`);
+    if (!response.ok) throw new GitHubApiError(response.status);
     return response;
   };
   const store: AuthorizationStore = {
-    async getComment(commentId) {
-      const response = await request(`/issues/comments/${commentId}`);
-      const c = await response.json() as { id?: number; body?: string; created_at?: string; issue_url?: string; user?: { login?: string; type?: string } };
-      const issueNumber = Number(/\/issues\/(\d+)$/.exec(c.issue_url ?? "")?.[1]);
-      if (!Number.isInteger(issueNumber)) return undefined;
-      const issue = await (await request(`/issues/${issueNumber}`)).json() as { pull_request?: unknown };
-      return { id: c.id ?? 0, issueNumber, isPullRequest: issue.pull_request !== undefined, body: c.body ?? "", createdAt: c.created_at ?? "", user: { login: c.user?.login ?? "", type: c.user?.type ?? "" } };
+    async getComment(commentId) { return getAuthorizationComment(commentId, request); },
+    async hasPointer(issueNumber, body) {
+      for (let page = 1; ; page += 1) {
+        const data = await (await request(`/issues/${issueNumber}/comments?per_page=100&page=${page}`)).json() as Array<{ body?: string }>;
+        if (data.some((comment) => comment.body?.trim() === body)) return true;
+        if (data.length < 100) return false;
+      }
     },
     async listArtifacts(commentId, workflowRunId) {
       const data = await (await request(`/actions/runs/${workflowRunId}/artifacts?per_page=100`)).json() as { artifacts?: Array<{ id: number; name: string; archive_download_url: string; workflow_run?: { id?: number } }> };
