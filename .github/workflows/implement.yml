@@ -17,6 +17,8 @@ jobs:
       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
       github.event.workflow_run.event == 'issue_comment'
     runs-on: ubuntu-latest
+    outputs:
+      authorization-artifact-name: ${{ steps.authorization_artifact.outputs.name }}
     env:
       IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
 
@@ -100,24 +102,83 @@ jobs:
           permission-profile: ":workspace"
           prompt-file: codex-prompt.txt
 
-      - name: candidate patch 생성
+      - name: exact authorized base 기준 candidate patch 생성
         shell: bash
+        env:
+          BASE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           rm -f codex-prompt.txt
           git add -N .
-          git diff --binary --full-index -- . > "$IMPLEMENT_RUNTIME_DIR/candidate.patch"
+          git diff --binary --full-index "$BASE_SHA" -- . > "$IMPLEMENT_RUNTIME_DIR/candidate.patch"
           if [ ! -s "$IMPLEMENT_RUNTIME_DIR/candidate.patch" ]; then
             echo "candidate.patch is empty" >&2
             exit 1
           fi
 
-      - name: IMPLEMENT provenance 생성
+      - name: untrusted patch 임시 artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: implement-untrusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/implement/candidate.patch
+          if-no-files-found: error
+
+  record:
+    name: clean IMPLEMENT provenance 기록
+    needs: implement
+    runs-on: ubuntu-latest
+    env:
+      IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
+
+    steps:
+      - name: 승인 시점 exact SHA clean checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: AUTHORIZE artifact 재다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.implement.outputs.authorization-artifact-name }}
+          path: ${{ runner.temp }}/authorize
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: AUTHORIZE artifact clean runtime에 복사
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$IMPLEMENT_RUNTIME_DIR"
+          mapfile -t files < <(find "${RUNNER_TEMP}/authorize" -type f -name authorize.json -print)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "authorize.json must exist exactly once" >&2
+            exit 1
+          fi
+          cp "${files[0]}" "$IMPLEMENT_RUNTIME_DIR/authorize.json"
+
+      - name: untrusted patch artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: implement-untrusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/implement
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: clean checkout 의존성 설치
+        run: npm ci
+
+      - name: clean code로 IMPLEMENT provenance 생성
         run: npm exec -- tsx src/self-improvement/implement-handler.ts finalize
         env:
+          AUTHORIZE_JSON: ${{ runner.temp }}/implement/authorize.json
           AI_RESULT_ID: codex-action-run:${{ github.run_id }}:${{ github.run_attempt }}
 
-      - name: untrusted candidate artifact 저장
+      - name: candidate artifact 저장
         uses: actions/upload-artifact@v4
         with:
           name: implement-candidate-${{ github.event.workflow_run.id }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
