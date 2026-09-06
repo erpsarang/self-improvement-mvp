@@ -127,27 +127,22 @@ jobs:
           permission-profile: ":workspace"
           prompt-file: codex-prompt.txt
 
-      - name: exact authorized base 기준 candidate patch 생성
+      - name: trusted prompt 제거
         if: steps.authorization_artifact.outputs.should_run == 'true'
         shell: bash
-        env:
-          BASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          rm -f codex-prompt.txt
-          git add -N .
-          git diff --binary --full-index "$BASE_SHA" -- . > "$IMPLEMENT_RUNTIME_DIR/candidate.patch"
-          if [ ! -s "$IMPLEMENT_RUNTIME_DIR/candidate.patch" ]; then
-            echo "candidate.patch is empty" >&2
-            exit 1
-          fi
+        run: rm -f codex-prompt.txt
 
-      - name: untrusted patch 임시 artifact 저장
+      - name: untrusted workspace snapshot 저장
         if: steps.authorization_artifact.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: implement-untrusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/implement/candidate.patch
+          name: implement-workspace-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            .
+            !.git/**
+            !node_modules/**
+            !codex-prompt.txt
+          include-hidden-files: true
           if-no-files-found: error
 
   record:
@@ -186,11 +181,11 @@ jobs:
           fi
           cp "${files[0]}" "$IMPLEMENT_RUNTIME_DIR/authorize.json"
 
-      - name: untrusted patch artifact 다운로드
+      - name: untrusted workspace snapshot 다운로드
         uses: actions/download-artifact@v4
         with:
-          name: implement-untrusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/implement
+          name: implement-workspace-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-workspace
 
       - name: Node 설정
         uses: actions/setup-node@v4
@@ -200,6 +195,52 @@ jobs:
 
       - name: clean checkout 의존성 설치
         run: npm ci
+
+      - name: clean Git metadata로 candidate patch 생성
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate-workspace
+        run: |
+          set -euo pipefail
+          PATCH_WORKTREE="${RUNNER_TEMP}/candidate-patch-worktree"
+          PATCH_FILE="$IMPLEMENT_RUNTIME_DIR/candidate.patch"
+
+          git worktree add --detach "$PATCH_WORKTREE" "$BASE_SHA"
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='node_modules/' \
+            "$CANDIDATE_DIR/" "$PATCH_WORKTREE/"
+
+          : > "$PATCH_FILE"
+          (
+            cd "$PATCH_WORKTREE"
+            export GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL=/dev/null
+            unset GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_CONFIG_COUNT || true
+
+            git -c core.hooksPath=/dev/null diff \
+              --binary --full-index --no-ext-diff --no-textconv \
+              "$BASE_SHA" -- . >> "$PATCH_FILE"
+
+            while IFS= read -r -d '' file; do
+              set +e
+              git -c core.hooksPath=/dev/null diff \
+                --no-index --binary --full-index --no-ext-diff --no-textconv \
+                /dev/null "$file" >> "$PATCH_FILE"
+              status=$?
+              set -e
+              if [ "$status" -gt 1 ]; then
+                echo "untracked file diff failed for $file: $status" >&2
+                exit "$status"
+              fi
+            done < <(git -c core.hooksPath=/dev/null ls-files --others -z)
+          )
+
+          if [ ! -s "$PATCH_FILE" ]; then
+            echo "candidate.patch is empty" >&2
+            exit 1
+          fi
 
       - name: clean code로 IMPLEMENT provenance 생성
         run: npm exec -- tsx src/self-improvement/implement-handler.ts finalize
