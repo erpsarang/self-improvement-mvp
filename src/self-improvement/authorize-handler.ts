@@ -150,6 +150,43 @@ export class GitHubApiError extends Error {
 
 type GitHubRequest = (path: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Read candidate artifacts without turning GitHub retrieval failures into a
+ * missing authorization. Only archives that were retrieved successfully but
+ * do not contain valid provenance are ignored.
+ */
+export async function listAuthorizationArtifacts(
+  commentId: number,
+  workflowRunId: number,
+  repository: string,
+  request: GitHubRequest,
+): Promise<readonly AuthorizationArtifact[]> {
+  const data = await (await request(`/actions/runs/${workflowRunId}/artifacts?per_page=100`)).json() as { artifacts?: Array<{ id: number; name: string; archive_download_url: string; workflow_run?: { id?: number } }> };
+  const results: AuthorizationArtifact[] = [];
+  for (const artifact of data.artifacts ?? []) {
+    const attemptMatch = new RegExp(`^authorize-approval-${commentId}-attempt-([1-9]\\d*)$`).exec(artifact.name);
+    const artifactRunId = artifact.workflow_run?.id;
+    if (!attemptMatch || artifactRunId !== workflowRunId) continue;
+
+    const artifactAttempt = Number(attemptMatch[1]);
+    // These requests deliberately remain outside the malformed-archive catch:
+    // treating a transient API failure as "not found" could create a duplicate.
+    const run = await (await request(`/actions/runs/${artifactRunId}/attempts/${artifactAttempt}`)).json() as { id: number; run_attempt: number; head_sha: string; path: string; repository?: { full_name?: string } };
+    const zip = Buffer.from(await (await request(artifact.archive_download_url.replace(`https://api.github.com/repos/${repository}`, ""))).arrayBuffer());
+    const tmp = `/tmp/authorize-${artifact.id}.zip`;
+    await writeFile(tmp, zip);
+
+    try {
+      const { stdout } = await promisify(execFile)("unzip", ["-p", tmp, "authorize.json"]);
+      results.push({ name: artifact.name, provenance: JSON.parse(stdout) as AuthorizationProvenance, run: { repository: run.repository?.full_name ?? "", workflowPath: run.path as typeof WORKFLOW_PATH, runId: run.id, runAttempt: run.run_attempt, githubSha: run.head_sha } });
+    } catch (error) {
+      if (!(error instanceof SyntaxError) && !(error instanceof Error && "code" in error)) throw error;
+      // A successfully downloaded unrelated/malformed archive is not a trust anchor.
+    }
+  }
+  return results;
+}
+
 /** A deleted approval is absent; every other API failure remains fail-closed. */
 export async function getAuthorizationComment(
   commentId: number,
@@ -194,27 +231,7 @@ async function main(): Promise<void> {
       }
     },
     async listArtifacts(commentId, workflowRunId) {
-      const data = await (await request(`/actions/runs/${workflowRunId}/artifacts?per_page=100`)).json() as { artifacts?: Array<{ id: number; name: string; archive_download_url: string; workflow_run?: { id?: number } }> };
-      const results: AuthorizationArtifact[] = [];
-      for (const artifact of data.artifacts ?? []) {
-        const attemptMatch = new RegExp(`^authorize-approval-${commentId}-attempt-([1-9]\\d*)$`).exec(artifact.name);
-        const artifactRunId = artifact.workflow_run?.id;
-        if (!attemptMatch || artifactRunId !== workflowRunId) continue;
-        try {
-          const artifactAttempt = Number(attemptMatch[1]);
-          // The ordinary run endpoint reports the latest attempt after a re-run. Query
-          // the immutable historical attempt named by the artifact instead.
-          const run = await (await request(`/actions/runs/${artifactRunId}/attempts/${artifactAttempt}`)).json() as { id: number; run_attempt: number; head_sha: string; path: string; repository?: { full_name?: string } };
-          const zip = Buffer.from(await (await request(artifact.archive_download_url.replace(`https://api.github.com/repos/${repository}`, ""))).arrayBuffer());
-          const tmp = `/tmp/authorize-${artifact.id}.zip`;
-          await writeFile(tmp, zip);
-          const { stdout } = await promisify(execFile)("unzip", ["-p", tmp, "authorize.json"]);
-          results.push({ name: artifact.name, provenance: JSON.parse(stdout) as AuthorizationProvenance, run: { repository: run.repository?.full_name ?? "", workflowPath: run.path as typeof WORKFLOW_PATH, runId: run.id, runAttempt: run.run_attempt, githubSha: run.head_sha } });
-        } catch {
-          // An unrelated or malformed same-name artifact is never a trust anchor.
-        }
-      }
-      return results;
+      return listAuthorizationArtifacts(commentId, workflowRunId, repository, request);
     },
     async stagePointer(body) { await writeFile("authorize-pointer.txt", `${body}\n`); },
     async writeProvenance(provenance) { await writeFile("authorize.json", `${JSON.stringify(provenance, null, 2)}\n`); },

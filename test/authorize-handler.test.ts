@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { authorize } from "../src/self-improvement/authorization.js";
-import { artifactNameFor, getAuthorizationComment, GitHubApiError, handleAuthorization, isTrustedAuthorizationArtifact, parseTrustedApproverPolicy, pointerFor, WORKFLOW_PATH, type AuthorizationArtifact, type AuthorizationIssueComment, type AuthorizationStore, type IssueCommentEvent, type WorkflowIdentity } from "../src/self-improvement/authorize-handler.js";
+import { artifactNameFor, getAuthorizationComment, GitHubApiError, handleAuthorization, isTrustedAuthorizationArtifact, listAuthorizationArtifacts, parseTrustedApproverPolicy, pointerFor, WORKFLOW_PATH, type AuthorizationArtifact, type AuthorizationIssueComment, type AuthorizationStore, type IssueCommentEvent, type WorkflowIdentity } from "../src/self-improvement/authorize-handler.js";
 
 const policy = { version: 1, approvers: [{ id: 178057708, login: "erpsarang" }] } as const;
 const identity: WorkflowIdentity = { repository: "owner/repo", workflowPath: WORKFLOW_PATH, runId: 42, runAttempt: 1, githubSha: "a".repeat(40) };
@@ -63,6 +63,18 @@ test("approval comment 404만 undefined로 변환하고 다른 API 오류는 전
   assert.equal(await getAuthorizationComment(101, async () => { throw new GitHubApiError(404); }), undefined);
   await assert.rejects(() => getAuthorizationComment(101, async () => { throw new GitHubApiError(500); }), /500/);
   await assert.rejects(() => getAuthorizationComment(101, async () => { throw new Error("network"); }), /network/);
+});
+
+test("기존 artifact metadata/archive 조회 실패는 전파해 중복 AUTHORIZE를 막는다", async () => {
+  const artifactList = new Response(JSON.stringify({ artifacts: [{ id: 7, name: artifactNameFor(101, 1), archive_download_url: "https://api.github.com/repos/owner/repo/actions/artifacts/7/zip", workflow_run: { id: 42 } }] }));
+  for (const failingPath of ["/actions/runs/42/attempts/1", "/actions/artifacts/7/zip"]) {
+    const request = async (path: string): Promise<Response> => {
+      if (path === "/actions/runs/42/artifacts?per_page=100") return artifactList.clone();
+      if (path === failingPath) throw new GitHubApiError(503);
+      return new Response(JSON.stringify({ id: 42, run_attempt: 1, head_sha: identity.githubSha, path: WORKFLOW_PATH, repository: { full_name: identity.repository } }));
+    };
+    await assert.rejects(() => listAuthorizationArtifacts(101, 42, "owner/repo", request), /503/);
+  }
 });
 
 test("forged bot Issue comment는 trust anchor가 아니며 artifact metadata 위조도 거부한다", async () => {
