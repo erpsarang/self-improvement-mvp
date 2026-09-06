@@ -53,7 +53,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 - Reviewer는 verified SHA만 입력받고 Implementer와 가능한 한 분리됩니다.
 - decision은 `PASS`, `LOCAL_FIX`, `STRUCTURAL_CHANGE`처럼 구조화합니다.
 - `LOCAL_FIX`는 다시 `SEAL → PUBLISH → VERIFY → REVIEW` 경계를 거치며 최대 2회로 제한합니다.
-- `STRUCTURAL_CHANGE`나 한도 초과는 자율 범위 확대가 아니라 `STOPPED`로 귀결합니다.
+- `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`로의 전환은 항상 이 경계를 다시 거친 REVIEW decision 후에만 결정합니다. `STRUCTURAL_CHANGE`나 한도 초과는 자율 범위 확대가 아니라 `STOPPED`로 귀결합니다.
 
 ## Phase 5 — GRAPH Orchestration
 

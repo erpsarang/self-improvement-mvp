@@ -70,13 +70,16 @@ Trusted PUBLISH                  published_head_sha
 Exact SHA VERIFY                 verification provenance
      ↓
 Semantic Review                  verified SHA only
-     ↓
-LOCAL FIX <= 2                   bounded LOOP edge
-     또는
-MERGE_READY / STOPPED            terminal decision
-     ↓
-Human Merge                      Human-only boundary
+     ├─ PASS ───────────────────→ MERGE_READY → Human Merge (Human-only)
+     ├─ STRUCTURAL_CHANGE ──────────→ STOPPED
+     └─ LOCAL FIX (fixCount < 2) ─────────→ FIXING
+                                          ↓
+                         SEAL → PUBLISH → VERIFY exact published SHA → REVIEW
+                                          └─ 재검토 decision에서만
+                                             MERGE_READY / STOPPED / 다음 FIX
 ```
+
+`LOCAL FIX` 분기는 terminal decision으로 직행하지 않습니다. `FIXING --SEAL--> SEALED`로 복귀해 `PUBLISH → VERIFY exact published SHA → REVIEW`를 반드시 재실행하며, `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`는 이 재검토의 decision에서만 결정됩니다.
 
 `state.ts`는 위 흐름에서 이미 발생한 사건을 검증해 기록할 뿐 GitHub 또는 Codex를 호출하지 않습니다. `RECORD_PUBLISHED`는 실제 PUBLISH 구현이 아니라 Trusted Rail이 반환할 immutable `published_head_sha`를 기록하는 경계입니다. `PASS` 역시 `MERGE_READY`까지만 이동하며 merge를 실행하지 않습니다.
 

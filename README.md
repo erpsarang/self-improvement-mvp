@@ -63,11 +63,12 @@ Issue
 → IMPLEMENT
 → SEAL
 → PUBLISH
-→ VERIFY exact published HEAD
+→ VERIFY exact published SHA
 → SEMANTIC REVIEW
-→ 필요 시 FIX <= 2
-→ MERGE_READY / STOPPED
-→ Human Merge
+├─ PASS → MERGE_READY → Human Merge
+├─ STRUCTURAL_CHANGE → STOPPED
+└─ LOCAL FIX (fixCount < 2) → FIX → SEAL → PUBLISH → VERIFY exact published SHA → SEMANTIC REVIEW
+   └─ 재검토 decision: PASS → MERGE_READY / STRUCTURAL_CHANGE·한도 초과 → STOPPED / LOCAL FIX → 동일 경계 재진입
 ```
 
 - Issue #1의 상태 머신과 Trust Boundary는 모든 capability가 공유하는 **Core Trust Layer**의 첫 구현입니다.
@@ -82,7 +83,7 @@ Issue
 - untrusted candidate patch는 trusted `SEAL` 이후에만 Trusted Rail의 `PUBLISH` 대상이 됩니다.
 - `VERIFY`는 immutable `published_head_sha`와 exact match인 대상만 성공시킵니다.
 - Semantic Review는 verified SHA만 검토합니다.
-- `FIX`는 최대 2회이며 `LOCAL FIX`와 `STRUCTURAL CHANGE`를 구분합니다.
+- `FIX`는 최대 2회이며 `LOCAL FIX`와 `STRUCTURAL CHANGE`를 구분합니다. 각 `FIX` 후에는 반드시 `SEAL → PUBLISH → VERIFY exact published SHA → REVIEW`를 다시 거친 뒤, 그 재검토 decision에서만 `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`로 전환합니다.
 
 ## Roadmap
 
