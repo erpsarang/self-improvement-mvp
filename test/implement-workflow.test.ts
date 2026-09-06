@@ -11,6 +11,19 @@ test("AUTHORIZE rerun이 이전 artifact를 재사용하면 IMPLEMENT를 no-op �
   assert.match(workflow, /if: needs\.implement\.outputs\.should_run == 'true'/);
 });
 
+test("일반 댓글로 AUTHORIZE job이 skipped되면 IMPLEMENT를 정상 no-op 처리한다", () => {
+  assert.match(workflow, /listJobsForWorkflowRun/);
+  assert.match(workflow, /job\.name === 'authorize'/);
+  assert.match(workflow, /authorizeJobs\.length === 1 && authorizeJobs\[0\]\.conclusion === 'skipped'/);
+  assert.match(workflow, /AUTHORIZE job was skipped; IMPLEMENT is a no-op/);
+});
+
+test("artifact가 없지만 AUTHORIZE job이 skipped가 아니면 fail-closed 한다", () => {
+  assert.match(workflow, /if \(matches\.length === 0\)/);
+  assert.match(workflow, /core\.setFailed\(/);
+  assert.match(workflow, /expected one current AUTHORIZE artifact, one earlier replay artifact, or a skipped AUTHORIZE job/);
+});
+
 test("새 AUTHORIZE artifact가 있는 경우에만 Codex와 candidate 생성 단계가 실행된다", () => {
   assert.match(workflow, /core\.setOutput\('should_run', 'true'\)/);
   const guardedSteps = workflow.match(/if: steps\.authorization_artifact\.outputs\.should_run == 'true'/g) ?? [];
@@ -18,13 +31,14 @@ test("새 AUTHORIZE artifact가 있는 경우에만 Codex와 candidate 생성 �
   assert.match(workflow, /uses: openai\/codex-action@v1/);
 });
 
-test("untrusted job은 Git patch를 만들지 않고 dependency를 제외한 workspace snapshot만 남긴다", () => {
+test("untrusted job은 Git patch를 만들지 않고 mode 보존 tar snapshot만 남긴다", () => {
   assert.doesNotMatch(workflow, /git add -N \./);
   const implementSection = workflow.split("\n  record:\n")[0] ?? "";
   assert.doesNotMatch(implementSection, /git diff/);
-  assert.match(workflow, /name: untrusted workspace snapshot 저장/);
-  assert.match(workflow, /!node_modules\/\*\*/);
-  assert.match(workflow, /include-hidden-files: true/);
+  assert.match(workflow, /name: mode 보존 workspace tar 생성/);
+  assert.match(workflow, /--exclude='\.\/node_modules'/);
+  assert.match(workflow, /candidate-workspace\.tar\.gz/);
+  assert.match(workflow, /tar -xzf/);
 });
 
 test("candidate patch는 clean worktree의 Git metadata와 외부 helper 비활성화 상태에서 생성한다", () => {
