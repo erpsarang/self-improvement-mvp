@@ -2,16 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const workflow = readFileSync(".github/workflows/seal.yml", "utf8");
+const workflow = readFileSync(".github/workflows/trusted-rail.yml", "utf8");
 
-test("Trusted SEAL은 Untrusted IMPLEMENT 완료 후에만 시작한다", () => {
+test("Trusted Rail은 Untrusted IMPLEMENT 완료 후 한 번만 진입한다", () => {
+  assert.match(workflow, /name: Trusted Rail/);
   assert.match(workflow, /workflows:\s*\["Untrusted IMPLEMENT"\]/);
   assert.match(workflow, /types:\s*\[completed\]/);
   assert.match(workflow, /run\.path !== '\.github\/workflows\/implement\.yml'/);
 });
 
-test("Trusted SEAL workflow는 read-only GitHub 권한만 가진다", () => {
-  assert.match(workflow, /permissions:\s*\n\s+contents: read\s*\n\s+actions: read/);
+test("Trusted Rail 전체 권한은 비어 있고 현재 SEAL job만 read-only 권한을 가진다", () => {
+  assert.match(workflow, /permissions:\s*\{\}/);
+  assert.match(
+    workflow,
+    /seal:[\s\S]*?permissions:\s*\n\s+contents: read\s*\n\s+actions: read/,
+  );
   assert.doesNotMatch(workflow, /contents: write/);
   assert.doesNotMatch(workflow, /pull-requests: write/);
   assert.doesNotMatch(workflow, /issues: write/);
@@ -42,4 +47,9 @@ test("source exact SHA를 credential 없이 checkout하고 sealed artifact만 �
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /sealed\.patch/);
   assert.match(workflow, /seal\.json/);
+});
+
+test("후속 단계는 별도 workflow_run 체인이 아니라 Trusted Rail 내부 job으로 확장한다", () => {
+  assert.match(workflow, /후속 PUBLISH \/ VERIFY \/ REVIEW/);
+  assert.match(workflow, /Trusted Rail 내부의 독립 job/);
 });
