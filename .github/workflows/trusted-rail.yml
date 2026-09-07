@@ -19,8 +19,6 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    env:
-      SEAL_RUNTIME_DIR: ${{ runner.temp }}/seal
 
     steps:
       - name: IMPLEMENT candidate artifact 선택 또는 no-op 판정
@@ -98,7 +96,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$SEAL_RUNTIME_DIR"
+          mkdir -p "${RUNNER_TEMP}/seal"
           mapfile -t implement_files < <(find "${RUNNER_TEMP}/candidate" -type f -name implement.json -print)
           mapfile -t patch_files < <(find "${RUNNER_TEMP}/candidate" -type f -name candidate.patch -print)
           mapfile -t all_files < <(find "${RUNNER_TEMP}/candidate" -type f -print)
@@ -106,8 +104,8 @@ jobs:
             echo "candidate artifact must contain exactly candidate.patch and implement.json" >&2
             exit 1
           fi
-          cp "${implement_files[0]}" "$SEAL_RUNTIME_DIR/implement.json"
-          cp "${patch_files[0]}" "$SEAL_RUNTIME_DIR/candidate.patch"
+          cp "${implement_files[0]}" "${RUNNER_TEMP}/seal/implement.json"
+          cp "${patch_files[0]}" "${RUNNER_TEMP}/seal/candidate.patch"
 
       - name: Node 설정
         if: steps.candidate_artifact.outputs.should_run == 'true'
