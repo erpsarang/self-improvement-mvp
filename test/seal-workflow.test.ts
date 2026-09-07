@@ -26,7 +26,12 @@ test("SEAL은 candidate를 실행하거나 publish하지 않는다", () => {
 });
 
 test("candidate artifact는 정확한 source run에 결합되고 ambiguity를 fail-closed 한다", () => {
-  assert.match(workflow, /implement-candidate-\(\\d\+\)-\$\{run\.id\}-attempt-\$\{run\.run_attempt\}/);
+  assert.equal(
+    workflow.includes(
+      "const pattern = new RegExp(`^implement-candidate-(\\\\d+)-${run.id}-attempt-${run.run_attempt}$`);",
+    ),
+    true,
+  );
   assert.match(workflow, /matches\.length === 1/);
   assert.match(workflow, /valid no-op source run/);
   assert.match(workflow, /candidate artifact must contain exactly candidate\.patch and implement\.json/);
