@@ -5,7 +5,7 @@ on:
     workflows: ["Untrusted IMPLEMENT"]
     types: [completed]
 
-# Trusted Rail에 진입했다고 전체 workflow가 write 권한을 얻지 않는다.
+# Trusted Rail에 진입했다고 전체 workflow가 권한을 얻지 않는다.
 # 각 job은 필요한 최소 권한을 명시한다. 현재 구현된 SEAL은 read-only다.
 permissions: {}
 
@@ -148,13 +148,5 @@ jobs:
             ${{ runner.temp }}/seal/seal.json
           if-no-files-found: error
 
-  # 다음 단계는 별도 workflow_run 체인이 아니라 이 Trusted Rail 내부 job으로 추가한다.
-  # publish:
-  #   needs: seal
-  #   permissions: { contents: write, pull-requests: write }
-  # verify:
-  #   needs: publish
-  #   permissions: { contents: read, actions: read }
-  # review:
-  #   needs: verify
-  #   최소 권한으로 verified exact SHA만 소비
+# 후속 PUBLISH / VERIFY / REVIEW는 별도 workflow_run 체인이 아니라
+# 이 Trusted Rail 내부의 독립 job으로 추가하고, 각 job에 최소 권한을 부여한다.
