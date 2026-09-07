@@ -392,5 +392,216 @@ jobs:
           path: ${{ runner.temp }}/publish/publish.json
           if-no-files-found: error
 
-# 후속 VERIFY / REVIEW는 별도 workflow_run 체인이 아니라
-# 이 Trusted Rail 내부의 독립 job으로 추가하고, 각 job에 최소 권한을 부여한다.
+  verify:
+    name: exact published SHA VERIFY
+    needs: publish
+    if: needs.publish.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: trusted VERIFY control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: current 또는 이전 PUBLISH provenance artifact 선택
+        id: publish_artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const trustedRunId = Number(process.env.GITHUB_RUN_ID);
+            const trustedRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(trustedRunId) || trustedRunId <= 0) {
+              core.setFailed('invalid trusted run id');
+              return;
+            }
+            if (!Number.isSafeInteger(trustedRunAttempt) || trustedRunAttempt <= 0) {
+              core.setFailed('invalid trusted run attempt');
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: trustedRunId,
+              per_page: 100,
+            });
+
+            const pattern = new RegExp(
+              `^publish-provenance-issue-([1-9]\\d*)-${trustedRunId}-attempt-([1-9]\\d*)$`,
+            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match
+                  ? { artifact, issueNumber: Number(match[1]), attempt: Number(match[2]) }
+                  : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= trustedRunAttempt);
+
+            const current = matches.filter(({ attempt }) => attempt === trustedRunAttempt);
+            if (current.length === 1) {
+              core.setOutput('name', current[0].artifact.name);
+              return;
+            }
+            if (current.length > 1) {
+              core.setFailed(`ambiguous current PUBLISH artifacts: ${current.length}`);
+              return;
+            }
+
+            const prior = matches
+              .filter(({ attempt }) => attempt < trustedRunAttempt)
+              .sort((left, right) => right.attempt - left.attempt);
+            if (prior.length === 0) {
+              core.setFailed('no current or prior PUBLISH provenance artifact found');
+              return;
+            }
+
+            const latestAttempt = prior[0].attempt;
+            const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
+            if (latest.length !== 1) {
+              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              return;
+            }
+
+            core.info(`VERIFY attempt ${trustedRunAttempt} reuses PUBLISH artifact from attempt ${latestAttempt}`);
+            core.setOutput('name', latest[0].artifact.name);
+
+      - name: PUBLISH provenance artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.publish_artifact.outputs.name }}
+          path: ${{ runner.temp }}/verify-source
+
+      - name: PUBLISH provenance artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/verify"
+          mapfile -t publish_files < <(find "${RUNNER_TEMP}/verify-source" -type f -name publish.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/verify-source" -type f -print)
+          if [ "${#publish_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+            echo "PUBLISH provenance artifact must contain exactly publish.json" >&2
+            exit 1
+          fi
+          cp "${publish_files[0]}" "${RUNNER_TEMP}/verify/publish.json"
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted VERIFY control-plane 의존성 설치
+        run: npm ci
+
+      - name: PUBLISH provenance 재검증 및 VERIFY 입력 준비
+        id: prepare_verify
+        run: npm exec -- tsx src/self-improvement/verify-handler.ts prepare
+        env:
+          PUBLISH_JSON: ${{ runner.temp }}/verify/publish.json
+          PUBLISH_ARTIFACT_NAME: ${{ steps.publish_artifact.outputs.name }}
+          VERIFY_REPOSITORY: ${{ github.repository }}
+
+      - name: remote publish HEAD exact match 확인
+        uses: actions/github-script@v7
+        env:
+          PUBLISHED_BRANCH: ${{ steps.prepare_verify.outputs.published_branch }}
+          PUBLISHED_HEAD_SHA: ${{ steps.prepare_verify.outputs.published_head_sha }}
+        with:
+          script: |
+            const branch = process.env.PUBLISHED_BRANCH;
+            const expected = process.env.PUBLISHED_HEAD_SHA;
+            const { data } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branch}`,
+            });
+            if (data.object.type !== 'commit' || data.object.sha !== expected) {
+              core.setFailed(`remote publish HEAD mismatch: expected=${expected}, actual=${data.object.sha}`);
+            }
+
+      - name: exact published SHA checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.prepare_verify.outputs.published_head_sha }}
+          path: verified-target
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: exact checkout SHA 확인
+        id: verified_head
+        shell: bash
+        working-directory: verified-target
+        env:
+          EXPECTED_SHA: ${{ steps.prepare_verify.outputs.published_head_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "exact checkout SHA mismatch" >&2
+            exit 1
+          fi
+          echo "sha=${ACTUAL_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: published candidate 의존성 설치
+        working-directory: verified-target
+        run: npm ci
+
+      - name: published candidate 테스트
+        working-directory: verified-target
+        run: npm test
+
+      - name: published candidate 빌드
+        working-directory: verified-target
+        run: npm run build
+
+      - name: published commit diff whitespace 검증
+        working-directory: verified-target
+        run: git show --check --format= HEAD
+
+      - name: 검증 종료 시 remote publish HEAD 재확인
+        uses: actions/github-script@v7
+        env:
+          PUBLISHED_BRANCH: ${{ steps.prepare_verify.outputs.published_branch }}
+          PUBLISHED_HEAD_SHA: ${{ steps.prepare_verify.outputs.published_head_sha }}
+        with:
+          script: |
+            const branch = process.env.PUBLISHED_BRANCH;
+            const expected = process.env.PUBLISHED_HEAD_SHA;
+            const { data } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branch}`,
+            });
+            if (data.object.type !== 'commit' || data.object.sha !== expected) {
+              core.setFailed(`remote publish HEAD moved during VERIFY: expected=${expected}, actual=${data.object.sha}`);
+            }
+
+      - name: VERIFY provenance 생성
+        run: npm exec -- tsx src/self-improvement/verify-handler.ts finalize
+        env:
+          PUBLISH_JSON: ${{ runner.temp }}/verify/publish.json
+          PUBLISH_ARTIFACT_NAME: ${{ steps.publish_artifact.outputs.name }}
+          VERIFY_REPOSITORY: ${{ github.repository }}
+          VERIFY_RUN_ID: ${{ github.run_id }}
+          VERIFY_RUN_ATTEMPT: ${{ github.run_attempt }}
+          VERIFY_TRUSTED_CODE_SHA: ${{ github.sha }}
+          VERIFIED_HEAD_SHA: ${{ steps.verified_head.outputs.sha }}
+          VERIFY_JSON: ${{ runner.temp }}/verify/verify.json
+
+      - name: VERIFY provenance artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-provenance-issue-${{ steps.prepare_verify.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verify/verify.json
+          if-no-files-found: error
+
+# 후속 REVIEW는 별도 workflow_run 체인이 아니라
+# 이 Trusted Rail 내부의 독립 job으로 추가하고 최소 권한을 부여한다.
