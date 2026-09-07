@@ -37,7 +37,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 - 요구사항, 계획, 실행 환경과 candidate artifact 사이의 provenance를 보존합니다.
 - candidate는 Trusted Rail의 검사를 거쳐야 다음 단계로 이동합니다.
 
-**현재 증거:** Issue #10 / PR #11에서 `Trusted AUTHORIZE → untrusted IMPLEMENT → candidate.patch + implement.json`을 구현했습니다. Issue #12 / PR #13은 이 candidate를 실행하지 않고 identity와 digest를 확인해 `sealed.patch + seal.json`으로 승격하는 read-only Trusted `SEAL` 경계를 구현합니다.
+**현재 증거:** Issue #10 / PR #11에서 `Trusted AUTHORIZE → untrusted IMPLEMENT → candidate.patch + implement.json`을 구현했습니다. Issue #12 / PR #13은 이 candidate를 실행하지 않고 identity와 digest를 확인해 `sealed.patch + seal.json`으로 승격하는 read-only Trusted `SEAL` 경계를 구현합니다. Worker 이후 trusted 영역으로의 GitHub Actions 진입점은 `.github/workflows/trusted-rail.yml` 하나로 유지합니다.
 
 ## Phase 3 — Independent VERIFY
 
@@ -47,6 +47,7 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 - checkout 및 검증 대상은 exact SHA match를 만족해야 합니다.
 - 검증 명령, 결과와 대상 SHA를 provenance로 결합합니다.
 - 실패 결과는 Review 진입이나 이미 완료된 PUBLISH의 검증 성공으로 오인되지 않으며, 전환 거부 또는 Human 경계로 처리합니다. 검증 실패가 REVIEW 없이 `STOPPED`로 전환되는 경로는 허용하지 않습니다.
+- GitHub `workflow_run` 연쇄 제한 때문에 VERIFY는 별도 chained workflow가 아니라 Trusted Rail 내부의 독립 최소 권한 job으로 구현합니다.
 
 ## Phase 4 — Semantic REVIEW / FIX
 
@@ -99,6 +100,8 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 
 현재 저장소는 **Phase 0 Core State / Trust Model**, **Phase 1 Human Authorization**, 그리고 **Phase 2 AI IMPLEMENT candidate 생성**을 실제 코드와 GitHub Actions로 다룹니다. PR #11 이후 Codex Cloud는 write credential 없는 untrusted Worker로만 동작하고, 결과는 `candidate.patch + implement.json`으로 기록됩니다.
 
-현재 Issue #12 / PR #13은 Worker 결과를 기능적으로 승인하거나 실행하지 않고 provenance 구조, source workflow identity, exact base SHA와 SHA-256을 검사해 exact bytes를 `SEALED` artifact로 승격하는 **Trusted SEAL** 경계를 추가합니다. `SEAL`은 read-only이고 `PUBLISH` write 권한과 의도적으로 분리합니다.
+현재 Issue #12 / PR #13은 Worker 결과를 기능적으로 승인하거나 실행하지 않고 provenance 구조, source workflow identity, exact base SHA와 SHA-256을 검사해 exact bytes를 `SEALED` artifact로 승격하는 **Trusted SEAL** 경계를 추가합니다. Worker 완료 후 `.github/workflows/trusted-rail.yml`로 한 번만 trusted 영역에 진입하며, workflow-level 권한은 비어 있고 현재 `seal` job만 read-only 권한을 가집니다.
 
-다음 핵심 통합 경계는 `SEALED → Trusted PUBLISH → immutable published_head_sha`이며, 그 뒤 Phase 3의 Independent VERIFY가 exact published SHA만 검증하게 됩니다. GRAPH / LOOP 실제 엔진, Semantic REVIEW / FIX, Self-Improvement 확장과 Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
+GitHub Actions의 `workflow_run`은 장거리 workflow chaining에 제한이 있으므로 Trusted Rail의 후속 단계는 별도 `workflow_run`으로 계속 연결하지 않습니다. 다음 핵심 구현은 같은 Trusted Rail 내부에 **독립 `PUBLISH` job**을 추가해 `SEALED → immutable published_head_sha`를 만들고, 이어서 Phase 3의 `VERIFY` job이 exact published SHA만 검증하도록 하는 것입니다.
+
+GRAPH / LOOP 실제 엔진, Semantic REVIEW / FIX, Self-Improvement 확장과 Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
