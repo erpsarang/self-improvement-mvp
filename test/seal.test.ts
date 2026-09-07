@@ -23,6 +23,7 @@ const implement: ImplementProvenance = {
     approvalCommentId: 200,
     policySnapshot: "sha256:" + "b".repeat(64),
     requirementsDigest: "sha256:" + "c".repeat(64),
+    authorizedBaseSha: "a".repeat(40),
   },
   implementWorkflow: {
     workflowPath: ".github/workflows/implement.yml",
@@ -39,7 +40,7 @@ const implement: ImplementProvenance = {
 const sourceRun: ImplementSourceRun = {
   id: 300,
   runAttempt: 2,
-  headSha: implement.baseSha,
+  controlPlaneSha: "d".repeat(40),
   repository: implement.repository,
   conclusion: "success",
   workflowPath: ".github/workflows/implement.yml",
@@ -58,6 +59,25 @@ test("exact IMPLEMENT run과 candidate digest만 SEAL 입력으로 허용한다"
   );
 });
 
+test("candidate base는 AUTHORIZE provenance에 결합되고 IMPLEMENT control-plane SHA와 독립적이다", () => {
+  assert.notEqual(implement.baseSha, sourceRun.controlPlaneSha);
+  assert.equal(
+    validateImplementCandidateForSeal(implement, candidatePatch, sourceRun),
+    implement,
+  );
+
+  const mismatchedBase = {
+    ...implement,
+    sourceAuthorization: {
+      ...implement.sourceAuthorization,
+      authorizedBaseSha: "f".repeat(40),
+    },
+  };
+  assert.throws(() =>
+    validateImplementCandidateForSeal(mismatchedBase, candidatePatch, sourceRun),
+  );
+});
+
 test("candidate patch digest 변조는 fail-closed 한다", () => {
   const tamperedPatch = Buffer.concat([candidatePatch, Buffer.from("tampered")]);
   assert.throws(() =>
@@ -65,14 +85,14 @@ test("candidate patch digest 변조는 fail-closed 한다", () => {
   );
 });
 
-test("IMPLEMENT source workflow identity와 base SHA mismatch를 거부한다", () => {
+test("IMPLEMENT source workflow identity mismatch는 거부한다", () => {
   const cases: ImplementSourceRun[] = [
     { ...sourceRun, conclusion: "failure" },
     { ...sourceRun, workflowPath: ".github/workflows/other.yml" },
     { ...sourceRun, repository: "other/repo" },
     { ...sourceRun, id: 301 },
     { ...sourceRun, runAttempt: 3 },
-    { ...sourceRun, headSha: "d".repeat(40) },
+    { ...sourceRun, controlPlaneSha: "bad" },
   ];
 
   for (const candidate of cases) {
@@ -90,6 +110,13 @@ test("malformed IMPLEMENT provenance는 fail-closed 한다", () => {
     { ...implement, baseSha: "bad" },
     { ...implement, candidatePatchDigest: "bad" },
     { ...implement, sourceAuthorization: undefined },
+    {
+      ...implement,
+      sourceAuthorization: {
+        ...implement.sourceAuthorization,
+        authorizedBaseSha: "bad",
+      },
+    },
     { ...implement, implementWorkflow: { ...implement.implementWorkflow, runId: 0 } },
     { ...implement, aiExecution: { ...implement.aiExecution, resultId: "" } },
   ];
@@ -118,6 +145,8 @@ test("SEAL은 candidate patch bytes를 변경하지 않고 provenance chain을 �
   assert.deepEqual(sealed.provenance.sourceAuthorization, implement.sourceAuthorization);
   assert.equal(sealed.provenance.sourceImplement.runId, 300);
   assert.equal(sealed.provenance.sourceImplement.runAttempt, 2);
+  assert.equal(sealed.provenance.sourceImplement.controlPlaneSha, "d".repeat(40));
+  assert.notEqual(sealed.provenance.sourceImplement.controlPlaneSha, implement.baseSha);
   assert.equal(
     sealed.provenance.sourceImplement.candidatePatchDigest,
     implement.candidatePatchDigest,
