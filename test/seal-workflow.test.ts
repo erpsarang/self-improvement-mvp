@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/trusted-rail.yml", "utf8");
+const semanticReviewWorkflow = readFileSync(".github/workflows/semantic-review.yml", "utf8");
 const sealSection = workflow.split("\n  publish:\n")[0] ?? "";
 
 test("Trusted Rail은 Untrusted IMPLEMENT 완료 후 한 번만 진입한다", () => {
@@ -61,11 +62,13 @@ test("candidate base와 IMPLEMENT/SEAL control-plane SHA를 서로 다른 값으
   assert.match(sealSection, /seal\.json/);
 });
 
-test("후속 단계는 별도 workflow_run 체인이 아니라 Trusted Rail 내부 job으로 확장한다", () => {
+test("후속 단계는 추가 workflow_run 체인 없이 Trusted Rail에서 동기 확장한다", () => {
   assert.match(workflow, /\n  publish:\n/);
   assert.match(workflow, /\n  verify_prepare:\n/);
   assert.match(workflow, /\n  verify_candidate:\n/);
   assert.match(workflow, /\n  verify_finalize:\n/);
-  assert.match(workflow, /후속 REVIEW/);
-  assert.match(workflow, /Trusted Rail 내부의 독립 job/);
+  assert.match(workflow, /\n  review:\n/);
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/semantic-review\.yml/);
+  assert.match(semanticReviewWorkflow, /workflow_call:/);
+  assert.doesNotMatch(semanticReviewWorkflow, /workflow_run:/);
 });

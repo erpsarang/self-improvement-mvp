@@ -5,7 +5,7 @@ import test from "node:test";
 const workflow = await readFile(".github/workflows/trusted-rail.yml", "utf8");
 const prepareSection = workflow.split("\n  verify_prepare:\n")[1]?.split("\n  verify_candidate:\n")[0] ?? "";
 const candidateSection = workflow.split("\n  verify_candidate:\n")[1]?.split("\n  verify_finalize:\n")[0] ?? "";
-const finalizeSection = workflow.split("\n  verify_finalize:\n")[1] ?? "";
+const finalizeSection = workflow.split("\n  verify_finalize:\n")[1]?.split("\n  review:\n")[0] ?? "";
 
 test("VERIFY는 trusted prepare → isolated candidate → trusted finalize의 세 job으로 분리된다", () => {
   assert.match(workflow, /\n  verify_prepare:\n/);

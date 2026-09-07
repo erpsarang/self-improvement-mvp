@@ -776,5 +776,12 @@ jobs:
           path: ${{ runner.temp }}/verify/verify.json
           if-no-files-found: error
 
-# 후속 REVIEW는 별도 workflow_run 체인이 아니라
-# 이 Trusted Rail 내부의 독립 job으로 추가하고 최소 권한을 부여한다.
+  review:
+    name: Semantic REVIEW
+    needs: verify_finalize
+    if: needs.verify_finalize.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/semantic-review.yml
+    secrets: inherit
