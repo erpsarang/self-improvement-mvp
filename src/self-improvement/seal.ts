@@ -15,6 +15,7 @@ export interface ImplementSourceRun {
 export interface SealRunIdentity {
   readonly runId: number;
   readonly runAttempt: number;
+  readonly trustedCodeSha: string;
 }
 
 export interface SealProvenance {
@@ -35,6 +36,7 @@ export interface SealProvenance {
     readonly workflowPath: typeof TRUSTED_RAIL_WORKFLOW_PATH;
     readonly runId: number;
     readonly runAttempt: number;
+    readonly trustedCodeSha: string;
   };
   readonly sealedPatchDigest: string;
 }
@@ -44,7 +46,7 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 function positiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 function validRepository(value: unknown): value is string {
@@ -86,6 +88,36 @@ function validImplementProvenance(value: unknown): value is ImplementProvenance 
     typeof aiExecution.resultId === "string" &&
     aiExecution.resultId.trim().length > 0
   );
+}
+
+function validateCandidateArtifactName(
+  artifactName: string,
+  implement: ImplementProvenance,
+): void {
+  const match = /^implement-candidate-(\d+)-(\d+)-attempt-(\d+)$/.exec(artifactName);
+  if (!match) {
+    throw new Error("candidate artifact 이름이 올바르지 않습니다");
+  }
+
+  const authorizationRunId = Number(match[1]);
+  const implementRunId = Number(match[2]);
+  const implementRunAttempt = Number(match[3]);
+  if (
+    !positiveInteger(authorizationRunId) ||
+    !positiveInteger(implementRunId) ||
+    !positiveInteger(implementRunAttempt)
+  ) {
+    throw new Error("candidate artifact identity가 올바르지 않습니다");
+  }
+  if (authorizationRunId !== implement.sourceAuthorization.runId) {
+    throw new Error("candidate artifact의 AUTHORIZE run ID가 provenance와 일치하지 않습니다");
+  }
+  if (implementRunId !== implement.implementWorkflow.runId) {
+    throw new Error("candidate artifact의 IMPLEMENT run ID가 provenance와 일치하지 않습니다");
+  }
+  if (implementRunAttempt !== implement.implementWorkflow.runAttempt) {
+    throw new Error("candidate artifact의 IMPLEMENT run attempt가 provenance와 일치하지 않습니다");
+  }
 }
 
 export function validateImplementCandidateForSeal(
@@ -149,9 +181,10 @@ export function sealImplementCandidate(input: {
   if (!positiveInteger(input.sealRun.runId) || !positiveInteger(input.sealRun.runAttempt)) {
     throw new Error("SEAL workflow identity가 올바르지 않습니다");
   }
-  if (!input.candidateArtifactName.trim()) {
-    throw new Error("candidate artifact 이름이 필요합니다");
+  if (!validSha(input.sealRun.trustedCodeSha)) {
+    throw new Error("SEAL trusted control-plane SHA가 올바르지 않습니다");
   }
+  validateCandidateArtifactName(input.candidateArtifactName, implement);
 
   const sealedPatch = Buffer.from(input.candidatePatch);
   const sealedPatchDigest = sha256(sealedPatch);
@@ -177,6 +210,7 @@ export function sealImplementCandidate(input: {
       workflowPath: TRUSTED_RAIL_WORKFLOW_PATH,
       runId: input.sealRun.runId,
       runAttempt: input.sealRun.runAttempt,
+      trustedCodeSha: input.sealRun.trustedCodeSha,
     },
     sealedPatchDigest,
   });
