@@ -20,8 +20,6 @@ jobs:
     outputs:
       authorization_artifact_name: ${{ steps.authorization_artifact.outputs.name }}
       should_run: ${{ steps.authorization_artifact.outputs.should_run }}
-    env:
-      IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
 
     steps:
       - name: AUTHORIZE artifact 선택 또는 no-op 판정
@@ -109,13 +107,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$IMPLEMENT_RUNTIME_DIR"
+          mkdir -p "${RUNNER_TEMP}/implement"
           mapfile -t files < <(find "${RUNNER_TEMP}/authorize" -type f -name authorize.json -print)
           if [ "${#files[@]}" -ne 1 ]; then
             echo "authorize.json must exist exactly once" >&2
             exit 1
           fi
-          cp "${files[0]}" "$IMPLEMENT_RUNTIME_DIR/authorize.json"
+          cp "${files[0]}" "${RUNNER_TEMP}/implement/authorize.json"
 
       - name: Node 설정
         if: steps.authorization_artifact.outputs.should_run == 'true'
@@ -134,6 +132,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           AUTHORIZE_JSON: ${{ runner.temp }}/implement/authorize.json
+          IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
 
       - name: Untrusted Codex IMPLEMENT
         if: steps.authorization_artifact.outputs.should_run == 'true'
@@ -173,8 +172,6 @@ jobs:
     needs: implement
     if: needs.implement.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    env:
-      IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
 
     steps:
       - name: 승인 시점 exact SHA clean checkout
@@ -196,13 +193,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$IMPLEMENT_RUNTIME_DIR"
+          mkdir -p "${RUNNER_TEMP}/implement"
           mapfile -t files < <(find "${RUNNER_TEMP}/authorize" -type f -name authorize.json -print)
           if [ "${#files[@]}" -ne 1 ]; then
             echo "authorize.json must exist exactly once" >&2
             exit 1
           fi
-          cp "${files[0]}" "$IMPLEMENT_RUNTIME_DIR/authorize.json"
+          cp "${files[0]}" "${RUNNER_TEMP}/implement/authorize.json"
 
       - name: untrusted workspace snapshot 다운로드
         uses: actions/download-artifact@v4
@@ -235,7 +232,7 @@ jobs:
         run: |
           set -euo pipefail
           PATCH_WORKTREE="${RUNNER_TEMP}/candidate-patch-worktree"
-          PATCH_FILE="$IMPLEMENT_RUNTIME_DIR/candidate.patch"
+          PATCH_FILE="${RUNNER_TEMP}/implement/candidate.patch"
 
           git worktree add --detach "$PATCH_WORKTREE" "$BASE_SHA"
           rsync -a --delete \
@@ -277,6 +274,7 @@ jobs:
         run: npm exec -- tsx src/self-improvement/implement-handler.ts finalize
         env:
           AUTHORIZE_JSON: ${{ runner.temp }}/implement/authorize.json
+          IMPLEMENT_RUNTIME_DIR: ${{ runner.temp }}/implement
           AI_RESULT_ID: codex-action-run:${{ github.run_id }}:${{ github.run_attempt }}
 
       - name: candidate artifact 저장
