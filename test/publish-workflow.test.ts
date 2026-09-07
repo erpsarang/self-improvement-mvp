@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workflow = await readFile(".github/workflows/trusted-rail.yml", "utf8");
-const publishSection = workflow.split("\n  publish:\n")[1] ?? "";
+const publishSection =
+  (workflow.split("\n  publish:\n")[1] ?? "").split("\n  verify:\n")[0] ?? "";
 
 test("PUBLISH는 SEAL 성공과 should_run=true 뒤에만 실행된다", () => {
   assert.match(workflow, /outputs:\n      should_run: \$\{\{ steps\.candidate_artifact\.outputs\.should_run \}\}/);
