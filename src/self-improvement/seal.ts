@@ -1,7 +1,7 @@
 import type { ImplementProvenance } from "./implement.js";
 import { IMPLEMENT_WORKFLOW_PATH, sha256 } from "./implement.js";
 
-export const SEAL_WORKFLOW_PATH = ".github/workflows/seal.yml" as const;
+export const TRUSTED_RAIL_WORKFLOW_PATH = ".github/workflows/trusted-rail.yml" as const;
 
 export interface ImplementSourceRun {
   readonly id: number;
@@ -32,7 +32,7 @@ export interface SealProvenance {
     readonly aiExecution: ImplementProvenance["aiExecution"];
   };
   readonly sealWorkflow: {
-    readonly workflowPath: typeof SEAL_WORKFLOW_PATH;
+    readonly workflowPath: typeof TRUSTED_RAIL_WORKFLOW_PATH;
     readonly runId: number;
     readonly runAttempt: number;
   };
@@ -174,7 +174,7 @@ export function sealImplementCandidate(input: {
       aiExecution: { ...implement.aiExecution },
     },
     sealWorkflow: {
-      workflowPath: SEAL_WORKFLOW_PATH,
+      workflowPath: TRUSTED_RAIL_WORKFLOW_PATH,
       runId: input.sealRun.runId,
       runAttempt: input.sealRun.runAttempt,
     },
