@@ -6,7 +6,7 @@
 
 ## Trusted execution
 
-`AUTHORIZE`, `SEAL`, `PUBLISH`는 Trusted Rail이 담당한다. `AUTHORIZE`는 repository에서 version 관리되는 trusted approver policy를 사용하며 live collaborator permission에 의존하지 않는다. Policy는 재사용 가능한 login 대신 immutable GitHub numeric user ID를 권한 identity로 사용하고 login은 설명 메타데이터로만 보존한다. 승인 provenance에는 재조회한 approval, approver ID와 현재 login, exact policy digest, 승인 시각, repository와 trusted workflow run/creation-attempt identity를 보존하고, 신뢰 원본은 Issue comment가 아니라 Actions artifact이다.
+`AUTHORIZE`, `SEAL`, `PUBLISH`, `VERIFY`는 Trusted Rail이 담당한다. `AUTHORIZE`는 repository에서 version 관리되는 trusted approver policy를 사용하며 live collaborator permission에 의존하지 않는다. Policy는 재사용 가능한 login 대신 immutable GitHub numeric user ID를 권한 identity로 사용하고 login은 설명 메타데이터로만 보존한다. 승인 provenance에는 재조회한 approval, approver ID와 현재 login, exact policy digest, 승인 시각, repository와 trusted workflow run/creation-attempt identity를 보존하고, 신뢰 원본은 Issue comment가 아니라 Actions artifact이다.
 
 Actions artifact는 현재 운영 단계의 trust anchor이며 영구 ledger가 아니다. retention 만료 후 장기 provenance 감사까지 보장하지 않으며, durable/append-only provenance는 후속 Framework 설계 과제이다(TODO).
 
@@ -18,8 +18,12 @@ PUBLISH 재실행은 동일 base와 동일 tree의 기존 published commit만 id
 
 ## 검증과 검토
 
-`VERIFY`는 immutable `published_head_sha`와 실제 검증 대상 SHA의 exact match만 성공시킨다. Semantic Review에는 이 검증을 통과한 동일 SHA만 입력할 수 있다. `VERIFY`와 Semantic Review는 아직 후속 구현 범위이다.
+`VERIFY`는 같은 Trusted Rail의 별도 read-only job이다. 권한은 `contents: read`, `actions: read`로 제한하며 candidate code에 GitHub write credential이나 secrets를 제공하지 않는다.
+
+VERIFY는 `publish.json` artifact의 issue/run/attempt identity와 provenance chain을 재검증하고, `publishedBranch`의 실제 remote HEAD가 `publishedHeadSha`와 exact match인지 확인한다. 검증 대상은 branch 이름이 아니라 그 exact SHA로 checkout하며 `persist-credentials: false`를 사용한다. exact checkout에서 기계 검증을 수행한 뒤 remote branch HEAD를 다시 조회해 검증 중 branch 이동도 fail-closed 한다.
+
+모든 기계 검증이 성공하고 실제 checkout HEAD가 `publishedHeadSha`와 같을 때만 `verify.json`을 생성한다. `verify.json.verifiedHeadSha`는 `publish.json.publishedHeadSha`와 반드시 동일해야 한다. Semantic Review에는 이 exact verified SHA만 입력할 수 있다.
 
 ## Merge
 
-`MERGE_READY`는 merge 가능한 상태이지 merge 완료가 아니다. Merge는 Human-only이며 Auto Merge 기능은 존재하지 않는다. Trusted PUBLISH의 GitHub write 권한은 publish branch 생성/fast-forward에만 사용하며 merge 권한으로 사용하지 않는다. `RECORD_HUMAN_MERGE`는 외부에서 Human merge가 완료됐다는 사실만 기록한다.
+`MERGE_READY`는 merge 가능한 상태이지 merge 완료가 아니다. Merge는 Human-only이며 Auto Merge 기능은 존재하지 않는다. Trusted PUBLISH의 GitHub write 권한은 publish branch 생성/fast-forward에만 사용하며 merge 권한으로 사용하지 않는다. `VERIFY`는 read-only이며 merge를 수행할 수 없다. `RECORD_HUMAN_MERGE`는 외부에서 Human merge가 완료됐다는 사실만 기록한다.
