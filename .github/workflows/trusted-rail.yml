@@ -76,11 +76,11 @@ jobs:
 
             core.setFailed(`expected exactly one candidate artifact or a valid no-op source run; matches=${matches.length}`);
 
-      - name: source IMPLEMENT exact SHA checkout
+      - name: trusted control-plane exact SHA checkout
         if: steps.candidate_artifact.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: IMPLEMENT candidate artifact 다운로드
@@ -116,7 +116,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: trusted base 의존성 설치
+      - name: trusted control-plane 의존성 설치
         if: steps.candidate_artifact.outputs.should_run == 'true'
         run: npm ci
 
@@ -137,6 +137,7 @@ jobs:
           CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
           SEAL_RUN_ID: ${{ github.run_id }}
           SEAL_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SEAL_TRUSTED_CODE_SHA: ${{ github.sha }}
 
       - name: sealed artifact 저장
         if: steps.candidate_artifact.outputs.should_run == 'true'
