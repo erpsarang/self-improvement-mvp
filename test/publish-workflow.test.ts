@@ -30,7 +30,10 @@ test("PUBLISH는 sealed artifact를 다시 검증하고 exact base worktree에 p
 test("publish branch는 force overwrite 없이 idempotent 또는 fast-forward만 허용한다", () => {
   assert.match(publishSection, /ai-publish\/issue-/);
   assert.match(publishSection, /refusing non-fast-forward overwrite/);
-  assert.doesNotMatch(publishSection, /--force|-f origin|git push -f/);
+  assert.doesNotMatch(
+    publishSection,
+    /git(?:\s+-C\s+"\$PUBLISH_WORKTREE")?\s+push[^\n]*(?:--force|\s-f(?:\s|$))/,
+  );
   assert.match(publishSection, /PUBLISH_MODE="reused"/);
 });
 
