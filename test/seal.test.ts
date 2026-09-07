@@ -45,6 +45,12 @@ const sourceRun: ImplementSourceRun = {
   workflowPath: ".github/workflows/implement.yml",
 };
 
+const validSealRun = {
+  runId: 400,
+  runAttempt: 1,
+  trustedCodeSha: "e".repeat(40),
+};
+
 test("exact IMPLEMENT run과 candidate digest만 SEAL 입력으로 허용한다", () => {
   assert.equal(
     validateImplementCandidateForSeal(implement, candidatePatch, sourceRun),
@@ -100,7 +106,7 @@ test("SEAL은 candidate patch bytes를 변경하지 않고 provenance chain을 �
     implement,
     candidatePatch,
     sourceRun,
-    sealRun: { runId: 400, runAttempt: 1 },
+    sealRun: validSealRun,
     candidateArtifactName: "implement-candidate-100-300-attempt-2",
   });
 
@@ -122,17 +128,41 @@ test("SEAL은 candidate patch bytes를 변경하지 않고 provenance chain을 �
     ".github/workflows/trusted-rail.yml",
   );
   assert.equal(sealed.provenance.sealWorkflow.runId, 400);
+  assert.equal(sealed.provenance.sealWorkflow.trustedCodeSha, "e".repeat(40));
+  assert.notEqual(sealed.provenance.sealWorkflow.trustedCodeSha, implement.baseSha);
   assert.equal(sealed.provenance.sealedPatchDigest, implement.candidatePatchDigest);
 });
 
-test("잘못된 SEAL run identity와 빈 artifact 이름은 거부한다", () => {
+test("candidate artifact 이름도 AUTHORIZE와 IMPLEMENT provenance에 exact 결합한다", () => {
+  const invalidNames = [
+    "candidate",
+    "implement-candidate-999-300-attempt-2",
+    "implement-candidate-100-999-attempt-2",
+    "implement-candidate-100-300-attempt-9",
+    " implement-candidate-100-300-attempt-2",
+  ];
+
+  for (const candidateArtifactName of invalidNames) {
+    assert.throws(() =>
+      sealImplementCandidate({
+        implement,
+        candidatePatch,
+        sourceRun,
+        sealRun: validSealRun,
+        candidateArtifactName,
+      }),
+    );
+  }
+});
+
+test("잘못된 SEAL run identity와 trusted control-plane SHA는 거부한다", () => {
   assert.throws(() =>
     sealImplementCandidate({
       implement,
       candidatePatch,
       sourceRun,
-      sealRun: { runId: 0, runAttempt: 1 },
-      candidateArtifactName: "candidate",
+      sealRun: { ...validSealRun, runId: 0 },
+      candidateArtifactName: "implement-candidate-100-300-attempt-2",
     }),
   );
   assert.throws(() =>
@@ -140,8 +170,8 @@ test("잘못된 SEAL run identity와 빈 artifact 이름은 거부한다", () =>
       implement,
       candidatePatch,
       sourceRun,
-      sealRun: { runId: 1, runAttempt: 1 },
-      candidateArtifactName: "   ",
+      sealRun: { ...validSealRun, trustedCodeSha: "bad" },
+      candidateArtifactName: "implement-candidate-100-300-attempt-2",
     }),
   );
 });
