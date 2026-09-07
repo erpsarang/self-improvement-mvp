@@ -9,7 +9,7 @@ function requiredEnv(name: string): string {
 
 function positiveIntegerEnv(name: string): number {
   const value = Number(requiredEnv(name));
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${name}은 양의 정수여야 합니다`);
   }
   return value;
@@ -39,6 +39,7 @@ const sealed = sealImplementCandidate({
   sealRun: {
     runId: positiveIntegerEnv("SEAL_RUN_ID"),
     runAttempt: positiveIntegerEnv("SEAL_RUN_ATTEMPT"),
+    trustedCodeSha: requiredEnv("SEAL_TRUSTED_CODE_SHA").toLowerCase(),
   },
   candidateArtifactName: requiredEnv("CANDIDATE_ARTIFACT_NAME"),
 });
