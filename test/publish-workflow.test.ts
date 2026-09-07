@@ -20,6 +20,17 @@ test("SEAL은 read-only이고 write 권한은 PUBLISH job에만 있다", () => {
   assert.doesNotMatch(publishSection, /pull-requests: write|issues: write/);
 });
 
+test("PUBLISH rerun은 current SEAL artifact를 우선하고 없으면 가장 최근 prior attempt를 재사용한다", () => {
+  assert.match(publishSection, /name: current 또는 이전 SEAL artifact 선택/);
+  assert.match(publishSection, /listWorkflowRunArtifacts/);
+  assert.match(publishSection, /attempt === trustedRunAttempt/);
+  assert.match(publishSection, /attempt < trustedRunAttempt/);
+  assert.match(publishSection, /right\.attempt - left\.attempt/);
+  assert.match(publishSection, /PUBLISH attempt \$\{trustedRunAttempt\} reuses SEAL artifact from attempt \$\{latestAttempt\}/);
+  assert.match(publishSection, /name: \$\{\{ steps\.sealed_artifact\.outputs\.name \}\}/);
+  assert.match(publishSection, /SEALED_ARTIFACT_NAME: \$\{\{ steps\.sealed_artifact\.outputs\.name \}\}/);
+});
+
 test("PUBLISH는 sealed artifact를 다시 검증하고 exact base worktree에 patch를 적용한다", () => {
   assert.match(publishSection, /publish-handler\.ts prepare/);
   assert.match(publishSection, /git worktree add --detach "\$PUBLISH_WORKTREE" "\$BASE_SHA"/);
