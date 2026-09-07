@@ -130,7 +130,7 @@ jobs:
           SEAL_JSON: ${{ runner.temp }}/seal/seal.json
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_CONTROL_PLANE_SHA: ${{ github.event.workflow_run.head_sha }}
           SOURCE_REPOSITORY: ${{ github.repository }}
           SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           SOURCE_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
