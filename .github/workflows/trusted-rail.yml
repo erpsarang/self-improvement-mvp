@@ -6,7 +6,7 @@ on:
     types: [completed]
 
 # Trusted Rail에 진입했다고 전체 workflow가 권한을 얻지 않는다.
-# 각 job은 필요한 최소 권한을 명시한다. 현재 구현된 SEAL은 read-only다.
+# 각 job은 필요한 최소 권한을 명시한다.
 permissions: {}
 
 jobs:
@@ -19,6 +19,8 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.candidate_artifact.outputs.should_run }}
 
     steps:
       - name: IMPLEMENT candidate artifact 선택 또는 no-op 판정
@@ -147,5 +149,184 @@ jobs:
             ${{ runner.temp }}/seal/seal.json
           if-no-files-found: error
 
-# 후속 PUBLISH / VERIFY / REVIEW는 별도 workflow_run 체인이 아니라
+  publish:
+    name: sealed artifact PUBLISH
+    needs: seal
+    if: >-
+      needs.seal.result == 'success' &&
+      needs.seal.outputs.should_run == 'true'
+    permissions:
+      contents: write
+      actions: read
+    runs-on: ubuntu-latest
+    outputs:
+      published_head_sha: ${{ steps.publish.outputs.published_head_sha }}
+
+    steps:
+      - name: trusted control-plane exact SHA checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: sealed artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/published-source
+
+      - name: sealed artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/publish"
+          mapfile -t seal_files < <(find "${RUNNER_TEMP}/published-source" -type f -name seal.json -print)
+          mapfile -t patch_files < <(find "${RUNNER_TEMP}/published-source" -type f -name sealed.patch -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/published-source" -type f -print)
+          if [ "${#seal_files[@]}" -ne 1 ] || [ "${#patch_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 2 ]; then
+            echo "sealed artifact must contain exactly sealed.patch and seal.json" >&2
+            exit 1
+          fi
+          cp "${seal_files[0]}" "${RUNNER_TEMP}/publish/seal.json"
+          cp "${patch_files[0]}" "${RUNNER_TEMP}/publish/sealed.patch"
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted control-plane 의존성 설치
+        run: npm ci
+
+      - name: sealed artifact 재검증 및 PUBLISH 입력 준비
+        id: prepare
+        run: npm exec -- tsx src/self-improvement/publish-handler.ts prepare
+        env:
+          SEAL_JSON: ${{ runner.temp }}/publish/seal.json
+          SEALED_PATCH: ${{ runner.temp }}/publish/sealed.patch
+          SEALED_ARTIFACT_NAME: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          PUBLISH_REPOSITORY: ${{ github.repository }}
+
+      - name: sealed patch를 publish branch에 적용 및 push
+        id: publish
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.prepare.outputs.base_sha }}
+          ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
+          PUBLISH_BRANCH: ${{ steps.prepare.outputs.publish_branch }}
+          SEALED_PATCH: ${{ runner.temp }}/publish/sealed.patch
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "invalid base SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$PUBLISH_BRANCH" =~ ^ai-publish/issue-[1-9][0-9]*$ ]]; then
+            echo "invalid publish branch" >&2
+            exit 1
+          fi
+
+          git cat-file -e "${BASE_SHA}^{commit}"
+
+          PUBLISH_WORKTREE="${RUNNER_TEMP}/publish-worktree"
+          cleanup() {
+            git worktree remove --force "$PUBLISH_WORKTREE" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          git worktree add --detach "$PUBLISH_WORKTREE" "$BASE_SHA"
+
+          export GIT_CONFIG_NOSYSTEM=1
+          export GIT_CONFIG_GLOBAL=/dev/null
+          unset GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_CONFIG_COUNT || true
+
+          git -C "$PUBLISH_WORKTREE" -c core.hooksPath=/dev/null apply \
+            --index --binary --whitespace=nowarn "$SEALED_PATCH"
+
+          if git -C "$PUBLISH_WORKTREE" diff --cached --quiet; then
+            echo "sealed patch produced no staged change" >&2
+            exit 1
+          fi
+
+          CANDIDATE_TREE="$(git -C "$PUBLISH_WORKTREE" write-tree)"
+          REMOTE_REF="refs/heads/${PUBLISH_BRANCH}"
+          REMOTE_LINE="$(git ls-remote --heads origin "$REMOTE_REF")"
+          REMOTE_SHA="$(printf '%s\n' "$REMOTE_LINE" | awk 'NF {print $1}')"
+          PUBLISHED_HEAD_SHA=""
+          PUBLISH_MODE=""
+
+          if [ -n "$REMOTE_SHA" ]; then
+            if [[ ! "$REMOTE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "invalid remote publish SHA" >&2
+              exit 1
+            fi
+            git fetch --no-tags origin "$REMOTE_REF"
+            FETCHED_SHA="$(git rev-parse FETCH_HEAD)"
+            if [ "$FETCHED_SHA" != "$REMOTE_SHA" ]; then
+              echo "remote publish branch changed during validation" >&2
+              exit 1
+            fi
+
+            REMOTE_TREE="$(git rev-parse "${REMOTE_SHA}^{tree}")"
+            if [ "$REMOTE_TREE" = "$CANDIDATE_TREE" ]; then
+              REMOTE_PARENT="$(git rev-parse "${REMOTE_SHA}^")"
+              if [ "$REMOTE_PARENT" != "$BASE_SHA" ]; then
+                echo "existing publish commit has unexpected parent" >&2
+                exit 1
+              fi
+              PUBLISHED_HEAD_SHA="$REMOTE_SHA"
+              PUBLISH_MODE="reused"
+            elif [ "$REMOTE_SHA" != "$BASE_SHA" ]; then
+              echo "publish branch exists at an unexpected SHA; refusing non-fast-forward overwrite" >&2
+              exit 1
+            fi
+          fi
+
+          if [ -z "$PUBLISHED_HEAD_SHA" ]; then
+            git -C "$PUBLISH_WORKTREE" \
+              -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              -c core.hooksPath=/dev/null \
+              -c commit.gpgSign=false \
+              commit -m "PUBLISH: sealed candidate for issue #${ISSUE_NUMBER}"
+
+            PUBLISHED_HEAD_SHA="$(git -C "$PUBLISH_WORKTREE" rev-parse HEAD)"
+            git -C "$PUBLISH_WORKTREE" push origin "HEAD:${REMOTE_REF}"
+            PUBLISH_MODE="created"
+          fi
+
+          REMOTE_AFTER_LINE="$(git ls-remote --heads origin "$REMOTE_REF")"
+          REMOTE_AFTER_SHA="$(printf '%s\n' "$REMOTE_AFTER_LINE" | awk 'NF {print $1}')"
+          if [ "$REMOTE_AFTER_SHA" != "$PUBLISHED_HEAD_SHA" ]; then
+            echo "published remote SHA does not match the exact local/reused SHA" >&2
+            exit 1
+          fi
+
+          echo "published_head_sha=${PUBLISHED_HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "publish_mode=${PUBLISH_MODE}" >> "$GITHUB_OUTPUT"
+
+      - name: PUBLISH provenance 생성
+        run: npm exec -- tsx src/self-improvement/publish-handler.ts finalize
+        env:
+          SEAL_JSON: ${{ runner.temp }}/publish/seal.json
+          SEALED_PATCH: ${{ runner.temp }}/publish/sealed.patch
+          SEALED_ARTIFACT_NAME: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          PUBLISH_REPOSITORY: ${{ github.repository }}
+          PUBLISH_RUN_ID: ${{ github.run_id }}
+          PUBLISH_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PUBLISH_TRUSTED_CODE_SHA: ${{ github.sha }}
+          PUBLISHED_HEAD_SHA: ${{ steps.publish.outputs.published_head_sha }}
+          PUBLISH_JSON: ${{ runner.temp }}/publish/publish.json
+
+      - name: PUBLISH provenance artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-provenance-issue-${{ steps.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publish/publish.json
+          if-no-files-found: error
+
+# 후속 VERIFY / REVIEW는 별도 workflow_run 체인이 아니라
 # 이 Trusted Rail 내부의 독립 job으로 추가하고, 각 job에 최소 권한을 부여한다.
