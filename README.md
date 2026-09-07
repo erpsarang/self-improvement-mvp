@@ -53,7 +53,7 @@ AI Development Framework
 
 ## 현재 실험 트랙: Self-Improvement capability
 
-현재 구현은 전체 프레임워크 중 **Core Trust Layer**와 **Human Authorization**의 최소 수직 단면을 검증합니다. 기존 Self-Improvement 흐름은 이 capability의 첫 실험 트랙으로 유지합니다.
+현재 구현은 전체 프레임워크 중 **Core Trust Layer**, **Human Authorization**, 그리고 write credential 없는 **untrusted IMPLEMENT Worker**까지의 수직 단면을 실제 GitHub Actions로 연결합니다. Worker 결과는 직접 공개되지 않고 `candidate.patch + implement.json` artifact로만 남으며, 다음 Trusted Rail이 이를 검증해 봉인합니다.
 
 ```text
 Issue
@@ -72,7 +72,9 @@ Issue
 
 - Issue #1의 상태 머신과 Trust Boundary는 모든 capability가 공유하는 **Core Trust Layer**의 첫 구현입니다.
 - Issue #3의 `SI-승인 → AUTHORIZE`는 **Human Authorization** 인가 경계의 첫 구현입니다.
-- `state.ts` 등 현재 코드는 외부 자동화를 실행하지 않고 상태와 invariant만 검증합니다. GRAPH Engine과 LOOP Engine은 아직 구현하지 않습니다.
+- Issue #10 / PR #11은 trusted `AUTHORIZE` 이후 Codex Cloud를 write credential 없는 untrusted `IMPLEMENT` Worker로 실행하고, 결과를 candidate artifact로만 기록합니다.
+- Issue #12 / PR #13은 candidate를 실행하지 않고 identity와 digest를 검사해 `sealed.patch + seal.json`으로 승격하는 read-only Trusted `SEAL` 경계를 구현합니다.
+- `state.ts`는 외부 자동화를 직접 실행하지 않고 상태와 invariant만 검증합니다. GRAPH Engine과 LOOP Engine은 아직 구현하지 않습니다.
 
 ## 변하지 않는 신뢰 원칙
 
@@ -80,6 +82,8 @@ Issue
 - 최종 Merge는 **Human-only**이며 Auto Merge를 금지합니다.
 - `IMPLEMENT` / `FIX`에는 GitHub write credential을 제공하지 않습니다.
 - untrusted candidate patch는 trusted `SEAL` 이후에만 Trusted Rail의 `PUBLISH` 대상이 됩니다.
+- `SEAL`은 candidate code를 실행하거나 기능적으로 승인하지 않고 source identity와 exact bytes를 provenance에 봉인합니다.
+- `PUBLISH` write 권한은 `SEAL` read-only 경계와 분리합니다.
 - `VERIFY`는 immutable `published_head_sha`와 exact match인 대상만 성공시킵니다.
 - `VERIFY` 실패는 전환 거부 또는 Human 경계로 처리하며, REVIEW 없이 `STOPPED`로 전환하지 않습니다.
 - Semantic Review는 verified SHA만 검토합니다.
@@ -103,8 +107,12 @@ Phase는 구현 항목 체크리스트가 아니라 프레임워크가 차례로
 
 ## 현재 범위
 
-현재 Phase 1은 Human이 Issue에 남긴 정확한 `SI-승인`을 GitHub API로 다시 조회하고 versioned trusted approver policy로 검증합니다. Policy의 권한 identity는 재사용될 수 있는 login이 아니라 GitHub의 immutable numeric user ID이며, login은 가독성과 provenance를 위한 설명값입니다. `AUTHORIZE` provenance는 trusted `authorize.yml` run과 실제 생성 attempt에 귀속된 Actions artifact에 저장하며, Issue comment에는 run과 artifact를 찾는 최소 pointer만 남깁니다. 같은 approval event의 재실행은 검증 가능한 기존 artifact를 재사용하는 no-op이며 live collaborator permission을 조회하지 않습니다.
+Phase 1 Human Authorization은 Human이 Issue에 남긴 정확한 `SI-승인`을 GitHub API로 다시 조회하고 versioned trusted approver policy로 검증합니다. Policy의 권한 identity는 재사용될 수 있는 login이 아니라 GitHub의 immutable numeric user ID이며, login은 가독성과 provenance를 위한 설명값입니다. `AUTHORIZE` provenance는 trusted `authorize.yml` run과 실제 생성 attempt에 귀속된 Actions artifact에 저장하며, Issue comment에는 run과 artifact를 찾는 최소 pointer만 남깁니다. 같은 approval event의 재실행은 검증 가능한 기존 artifact를 재사용하는 no-op이며 live collaborator permission을 조회하지 않습니다.
 
-Actions artifact는 Phase 1의 **operational trust anchor**일 뿐이다. repository/org retention 정책에 따라 artifact가 만료되면 이 단계만으로는 장기 provenance 감사를 보장할 수 없다. Durable/append-only provenance 및 장기 검증 방식은 후속 Framework 설계 과제로 남긴다(TODO).
+Phase 2 AI IMPLEMENT는 `.github/workflows/implement.yml`에서 Codex Cloud를 untrusted Worker로 실행합니다. Worker에는 GitHub write credential을 주지 않으며, 승인 시점 exact SHA와 요구사항 snapshot만 입력합니다. Worker workspace는 곧바로 신뢰하지 않고 clean trusted job이 `candidate.patch`와 `implement.json` provenance를 생성해 candidate artifact로 기록합니다.
 
-이 자동화는 `AUTHORIZE` 상태만 기록합니다. Codex `IMPLEMENT` / `FIX`, branch 또는 PR 생성, `SEAL`, `PUBLISH`, exact SHA `VERIFY`, Semantic Review, `MERGE_READY`, Auto Merge는 현재 범위에 포함하지 않습니다.
+Trusted `SEAL`은 그 candidate를 실행하거나 적용하지 않고 source IMPLEMENT workflow identity, base SHA, provenance 구조와 SHA-256을 검증해 exact bytes 그대로 `sealed.patch`로 보존하고 `seal.json`으로 authorization → IMPLEMENT → SEAL chain을 기록합니다. `SEAL` workflow 자체는 `contents: read`, `actions: read`만 사용합니다.
+
+Actions artifact는 현재 단계의 **operational trust anchor**일 뿐입니다. repository/org retention 정책에 따라 artifact가 만료되면 이 단계만으로는 장기 provenance 감사를 보장할 수 없습니다. Durable/append-only provenance 및 장기 검증 방식은 후속 Framework 설계 과제로 남깁니다(TODO).
+
+현재 구현 범위는 `AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted SEAL`까지입니다. `PUBLISH` write 권한, branch/PR 자동 생성, exact SHA `VERIFY`, Semantic Review, `FIX`, `MERGE_READY`, Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
