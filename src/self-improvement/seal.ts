@@ -6,7 +6,7 @@ export const TRUSTED_RAIL_WORKFLOW_PATH = ".github/workflows/trusted-rail.yml" a
 export interface ImplementSourceRun {
   readonly id: number;
   readonly runAttempt: number;
-  readonly headSha: string;
+  readonly controlPlaneSha: string;
   readonly repository: string;
   readonly conclusion: string;
   readonly workflowPath: string;
@@ -28,6 +28,7 @@ export interface SealProvenance {
     readonly workflowPath: typeof IMPLEMENT_WORKFLOW_PATH;
     readonly runId: number;
     readonly runAttempt: number;
+    readonly controlPlaneSha: string;
     readonly candidateArtifactName: string;
     readonly candidatePatchDigest: string;
     readonly aiExecution: ImplementProvenance["aiExecution"];
@@ -80,6 +81,7 @@ function validImplementProvenance(value: unknown): value is ImplementProvenance 
     positiveInteger(sourceAuthorization.approvalCommentId) &&
     validDigest(sourceAuthorization.policySnapshot) &&
     validDigest(sourceAuthorization.requirementsDigest) &&
+    validSha(sourceAuthorization.authorizedBaseSha) &&
     implementWorkflow.workflowPath === IMPLEMENT_WORKFLOW_PATH &&
     positiveInteger(implementWorkflow.runId) &&
     positiveInteger(implementWorkflow.runAttempt) &&
@@ -134,7 +136,7 @@ export function validateImplementCandidateForSeal(
   if (sourceRun.workflowPath !== IMPLEMENT_WORKFLOW_PATH) {
     throw new Error("IMPLEMENT workflow path가 일치하지 않습니다");
   }
-  if (!validRepository(sourceRun.repository) || !validSha(sourceRun.headSha)) {
+  if (!validRepository(sourceRun.repository) || !validSha(sourceRun.controlPlaneSha)) {
     throw new Error("IMPLEMENT source workflow identity가 올바르지 않습니다");
   }
   if (!positiveInteger(sourceRun.id) || !positiveInteger(sourceRun.runAttempt)) {
@@ -143,8 +145,8 @@ export function validateImplementCandidateForSeal(
   if (implement.repository !== sourceRun.repository) {
     throw new Error("repository가 일치하지 않습니다");
   }
-  if (implement.baseSha !== sourceRun.headSha) {
-    throw new Error("candidate base SHA가 source IMPLEMENT head SHA와 일치하지 않습니다");
+  if (implement.baseSha !== implement.sourceAuthorization.authorizedBaseSha) {
+    throw new Error("candidate base SHA가 AUTHORIZE provenance의 승인 SHA와 일치하지 않습니다");
   }
   if (implement.implementWorkflow.runId !== sourceRun.id) {
     throw new Error("IMPLEMENT run ID가 일치하지 않습니다");
@@ -202,6 +204,7 @@ export function sealImplementCandidate(input: {
       workflowPath: IMPLEMENT_WORKFLOW_PATH,
       runId: implement.implementWorkflow.runId,
       runAttempt: implement.implementWorkflow.runAttempt,
+      controlPlaneSha: input.sourceRun.controlPlaneSha,
       candidateArtifactName: input.candidateArtifactName,
       candidatePatchDigest: implement.candidatePatchDigest,
       aiExecution: { ...implement.aiExecution },
