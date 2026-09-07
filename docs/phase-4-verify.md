@@ -12,7 +12,9 @@ publish.json
         │
         └─ exact SHA checkout
                 ↓
-        machine verification
+        isolated candidate verification
+                ↓
+        trusted finalize
                 ↓
 verify.json
   verifiedHeadSha == publishedHeadSha
@@ -24,13 +26,28 @@ VERIFY는 같은 Trusted Rail run의 `publish-provenance-issue-<N>-<run>-attempt
 
 ## Trust Boundary
 
+VERIFY는 한 runner 안에서 trusted handler와 candidate code를 함께 실행하지 않는다. 세 개의 독립 job/runner로 분리한다.
+
+```text
+trusted VERIFY prepare
+        ↓ exact published SHA
+isolated candidate verification
+        ↓ job success/failure만 전달
+trusted VERIFY finalize
+        ↓
+verify.json
+```
+
 - workflow-level `permissions: {}` 유지
-- VERIFY job: `contents: read`, `actions: read`
-- candidate checkout은 `persist-credentials: false`
+- `verify_prepare`: `contents: read`, `actions: read`
+- `verify_candidate`: `contents: read`, `persist-credentials: false`
+- `verify_finalize`: `contents: read`, `actions: read`
+- candidate runner에는 `publish.json`, `verify-handler.ts`, trusted provenance runtime을 두지 않음
+- candidate runner의 `GITHUB_TOKEN`, `GH_TOKEN`, `NODE_AUTH_TOKEN`, `NPM_TOKEN` 환경변수는 비움
 - GitHub write credential과 secrets를 candidate 검증 프로세스에 전달하지 않음
 - push / PR 생성 / merge / Auto Merge 없음
 
-Trusted control-plane checkout과 candidate exact-SHA checkout은 별도 디렉터리로 분리한다. 따라서 candidate가 Trusted VERIFY handler를 덮어쓰지 못한다.
+candidate 검증은 별도 GitHub-hosted runner의 파일시스템에서 끝난다. 따라서 악의적 `postinstall`, test, build script가 trusted prepare/finalize runner의 handler나 provenance 파일을 덮어쓸 수 없다. Trusted finalize는 candidate가 만든 파일을 신뢰 입력으로 받지 않고, candidate job의 성공 여부만 dependency result로 사용한다.
 
 ## Exact SHA invariant
 
@@ -39,26 +56,27 @@ VERIFY 성공의 핵심 invariant는 다음 하나다.
 ```text
 remote publish branch HEAD
         == publish.json.publishedHeadSha
-        == exact checkout HEAD
+        == isolated exact checkout HEAD
         == verify.json.verifiedHeadSha
 ```
 
-검증 시작 전과 종료 후 remote branch HEAD를 각각 확인한다. 검증 중 branch가 이동하면 해당 VERIFY 실행은 실패한다.
+trusted prepare에서 candidate 실행 전에 remote branch HEAD를 확인하고, trusted finalize의 새 runner에서 PUBLISH provenance를 다시 선택·검증한 뒤 remote branch HEAD를 다시 확인한다. 두 시점 사이에 branch나 provenance identity가 바뀌면 fail-closed 한다.
 
 ## 기계 검증
 
-현재 MVP는 exact published SHA checkout에서 다음을 수행한다.
+isolated candidate runner의 exact published SHA checkout에서 다음을 수행한다.
 
-1. `npm ci`
-2. `npm test`
-3. `npm run build`
-4. `git show --check --format= HEAD`
+1. exact checkout SHA 확인
+2. `npm ci`
+3. `npm test`
+4. `npm run build`
+5. `git show --check --format= HEAD`
 
 이 명령은 Framework MVP repository의 현재 검증 계약이다. 향후 GRAPH/Adapter 단계에서는 project type에 따라 verification command set을 명시적으로 provenance와 결합할 수 있다.
 
 ## Provenance
 
-성공한 VERIFY는 `verify.json`에 다음 핵심 정보를 기록한다.
+성공한 VERIFY는 trusted finalize runner에서 `verify.json`을 생성한다. candidate runner는 `verify.json`을 만들지 않는다.
 
 - source PUBLISH artifact 이름
 - 전체 `sourcePublish` provenance
