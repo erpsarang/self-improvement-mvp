@@ -117,7 +117,10 @@ test("SEAL은 candidate patch bytes를 변경하지 않고 provenance chain을 �
     implement.candidatePatchDigest,
   );
   assert.deepEqual(sealed.provenance.sourceImplement.aiExecution, implement.aiExecution);
-  assert.equal(sealed.provenance.sealWorkflow.workflowPath, ".github/workflows/seal.yml");
+  assert.equal(
+    sealed.provenance.sealWorkflow.workflowPath,
+    ".github/workflows/trusted-rail.yml",
+  );
   assert.equal(sealed.provenance.sealWorkflow.runId, 400);
   assert.equal(sealed.provenance.sealedPatchDigest, implement.candidatePatchDigest);
 });
