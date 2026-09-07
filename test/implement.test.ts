@@ -87,7 +87,9 @@ test("candidate patch digest와 source authorization provenance를 IMPLEMENT에 
     approvalCommentId: authorization.approvalCommentId,
     policySnapshot: authorization.policySnapshot,
     requirementsDigest: requirements.digest,
+    authorizedBaseSha: authorization.githubSha,
   });
+  assert.equal(provenance.baseSha, provenance.sourceAuthorization.authorizedBaseSha);
   assert.match(provenance.candidatePatchDigest, /^sha256:[0-9a-f]{64}$/);
   assert.equal(provenance.implementWorkflow.workflowPath, ".github/workflows/implement.yml");
   assert.equal(provenance.aiExecution.provider, "openai-codex-action");
