@@ -170,10 +170,74 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: current 또는 이전 SEAL artifact 선택
+        id: sealed_artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sourceRun = context.payload.workflow_run;
+            const trustedRunId = Number(process.env.GITHUB_RUN_ID);
+            const trustedRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(trustedRunId) || trustedRunId <= 0) {
+              core.setFailed('invalid trusted run id');
+              return;
+            }
+            if (!Number.isSafeInteger(trustedRunAttempt) || trustedRunAttempt <= 0) {
+              core.setFailed('invalid trusted run attempt');
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: trustedRunId,
+              per_page: 100,
+            });
+
+            const pattern = new RegExp(
+              `^sealed-candidate-${sourceRun.id}-attempt-${sourceRun.run_attempt}-${trustedRunId}-attempt-([1-9]\\d*)$`,
+            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match ? { artifact, attempt: Number(match[1]) } : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= trustedRunAttempt);
+
+            const current = matches.filter(({ attempt }) => attempt === trustedRunAttempt);
+            if (current.length === 1) {
+              core.setOutput('name', current[0].artifact.name);
+              return;
+            }
+            if (current.length > 1) {
+              core.setFailed(`ambiguous current SEAL artifacts: ${current.length}`);
+              return;
+            }
+
+            const prior = matches
+              .filter(({ attempt }) => attempt < trustedRunAttempt)
+              .sort((left, right) => right.attempt - left.attempt);
+            if (prior.length === 0) {
+              core.setFailed('no current or prior SEAL artifact found');
+              return;
+            }
+
+            const latestAttempt = prior[0].attempt;
+            const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
+            if (latest.length !== 1) {
+              core.setFailed(`ambiguous prior SEAL artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              return;
+            }
+
+            core.info(`PUBLISH attempt ${trustedRunAttempt} reuses SEAL artifact from attempt ${latestAttempt}`);
+            core.setOutput('name', latest[0].artifact.name);
+
       - name: sealed artifact 다운로드
         uses: actions/download-artifact@v4
         with:
-          name: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: ${{ steps.sealed_artifact.outputs.name }}
           path: ${{ runner.temp }}/published-source
 
       - name: sealed artifact 구조 확인
@@ -206,7 +270,7 @@ jobs:
         env:
           SEAL_JSON: ${{ runner.temp }}/publish/seal.json
           SEALED_PATCH: ${{ runner.temp }}/publish/sealed.patch
-          SEALED_ARTIFACT_NAME: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          SEALED_ARTIFACT_NAME: ${{ steps.sealed_artifact.outputs.name }}
           PUBLISH_REPOSITORY: ${{ github.repository }}
 
       - name: sealed patch를 publish branch에 적용 및 push
@@ -313,7 +377,7 @@ jobs:
         env:
           SEAL_JSON: ${{ runner.temp }}/publish/seal.json
           SEALED_PATCH: ${{ runner.temp }}/publish/sealed.patch
-          SEALED_ARTIFACT_NAME: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          SEALED_ARTIFACT_NAME: ${{ steps.sealed_artifact.outputs.name }}
           PUBLISH_REPOSITORY: ${{ github.repository }}
           PUBLISH_RUN_ID: ${{ github.run_id }}
           PUBLISH_RUN_ATTEMPT: ${{ github.run_attempt }}
