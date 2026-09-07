@@ -2,7 +2,7 @@
 
 ## 목적과 범위
 
-AI Development Framework는 요구사항에서 학습과 개선까지의 개발 생명주기를 신뢰 가능한 하나의 반복 흐름으로 연결합니다. 현재 MVP는 외부 자동화를 실행하는 완성된 플랫폼이 아니라, 이후 모든 실행이 따라야 할 **Core Trust Layer**의 상태, 권한, 증거와 경계를 고정하는 순수 도메인 모델입니다.
+AI Development Framework는 요구사항에서 학습과 개선까지의 개발 생명주기를 신뢰 가능한 하나의 반복 흐름으로 연결합니다. 현재 MVP는 완성된 플랫폼이 아니라, 이후 모든 실행이 따라야 할 **Core Trust Layer**의 상태, 권한, 증거와 경계를 먼저 고정하고 그 수직 단면을 GitHub Actions로 단계적으로 구현합니다.
 
 Self-Improvement는 아키텍처 전체의 이름이 아닙니다. 다른 capability의 검증된 결과를 학습하고 개선 candidate를 만드는 `SELF-IMPROVEMENT` capability이며, 그 candidate 역시 동일한 Trust Model, Human Approval, State Model과 Provenance를 거쳐야 합니다.
 
@@ -54,7 +54,7 @@ Human Authorization은 capability 집합의 항목이 아니라 Human Approval�
 
 ## Core Trust Layer의 현재 수직 단면
 
-Issue #1의 상태 머신과 Trust Boundary는 별도의 Self-Improvement 전용 구조가 아니라 **Core Trust Layer**의 첫 구현입니다. Issue #3의 `SI-승인 → AUTHORIZE`는 그 위에서 동작하는 **Human Authorization** 인가 경계의 첫 구현입니다.
+Issue #1의 상태 머신과 Trust Boundary는 별도의 Self-Improvement 전용 구조가 아니라 **Core Trust Layer**의 첫 구현입니다. Issue #3의 `SI-승인 → AUTHORIZE`는 그 위에서 동작하는 **Human Authorization** 인가 경계의 첫 구현입니다. Issue #10 / PR #11은 그 다음에 Codex Cloud를 write credential 없는 untrusted Worker로 배치해 candidate artifact만 만들도록 구현했습니다.
 
 ```text
 Human SI-승인                     Human Approval
@@ -63,9 +63,9 @@ Trusted AUTHORIZE                authorization provenance
      ↓
 Untrusted IMPLEMENT              candidate patch, no write credential
      ↓
-Trusted SEAL                     trusted artifact boundary
+Trusted SEAL                     trusted artifact boundary, read-only
      ↓
-Trusted PUBLISH                  published_head_sha
+Trusted PUBLISH                  published_head_sha, write boundary
      ↓
 Exact SHA VERIFY                 verification provenance
      ↓
@@ -86,11 +86,13 @@ Semantic Review                  verified SHA only
 ### 상태와 Provenance의 결합
 
 1. `AUTHORIZE`는 재조회한 원본 approval, approver, policy snapshot, 승인 시각과 trusted workflow run identity를 Actions artifact provenance로 남깁니다.
-2. untrusted `IMPLEMENT` / `FIX` 결과는 직접 공개되지 않고 trusted `SEAL`을 통과합니다.
-3. Trusted Rail의 `PUBLISH` 결과인 immutable `published_head_sha`를 상태에 기록합니다.
-4. `VERIFY`는 실제 대상 SHA가 `published_head_sha`와 exact match일 때만 다음 상태를 허용합니다.
-5. Semantic Review는 verified SHA만 소비하므로 구현, 검증, 검토가 같은 결과를 가리킵니다.
-6. `MERGE_READY`는 권고 상태일 뿐이며 `RECORD_HUMAN_MERGE`는 Human이 외부에서 완료한 Merge 사실만 기록합니다.
+2. untrusted `IMPLEMENT` / `FIX`는 GitHub write credential 없이 candidate 변경만 생성합니다.
+3. clean trusted job이 untrusted workspace를 직접 신뢰하지 않고 exact authorized base 기준 `candidate.patch`와 `implement.json` provenance로 기록합니다.
+4. Trusted `SEAL`은 candidate를 실행하거나 적용하지 않고 source IMPLEMENT identity, base SHA, provenance 구조와 SHA-256을 검사해 exact bytes를 `sealed.patch`로 보존하고 `seal.json`으로 provenance chain을 연장합니다.
+5. Trusted Rail의 별도 `PUBLISH` write boundary가 sealed artifact를 공개하고 immutable `published_head_sha`를 상태에 기록해야 합니다.
+6. `VERIFY`는 실제 대상 SHA가 `published_head_sha`와 exact match일 때만 다음 상태를 허용합니다.
+7. Semantic Review는 verified SHA만 소비하므로 구현, 검증, 검토가 같은 결과를 가리킵니다.
+8. `MERGE_READY`는 권고 상태일 뿐이며 `RECORD_HUMAN_MERGE`는 Human이 외부에서 완료한 Merge 사실만 기록합니다.
 
 상태의 상세 전환은 [상태 머신](state-machine.md), 실행 권한 경계는 [Trust Model](trust-model.md)을 참고하세요.
 
@@ -113,15 +115,21 @@ reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMP
 - `src/self-improvement/state.ts`: 허용된 전환, exact SHA와 `FIX` 횟수 제한을 적용합니다.
 - `src/self-improvement/review-decision.ts`: `PASS`, `LOCAL_FIX`, `STRUCTURAL_CHANGE`만 review decision으로 허용합니다.
 - `policy/trusted-approvers.yml`: live collaborator permission 조회를 대신하는 versioned policy입니다.
-- `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 artifact 조회에 필요한 최소 권한(`contents: read`, `actions: read`, `issues: write`)으로 처리합니다.
+- `.github/workflows/authorize.yml`: 정확한 `SI-승인` Issue comment만 artifact 조회에 필요한 최소 권한으로 처리합니다.
 - `src/self-improvement/authorize-handler.ts`: 원본 approval을 재검증하고 trusted workflow artifact로 idempotency를 보장하며 Issue에는 artifact pointer만 기록합니다.
+- `.github/workflows/implement.yml`: trusted `AUTHORIZE` 뒤 Codex Cloud를 untrusted `IMPLEMENT` Worker로 실행하고, 별도 clean trusted job이 candidate artifact를 기록합니다.
+- `src/self-improvement/implement.ts` / `implement-handler.ts`: 승인 snapshot과 source workflow identity를 검증하고 candidate patch digest를 `implement.json` provenance에 결합합니다.
+- `.github/workflows/seal.yml`: `Untrusted IMPLEMENT` 완료 후 read-only 권한으로 candidate artifact를 인수하며 정상 no-op과 malformed/ambiguous 입력을 구분합니다.
+- `src/self-improvement/seal.ts` / `seal-handler.ts`: candidate를 실행하지 않고 IMPLEMENT provenance, exact base SHA와 patch digest를 검증해 exact bytes `sealed.patch`와 `seal.json`을 생성합니다.
 
-Phase 1의 Actions artifact는 보존 기간 동안 사용하는 operational trust anchor입니다. retention 만료 뒤의 장기 감사 provenance는 보장하지 않으며, durable/append-only provenance store 또는 동등한 장기 검증 수단은 후속 Framework 설계 TODO입니다.
+Actions artifact는 보존 기간 동안 사용하는 operational trust anchor입니다. retention 만료 뒤의 장기 감사 provenance는 보장하지 않으며, durable/append-only provenance store 또는 동등한 장기 검증 수단은 후속 Framework 설계 TODO입니다.
 
-디렉터리 이름 `self-improvement`는 현재 실험 트랙을 나타냅니다. 이번 문서 재정의는 repository rename이나 대규모 코드 리팩터링을 요구하지 않습니다.
+디렉터리 이름 `self-improvement`는 현재 실험 트랙을 나타냅니다. 이 구조는 repository 이름이나 특정 AI Worker에 신뢰를 부여하는 것이 아니라, 역할과 credential boundary를 명시적으로 분리하는 실험을 우선합니다.
 
 ## 비목표
 
-현재 자동화는 Human Authorization만 구현합니다. repository rename, Codex `IMPLEMENT` / `FIX`, 실제 GRAPH / LOOP Engine, branch/PR 자동 생성, `SEAL` / `PUBLISH`, exact SHA `VERIFY`, Semantic Review, `MERGE_READY`, Auto Merge는 범위 밖입니다.
+현재 자동화 범위는 `Human SI-승인 → Trusted AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted SEAL`까지입니다. 아직 실제 `PUBLISH` write boundary, branch/PR 자동 생성, exact SHA `VERIFY`, Semantic Review, `FIX`, 실제 GRAPH / LOOP Engine, `MERGE_READY`, Auto Merge를 구현하지 않습니다.
+
+특히 `SEAL`은 candidate 기능을 승인하거나 검증하는 단계가 아니며, PUBLISH 권한을 갖지 않습니다. 최종 Merge는 계속 Human-only입니다.
 
 전체 단계의 증명 목표는 [Roadmap](roadmap.md)에 정의합니다.
