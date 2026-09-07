@@ -42,7 +42,7 @@ test("candidate artifact는 정확한 source run에 결합되고 ambiguity를 fa
   assert.match(workflow, /candidate artifact must contain exactly candidate\.patch and implement\.json/);
 });
 
-test("candidate base가 아니라 trusted control-plane exact SHA를 credential 없이 checkout한다", () => {
+test("candidate base와 IMPLEMENT/SEAL control-plane SHA를 서로 다른 값으로 취급한다", () => {
   assert.match(workflow, /name: trusted control-plane exact SHA checkout/);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
   assert.doesNotMatch(
@@ -50,7 +50,11 @@ test("candidate base가 아니라 trusted control-plane exact SHA를 credential 
     /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
   );
   assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /SOURCE_HEAD_SHA: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
+  assert.match(
+    workflow,
+    /SOURCE_CONTROL_PLANE_SHA: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
+  );
+  assert.doesNotMatch(workflow, /SOURCE_HEAD_SHA:/);
   assert.match(workflow, /SEAL_TRUSTED_CODE_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /sealed\.patch/);
   assert.match(workflow, /seal\.json/);
