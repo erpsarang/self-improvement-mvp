@@ -1,0 +1,523 @@
+name: Semantic REVIEW
+
+on:
+  workflow_call:
+    secrets:
+      CODEX_API_KEY:
+        required: true
+    outputs:
+      decision:
+        description: Structured semantic review decision
+        value: ${{ jobs.review_finalize.outputs.decision }}
+      issue_number:
+        description: Reviewed issue number
+        value: ${{ jobs.review_finalize.outputs.issue_number }}
+      reviewed_head_sha:
+        description: Exact reviewed commit SHA
+        value: ${{ jobs.review_finalize.outputs.reviewed_head_sha }}
+
+permissions: {}
+
+jobs:
+  review_prepare:
+    name: trusted REVIEW 입력 준비
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    outputs:
+      issue_number: ${{ steps.prepare_review.outputs.issue_number }}
+      verified_head_sha: ${{ steps.prepare_review.outputs.verified_head_sha }}
+      verify_artifact_name: ${{ steps.prepare_review.outputs.verify_artifact_name }}
+      authorization_artifact_name: ${{ steps.prepare_review.outputs.authorization_artifact_name }}
+      review_input_artifact_name: ${{ steps.prepare_review.outputs.review_input_artifact_name }}
+
+    steps:
+      - name: trusted REVIEW control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: current 또는 이전 VERIFY provenance artifact 선택
+        id: verify_artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const trustedRunId = Number(process.env.GITHUB_RUN_ID);
+            const trustedRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(trustedRunId) || trustedRunId <= 0) {
+              core.setFailed('invalid trusted run id');
+              return;
+            }
+            if (!Number.isSafeInteger(trustedRunAttempt) || trustedRunAttempt <= 0) {
+              core.setFailed('invalid trusted run attempt');
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: trustedRunId,
+              per_page: 100,
+            });
+            const pattern = new RegExp(
+              `^verify-provenance-issue-([1-9]\\d*)-${trustedRunId}-attempt-([1-9]\\d*)$`,
+            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match
+                  ? { artifact, issueNumber: Number(match[1]), attempt: Number(match[2]) }
+                  : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= trustedRunAttempt);
+
+            const current = matches.filter(({ attempt }) => attempt === trustedRunAttempt);
+            if (current.length === 1) {
+              core.setOutput('name', current[0].artifact.name);
+              return;
+            }
+            if (current.length > 1) {
+              core.setFailed(`ambiguous current VERIFY artifacts: ${current.length}`);
+              return;
+            }
+
+            const prior = matches
+              .filter(({ attempt }) => attempt < trustedRunAttempt)
+              .sort((left, right) => right.attempt - left.attempt);
+            if (prior.length === 0) {
+              core.setFailed('no current or prior VERIFY provenance artifact found');
+              return;
+            }
+            const latestAttempt = prior[0].attempt;
+            const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
+            if (latest.length !== 1) {
+              core.setFailed(`ambiguous prior VERIFY artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              return;
+            }
+            core.info(`REVIEW attempt ${trustedRunAttempt} reuses VERIFY artifact from attempt ${latestAttempt}`);
+            core.setOutput('name', latest[0].artifact.name);
+
+      - name: VERIFY provenance artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.verify_artifact.outputs.name }}
+          path: ${{ runner.temp }}/review-verify-source
+
+      - name: VERIFY provenance artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/review"
+          mapfile -t verify_files < <(find "${RUNNER_TEMP}/review-verify-source" -type f -name verify.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/review-verify-source" -type f -print)
+          if [ "${#verify_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+            echo "VERIFY provenance artifact must contain exactly verify.json" >&2
+            exit 1
+          fi
+          cp "${verify_files[0]}" "${RUNNER_TEMP}/review/verify.json"
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted REVIEW control-plane 의존성 설치
+        run: npm ci
+
+      - name: VERIFY provenance 검증 및 AUTHORIZE source 결정
+        id: review_source
+        run: npm exec -- tsx src/self-improvement/review-handler.ts source
+        env:
+          VERIFY_JSON: ${{ runner.temp }}/review/verify.json
+          VERIFY_ARTIFACT_NAME: ${{ steps.verify_artifact.outputs.name }}
+          REVIEW_REPOSITORY: ${{ github.repository }}
+
+      - name: 원본 AUTHORIZE artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          path: ${{ runner.temp }}/review-authorize-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.review_source.outputs.authorization_run_id }}
+
+      - name: AUTHORIZE artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t authorize_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name authorize.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -print)
+          if [ "${#authorize_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+            echo "AUTHORIZE artifact must contain exactly authorize.json" >&2
+            exit 1
+          fi
+          cp "${authorize_files[0]}" "${RUNNER_TEMP}/review/authorize.json"
+
+      - name: 승인 요구사항 재검증 및 REVIEW input 생성
+        id: prepare_review
+        run: npm exec -- tsx src/self-improvement/review-handler.ts prepare
+        env:
+          VERIFY_JSON: ${{ runner.temp }}/review/verify.json
+          VERIFY_ARTIFACT_NAME: ${{ steps.verify_artifact.outputs.name }}
+          AUTHORIZE_JSON: ${{ runner.temp }}/review/authorize.json
+          AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          REVIEW_REPOSITORY: ${{ github.repository }}
+          REVIEW_RUNTIME_DIR: ${{ runner.temp }}/review/input
+          REVIEW_RUN_ID: ${{ github.run_id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+
+      - name: trusted REVIEW input artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare_review.outputs.review_input_artifact_name }}
+          path: ${{ runner.temp }}/review/input/
+          if-no-files-found: error
+
+  review_agent:
+    name: isolated AI Semantic Reviewer
+    needs: review_prepare
+    if: needs.review_prepare.result == 'success'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+
+    steps:
+      - name: exact verified SHA checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.review_prepare.outputs.verified_head_sha }}
+          path: review-target
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: exact checkout SHA 확인
+        shell: bash
+        working-directory: review-target
+        env:
+          EXPECTED_SHA: ${{ needs.review_prepare.outputs.verified_head_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "semantic review exact checkout SHA mismatch" >&2
+            exit 1
+          fi
+
+      - name: trusted REVIEW input 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.review_prepare.outputs.review_input_artifact_name }}
+          path: ${{ runner.temp }}/review-input
+
+      - name: REVIEW input 구조 확인 및 neutral workspace 생성
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t input_files < <(find "${RUNNER_TEMP}/review-input" -type f -print)
+          if [ "${#input_files[@]}" -ne 3 ]; then
+            echo "review input artifact must contain exactly three files" >&2
+            exit 1
+          fi
+          for required in review-input.json review-prompt.md review-output.schema.json; do
+            if [ ! -f "${RUNNER_TEMP}/review-input/${required}" ]; then
+              echo "missing trusted review input: ${required}" >&2
+              exit 1
+            fi
+          done
+          mkdir -p review-neutral "${RUNNER_TEMP}/reviewer"
+
+      - name: Untrusted read-only Semantic Reviewer
+        id: semantic_reviewer
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: review-neutral
+          codex-home: ${{ runner.temp }}/semantic-review-codex-home
+          prompt-file: ${{ runner.temp }}/review-input/review-prompt.md
+          output-schema-file: ${{ runner.temp }}/review-input/review-output.schema.json
+          output-file: ${{ runner.temp }}/reviewer/reviewer.json
+          effort: high
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: Reviewer output 최소 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "${RUNNER_TEMP}/reviewer/reviewer.json" ]; then
+            echo "reviewer output is missing or empty" >&2
+            exit 1
+          fi
+          node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${RUNNER_TEMP}/reviewer/reviewer.json"
+
+      - name: untrusted Reviewer output artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewer-output-issue-${{ needs.review_prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reviewer/reviewer.json
+          if-no-files-found: error
+
+  review_finalize:
+    name: trusted REVIEW provenance 기록
+    needs: [review_prepare, review_agent]
+    if: >-
+      needs.review_prepare.result == 'success' &&
+      needs.review_agent.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.finalize_review.outputs.decision }}
+      issue_number: ${{ steps.finalize_review.outputs.issue_number }}
+      reviewed_head_sha: ${{ steps.finalize_review.outputs.reviewed_head_sha }}
+
+    steps:
+      - name: trusted REVIEW control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: current 또는 이전 VERIFY provenance artifact 재선택
+        id: verify_artifact
+        uses: actions/github-script@v7
+        env:
+          EXPECTED_ISSUE: ${{ needs.review_prepare.outputs.issue_number }}
+        with:
+          script: |
+            const trustedRunId = Number(process.env.GITHUB_RUN_ID);
+            const trustedRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            const expectedIssue = Number(process.env.EXPECTED_ISSUE);
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: trustedRunId,
+              per_page: 100,
+            });
+            const pattern = new RegExp(
+              `^verify-provenance-issue-${expectedIssue}-${trustedRunId}-attempt-([1-9]\\d*)$`,
+            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match ? { artifact, attempt: Number(match[1]) } : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= trustedRunAttempt);
+            const current = matches.filter(({ attempt }) => attempt === trustedRunAttempt);
+            if (current.length === 1) {
+              core.setOutput('name', current[0].artifact.name);
+              return;
+            }
+            if (current.length > 1) {
+              core.setFailed(`ambiguous current VERIFY artifacts: ${current.length}`);
+              return;
+            }
+            const prior = matches
+              .filter(({ attempt }) => attempt < trustedRunAttempt)
+              .sort((left, right) => right.attempt - left.attempt);
+            if (prior.length === 0) {
+              core.setFailed('no current or prior VERIFY provenance artifact found');
+              return;
+            }
+            const latestAttempt = prior[0].attempt;
+            const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
+            if (latest.length !== 1) {
+              core.setFailed(`ambiguous prior VERIFY artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              return;
+            }
+            core.setOutput('name', latest[0].artifact.name);
+
+      - name: prepare와 동일 VERIFY artifact인지 확인
+        shell: bash
+        env:
+          PREPARED_ARTIFACT: ${{ needs.review_prepare.outputs.verify_artifact_name }}
+          FINALIZE_ARTIFACT: ${{ steps.verify_artifact.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ "$FINALIZE_ARTIFACT" != "$PREPARED_ARTIFACT" ]; then
+            echo "VERIFY artifact changed between REVIEW prepare and finalize" >&2
+            exit 1
+          fi
+
+      - name: VERIFY provenance artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.verify_artifact.outputs.name }}
+          path: ${{ runner.temp }}/review-verify-source
+
+      - name: VERIFY provenance artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/review"
+          mapfile -t verify_files < <(find "${RUNNER_TEMP}/review-verify-source" -type f -name verify.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/review-verify-source" -type f -print)
+          if [ "${#verify_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+            echo "VERIFY provenance artifact must contain exactly verify.json" >&2
+            exit 1
+          fi
+          cp "${verify_files[0]}" "${RUNNER_TEMP}/review/verify.json"
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted REVIEW control-plane 의존성 설치
+        run: npm ci
+
+      - name: VERIFY provenance 재검증 및 AUTHORIZE source 재결정
+        id: review_source
+        run: npm exec -- tsx src/self-improvement/review-handler.ts source
+        env:
+          VERIFY_JSON: ${{ runner.temp }}/review/verify.json
+          VERIFY_ARTIFACT_NAME: ${{ steps.verify_artifact.outputs.name }}
+          REVIEW_REPOSITORY: ${{ github.repository }}
+
+      - name: prepare와 finalize source identity exact match 확인
+        shell: bash
+        env:
+          EXPECTED_ISSUE: ${{ needs.review_prepare.outputs.issue_number }}
+          EXPECTED_SHA: ${{ needs.review_prepare.outputs.verified_head_sha }}
+          EXPECTED_AUTHORIZE: ${{ needs.review_prepare.outputs.authorization_artifact_name }}
+          ACTUAL_ISSUE: ${{ steps.review_source.outputs.issue_number }}
+          ACTUAL_SHA: ${{ steps.review_source.outputs.verified_head_sha }}
+          ACTUAL_AUTHORIZE: ${{ steps.review_source.outputs.authorization_artifact_name }}
+        run: |
+          set -euo pipefail
+          if [ "$ACTUAL_ISSUE" != "$EXPECTED_ISSUE" ] || \
+             [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ] || \
+             [ "$ACTUAL_AUTHORIZE" != "$EXPECTED_AUTHORIZE" ]; then
+            echo "REVIEW source identity changed between prepare and finalize" >&2
+            exit 1
+          fi
+
+      - name: 원본 AUTHORIZE artifact 재다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          path: ${{ runner.temp }}/review-authorize-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.review_source.outputs.authorization_run_id }}
+
+      - name: AUTHORIZE artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t authorize_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name authorize.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -print)
+          if [ "${#authorize_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+            echo "AUTHORIZE artifact must contain exactly authorize.json" >&2
+            exit 1
+          fi
+          cp "${authorize_files[0]}" "${RUNNER_TEMP}/review/authorize.json"
+
+      - name: current 또는 이전 Reviewer output artifact 선택
+        id: reviewer_artifact
+        uses: actions/github-script@v7
+        env:
+          EXPECTED_ISSUE: ${{ needs.review_prepare.outputs.issue_number }}
+        with:
+          script: |
+            const trustedRunId = Number(process.env.GITHUB_RUN_ID);
+            const trustedRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            const expectedIssue = Number(process.env.EXPECTED_ISSUE);
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: trustedRunId,
+              per_page: 100,
+            });
+            const pattern = new RegExp(
+              `^reviewer-output-issue-${expectedIssue}-${trustedRunId}-attempt-([1-9]\\d*)$`,
+            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match ? { artifact, attempt: Number(match[1]) } : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= trustedRunAttempt);
+            const current = matches.filter(({ attempt }) => attempt === trustedRunAttempt);
+            if (current.length === 1) {
+              core.setOutput('name', current[0].artifact.name);
+              return;
+            }
+            if (current.length > 1) {
+              core.setFailed(`ambiguous current Reviewer output artifacts: ${current.length}`);
+              return;
+            }
+            const prior = matches
+              .filter(({ attempt }) => attempt < trustedRunAttempt)
+              .sort((left, right) => right.attempt - left.attempt);
+            if (prior.length === 0) {
+              core.setFailed('no current or prior Reviewer output artifact found');
+              return;
+            }
+            const latestAttempt = prior[0].attempt;
+            const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
+            if (latest.length !== 1) {
+              core.setFailed(`ambiguous prior Reviewer output artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              return;
+            }
+            core.info(`REVIEW finalize attempt ${trustedRunAttempt} reuses Reviewer output from attempt ${latestAttempt}`);
+            core.setOutput('name', latest[0].artifact.name);
+
+      - name: untrusted Reviewer output 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.reviewer_artifact.outputs.name }}
+          path: ${{ runner.temp }}/reviewer-source
+
+      - name: Reviewer output artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reviewer_files < <(find "${RUNNER_TEMP}/reviewer-source" -type f -name reviewer.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/reviewer-source" -type f -print)
+          if [ "${#reviewer_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+            echo "Reviewer output artifact must contain exactly reviewer.json" >&2
+            exit 1
+          fi
+          cp "${reviewer_files[0]}" "${RUNNER_TEMP}/review/reviewer.json"
+
+      - name: trusted REVIEW provenance 생성
+        id: finalize_review
+        run: npm exec -- tsx src/self-improvement/review-handler.ts finalize
+        env:
+          VERIFY_JSON: ${{ runner.temp }}/review/verify.json
+          VERIFY_ARTIFACT_NAME: ${{ steps.verify_artifact.outputs.name }}
+          AUTHORIZE_JSON: ${{ runner.temp }}/review/authorize.json
+          AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          REVIEW_REPOSITORY: ${{ github.repository }}
+          REVIEWER_OUTPUT_JSON: ${{ runner.temp }}/review/reviewer.json
+          REVIEWER_OUTPUT_ARTIFACT_NAME: ${{ steps.reviewer_artifact.outputs.name }}
+          REVIEWER_PROVIDER: openai-codex-action
+          REVIEW_RUN_ID: ${{ github.run_id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          REVIEW_TRUSTED_CODE_SHA: ${{ github.sha }}
+          REVIEW_JSON: ${{ runner.temp }}/review/review.json
+
+      - name: REVIEW provenance artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-provenance-issue-${{ steps.finalize_review.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review/review.json
+          if-no-files-found: error
