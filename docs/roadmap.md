@@ -37,6 +37,8 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 - 요구사항, 계획, 실행 환경과 candidate artifact 사이의 provenance를 보존합니다.
 - candidate는 Trusted Rail의 검사를 거쳐야 다음 단계로 이동합니다.
 
+**현재 증거:** Issue #10 / PR #11에서 `Trusted AUTHORIZE → untrusted IMPLEMENT → candidate.patch + implement.json`을 구현했습니다. Issue #12 / PR #13은 이 candidate를 실행하지 않고 identity와 digest를 확인해 `sealed.patch + seal.json`으로 승격하는 read-only Trusted `SEAL` 경계를 구현합니다.
+
 ## Phase 3 — Independent VERIFY
 
 **증명할 능력:** 구현 주체와 독립된 Verifier가 공개된 결과의 동일성과 품질 기준을 재현 가능하게 검사할 수 있습니다.
@@ -95,6 +97,8 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 
 ## 현재 위치와 경계
 
-현재 저장소는 **Phase 0**의 상태·신뢰 모델과 **Phase 1**의 Human Authorization 도메인 모델을 다룹니다. 이후 Phase 설명은 목표 능력과 설계 방향이며 GRAPH / LOOP 또는 외부 실행 자동화가 이미 구현됐다는 뜻이 아닙니다.
+현재 저장소는 **Phase 0 Core State / Trust Model**, **Phase 1 Human Authorization**, 그리고 **Phase 2 AI IMPLEMENT candidate 생성**을 실제 코드와 GitHub Actions로 다룹니다. PR #11 이후 Codex Cloud는 write credential 없는 untrusted Worker로만 동작하고, 결과는 `candidate.patch + implement.json`으로 기록됩니다.
 
-이 Roadmap 자체는 repository rename, 기존 상태 머신의 대규모 리팩터링, GitHub Actions 변경, Codex 실행 방식 변경, GRAPH / LOOP 실제 구현, Self-Improvement 자동화 확장이나 Auto Merge를 포함하지 않습니다.
+현재 Issue #12 / PR #13은 Worker 결과를 기능적으로 승인하거나 실행하지 않고 provenance 구조, source workflow identity, exact base SHA와 SHA-256을 검사해 exact bytes를 `SEALED` artifact로 승격하는 **Trusted SEAL** 경계를 추가합니다. `SEAL`은 read-only이고 `PUBLISH` write 권한과 의도적으로 분리합니다.
+
+다음 핵심 통합 경계는 `SEALED → Trusted PUBLISH → immutable published_head_sha`이며, 그 뒤 Phase 3의 Independent VERIFY가 exact published SHA만 검증하게 됩니다. GRAPH / LOOP 실제 엔진, Semantic REVIEW / FIX, Self-Improvement 확장과 Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
