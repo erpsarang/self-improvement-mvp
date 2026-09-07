@@ -81,7 +81,7 @@ Untrusted IMPLEMENT              candidate patch, no write credential
 
 `LOCAL FIX` 분기는 terminal decision으로 직행하지 않습니다. `FIXING --SEAL--> SEALED`로 복귀해 `PUBLISH → VERIFY exact published SHA → REVIEW`를 반드시 재실행하며, `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`는 이 재검토의 decision에서만 결정됩니다.
 
-`state.ts`는 위 흐름에서 이미 발생한 사건을 검증해 기록할 뿐 GitHub 또는 Codex를 호출하지 않습니다. `RECORD_PUBLISHED`는 실제 PUBLISH 구현이 아니라 Trusted Rail이 반환할 immutable `published_head_sha`를 기록하는 경계입니다. `PASS` 역시 `MERGE_READY`까지만 이동하며 merge를 실행하지 않습니다.
+`state.ts`는 위 흐름에서 이미 발생한 사건을 검증해 기록할 뿐 GitHub 또는 Codex를 호출하지 않습니다. 실제 Trusted PUBLISH가 반환한 immutable `published_head_sha`를 상태에 연결하는 사건이 `RECORD_PUBLISHED`입니다. `PASS` 역시 `MERGE_READY`까지만 이동하며 merge를 실행하지 않습니다.
 
 ### Trusted Rail 실행 구조
 
@@ -101,7 +101,7 @@ Untrusted IMPLEMENT workflow
 
 중요한 것은 **같은 workflow 파일에 있다는 사실이 권한 공유를 의미하지 않는다는 점**입니다. workflow-level 기본 권한은 비우고 각 job에 필요한 최소 권한을 별도로 부여합니다. 이렇게 하면 Worker와 Trusted Rail 사이의 경계는 하나로 유지하면서도 `SEAL`, `PUBLISH`, `VERIFY`, `REVIEW`의 논리적 책임과 credential boundary를 계속 분리할 수 있습니다.
 
-현재 PR #13은 이 구조에서 `seal` job만 구현합니다. `PUBLISH`, `VERIFY`, `REVIEW`는 후속 단계에서 같은 Trusted Rail에 독립 job으로 추가합니다.
+PR #13은 이 구조에서 read-only `seal` job을 구현했고, PR #18은 별도 최소 write 권한의 `publish` job을 추가합니다. `VERIFY`, `REVIEW`는 후속 단계에서 같은 Trusted Rail에 독립 job으로 추가합니다.
 
 ### 상태와 Provenance의 결합
 
@@ -110,7 +110,7 @@ Untrusted IMPLEMENT workflow
 3. clean trusted job이 untrusted workspace를 직접 신뢰하지 않고 exact authorized base 기준 `candidate.patch`와 `implement.json` provenance로 기록합니다.
 4. Worker가 끝나면 `.github/workflows/trusted-rail.yml`로 한 번만 trusted 영역에 진입합니다.
 5. Trusted `SEAL` job은 candidate를 실행하거나 적용하지 않고 source IMPLEMENT identity, base SHA, provenance 구조와 SHA-256을 검사해 exact bytes를 `sealed.patch`로 보존하고 `seal.json`으로 provenance chain을 연장합니다.
-6. Trusted Rail의 별도 `PUBLISH` job이 sealed artifact를 공개하고 immutable `published_head_sha`를 상태에 기록해야 합니다.
+6. Trusted Rail의 별도 `PUBLISH` job은 sealed artifact만 재검증하고 exact `baseSha`에 적용해 `ai-publish/issue-<N>` branch에 force 없이 공개한 뒤, 실제 remote SHA를 immutable `published_head_sha`로 `publish.json`에 기록합니다.
 7. `VERIFY` job은 실제 대상 SHA가 `published_head_sha`와 exact match일 때만 다음 상태를 허용합니다.
 8. Semantic Review는 verified SHA만 소비하므로 구현, 검증, 검토가 같은 결과를 가리킵니다.
 9. `MERGE_READY`는 권고 상태일 뿐이며 `RECORD_HUMAN_MERGE`는 Human이 외부에서 완료한 Merge 사실만 기록합니다.
@@ -142,8 +142,9 @@ reviewed result / provenance ── 별도 후속 흐름 ──► LEARN → IMP
 - `src/self-improvement/authorize-handler.ts`: 원본 approval을 재검증하고 trusted workflow artifact로 idempotency를 보장하며 Issue에는 artifact pointer만 기록합니다.
 - `.github/workflows/implement.yml`: trusted `AUTHORIZE` 뒤 Codex Cloud를 untrusted `IMPLEMENT` Worker로 실행하고, 별도 clean trusted job이 candidate artifact를 기록합니다.
 - `src/self-improvement/implement.ts` / `implement-handler.ts`: 승인 snapshot과 source workflow identity를 검증하고 candidate patch digest를 `implement.json` provenance에 결합합니다.
-- `.github/workflows/trusted-rail.yml`: `Untrusted IMPLEMENT` 완료 후 trusted 영역으로 한 번만 진입합니다. workflow-level 권한은 비어 있으며 현재 `seal` job만 `contents: read`, `actions: read`를 사용합니다.
+- `.github/workflows/trusted-rail.yml`: `Untrusted IMPLEMENT` 완료 후 trusted 영역으로 한 번만 진입합니다. workflow-level 권한은 비어 있고 `seal` job은 `contents: read`, `actions: read`, `publish` job만 `contents: write`, `actions: read`를 사용합니다.
 - `src/self-improvement/seal.ts` / `seal-handler.ts`: candidate를 실행하지 않고 IMPLEMENT provenance, exact base SHA와 patch digest를 검증해 exact bytes `sealed.patch`와 `seal.json`을 생성합니다. `seal.json`은 SEAL을 해당 Trusted Rail run / attempt에 귀속합니다.
+- `src/self-improvement/publish.ts` / `publish-handler.ts`: sealed artifact의 source identity와 exact bytes digest를 재검증하고 deterministic publish branch와 immutable `published_head_sha`를 `publish.json` provenance로 기록합니다.
 
 Actions artifact는 보존 기간 동안 사용하는 operational trust anchor입니다. retention 만료 뒤의 장기 감사 provenance는 보장하지 않으며, durable/append-only provenance store 또는 동등한 장기 검증 수단은 후속 Framework 설계 TODO입니다.
 
@@ -151,8 +152,8 @@ Actions artifact는 보존 기간 동안 사용하는 operational trust anchor�
 
 ## 비목표
 
-현재 자동화 범위는 `Human SI-승인 → Trusted AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted Rail / SEAL`까지입니다. 아직 실제 `PUBLISH` job, branch/PR 자동 생성, exact SHA `VERIFY`, Semantic Review, `FIX`, 실제 GRAPH / LOOP Engine, `MERGE_READY`, Auto Merge를 구현하지 않습니다.
+현재 자동화 범위는 `Human SI-승인 → Trusted AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted SEAL → Trusted PUBLISH → immutable published_head_sha`까지입니다. 아직 Pull Request 자동 생성, exact SHA `VERIFY`, Semantic Review, `FIX`, 실제 GRAPH / LOOP Engine, `MERGE_READY`, Auto Merge를 구현하지 않습니다.
 
-특히 `SEAL`은 candidate 기능을 승인하거나 검증하는 단계가 아니며, PUBLISH 권한을 갖지 않습니다. 최종 Merge는 계속 Human-only입니다.
+특히 `SEAL`은 candidate 기능을 승인하거나 검증하는 단계가 아니며 write 권한을 갖지 않습니다. `PUBLISH`의 write 권한도 publish branch 생성/fast-forward에만 사용하며 `main` 직접 push, force push, merge를 허용하지 않습니다. 최종 Merge는 계속 Human-only입니다.
 
 전체 단계의 증명 목표는 [Roadmap](roadmap.md)에 정의합니다.
