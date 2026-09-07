@@ -26,7 +26,7 @@ const candidatePatch = readFileSync(candidatePatchPath);
 const sourceRun: ImplementSourceRun = {
   id: positiveIntegerEnv("SOURCE_RUN_ID"),
   runAttempt: positiveIntegerEnv("SOURCE_RUN_ATTEMPT"),
-  headSha: requiredEnv("SOURCE_HEAD_SHA").toLowerCase(),
+  controlPlaneSha: requiredEnv("SOURCE_CONTROL_PLANE_SHA").toLowerCase(),
   repository: requiredEnv("SOURCE_REPOSITORY"),
   conclusion: requiredEnv("SOURCE_CONCLUSION"),
   workflowPath: requiredEnv("SOURCE_WORKFLOW_PATH"),
