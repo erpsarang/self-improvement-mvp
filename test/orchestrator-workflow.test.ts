@@ -28,6 +28,12 @@ test("route와 record는 read-only이고 source REVIEW artifact를 exact run/att
   assert.match(recordSection, /orchestrator-handler\.ts finalize/);
 });
 
+test("REVIEW artifact가 없거나 중복되면 no-op으로 숨기지 않고 fail-closed 한다", () => {
+  assert.match(routeSection, /if \(matches\.length !== 1\)/);
+  assert.match(routeSection, /expected exactly one REVIEW provenance artifact/);
+  assert.doesNotMatch(routeSection, /treating valid IMPLEMENT no-op|should_run', 'false'/);
+});
+
 test("PASS → MERGE_READY일 때만 PR boundary job이 실행된다", () => {
   assert.match(mergeSection, /needs\.route\.outputs\.should_create_pr == 'true'/);
   assert.match(mergeSection, /decision !== 'PASS' \|\| nextState !== 'MERGE_READY'/);
