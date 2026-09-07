@@ -39,47 +39,57 @@ export interface SealProvenance {
   readonly sealedPatchDigest: string;
 }
 
-function positiveInteger(value: number): boolean {
-  return Number.isInteger(value) && value > 0;
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validRepository(value: string): boolean {
-  return /^[^/]+\/[^/]+$/.test(value);
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
-function validSha(value: string): boolean {
-  return /^[0-9a-f]{40}$/.test(value);
+function validRepository(value: unknown): value is string {
+  return typeof value === "string" && /^[^/]+\/[^/]+$/.test(value);
 }
 
-function validDigest(value: string): boolean {
-  return /^sha256:[0-9a-f]{64}$/.test(value);
+function validSha(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 }
 
-function validImplementProvenance(value: ImplementProvenance): boolean {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      value.type === "IMPLEMENT" &&
-      validRepository(value.repository) &&
-      positiveInteger(value.issueNumber) &&
-      validSha(value.baseSha) &&
-      positiveInteger(value.sourceAuthorization?.runId) &&
-      positiveInteger(value.sourceAuthorization?.runAttempt) &&
-      positiveInteger(value.sourceAuthorization?.approvalCommentId) &&
-      validDigest(value.sourceAuthorization?.policySnapshot) &&
-      validDigest(value.sourceAuthorization?.requirementsDigest) &&
-      value.implementWorkflow?.workflowPath === IMPLEMENT_WORKFLOW_PATH &&
-      positiveInteger(value.implementWorkflow?.runId) &&
-      positiveInteger(value.implementWorkflow?.runAttempt) &&
-      validDigest(value.candidatePatchDigest) &&
-      value.aiExecution?.provider === "openai-codex-action" &&
-      typeof value.aiExecution?.resultId === "string" &&
-      value.aiExecution.resultId.trim().length > 0,
+function validDigest(value: unknown): value is string {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function validImplementProvenance(value: unknown): value is ImplementProvenance {
+  if (!record(value)) return false;
+  const sourceAuthorization = value.sourceAuthorization;
+  const implementWorkflow = value.implementWorkflow;
+  const aiExecution = value.aiExecution;
+  if (!record(sourceAuthorization) || !record(implementWorkflow) || !record(aiExecution)) {
+    return false;
+  }
+
+  return (
+    value.type === "IMPLEMENT" &&
+    validRepository(value.repository) &&
+    positiveInteger(value.issueNumber) &&
+    validSha(value.baseSha) &&
+    positiveInteger(sourceAuthorization.runId) &&
+    positiveInteger(sourceAuthorization.runAttempt) &&
+    positiveInteger(sourceAuthorization.approvalCommentId) &&
+    validDigest(sourceAuthorization.policySnapshot) &&
+    validDigest(sourceAuthorization.requirementsDigest) &&
+    implementWorkflow.workflowPath === IMPLEMENT_WORKFLOW_PATH &&
+    positiveInteger(implementWorkflow.runId) &&
+    positiveInteger(implementWorkflow.runAttempt) &&
+    validDigest(value.candidatePatchDigest) &&
+    aiExecution.provider === "openai-codex-action" &&
+    typeof aiExecution.resultId === "string" &&
+    aiExecution.resultId.trim().length > 0
   );
 }
 
 export function validateImplementCandidateForSeal(
-  implement: ImplementProvenance,
+  implement: unknown,
   candidatePatch: string | Buffer,
   sourceRun: ImplementSourceRun,
 ): ImplementProvenance {
@@ -124,7 +134,7 @@ export function validateImplementCandidateForSeal(
 }
 
 export function sealImplementCandidate(input: {
-  readonly implement: ImplementProvenance;
+  readonly implement: unknown;
   readonly candidatePatch: string | Buffer;
   readonly sourceRun: ImplementSourceRun;
   readonly sealRun: SealRunIdentity;
