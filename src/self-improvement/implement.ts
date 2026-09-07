@@ -28,6 +28,7 @@ export interface ImplementProvenance {
     readonly approvalCommentId: number;
     readonly policySnapshot: string;
     readonly requirementsDigest: string;
+    readonly authorizedBaseSha: string;
   };
   readonly implementWorkflow: {
     readonly workflowPath: typeof IMPLEMENT_WORKFLOW_PATH;
@@ -123,6 +124,7 @@ export function createImplementProvenance(input: {
       approvalCommentId: input.authorization.approvalCommentId,
       policySnapshot: input.authorization.policySnapshot,
       requirementsDigest: input.authorization.requirements.digest,
+      authorizedBaseSha: input.authorization.githubSha,
     },
     implementWorkflow: {
       workflowPath: IMPLEMENT_WORKFLOW_PATH,
