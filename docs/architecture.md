@@ -66,7 +66,7 @@ AgentRuntime
 - **Human Approval**: 시작 승인과 최종 Merge를 AI에 넘기지 않습니다.
 - **State Model**: 허용된 사건과 전환, FIX 횟수, terminal state를 결정론적으로 강제합니다.
 - **Provenance**: 승인, artifact, exact SHA, AI 판단과 결과를 서로 결합합니다.
-- **Embedded Orchestrator**: trusted provenance를 소비해 다음 상태와 adapter action을 결정합니다. v0에서는 새로운 AI 판단 없이 REVIEW decision을 결정론적으로 routing합니다.
+- **Embedded Orchestrator**: trusted provenance를 소비해 다음 상태와 adapter action을 결정합니다. 현재 구현은 새로운 AI 판단 없이 REVIEW decision을 결정론적으로 routing합니다.
 
 GRAPH와 LOOP는 Trust Model을 우회하는 자동화가 아닙니다. 모든 실행은 State Model의 허용 전환이며 Human Approval과 Provenance를 계속 보존해야 합니다.
 
@@ -78,7 +78,7 @@ GRAPH와 LOOP는 Trust Model을 우회하는 자동화가 아닙니다. 모든 �
 | Implementer | candidate 변경 생성 | `IMPLEMENT`, `FIX` | untrusted, GitHub write credential 없음 |
 | Verifier | 공개된 결과의 기계 검증 | `VERIFY` | exact SHA, Implementer와 runner 분리 |
 | Reviewer | verified 결과의 의미적 적합성 판정 | `REVIEW` | untrusted AI reasoning + trusted finalize 분리 |
-| Orchestrator | trusted 결과의 다음 state/action 선택 | orchestration | trusted fact만 소비, v0는 deterministic |
+| Orchestrator | trusted 결과의 다음 state/action 선택 | orchestration | trusted fact만 소비, deterministic |
 | Improver | reviewed provenance에서 개선 candidate 제안 | `SELF-IMPROVEMENT` | 스스로 승인·publish·merge 불가 |
 
 `PUBLISH`는 candidate 생성 Role의 권한이 아니라 Trusted Rail의 최소 write capability입니다. `AUTHORIZE`, `SEAL`, `RECORD_PUBLISHED`, `START_REVIEW` 등은 capability라기보다 State Model event 또는 Trust Boundary입니다.
@@ -104,15 +104,16 @@ Untrusted IMPLEMENT
 │ Semantic REVIEW                                                │
 │   trusted prepare → isolated AI reviewer → trusted finalize    │
 │      ↓ review.json                                             │
+│ Embedded Orchestrator                                          │
+│   ├─ PASS → MERGE_READY → exact-SHA Human Merge PR            │
+│   ├─ STRUCTURAL_CHANGE → STOPPED                               │
+│   └─ LOCAL_FIX → FIXING (FIX Worker는 후속 구현)              │
 └────────────────────────────────────────────────────────────────┘
      ↓
-Embedded Orchestrator v0
-     ├─ PASS → MERGE_READY → exact-SHA Human Merge PR → Human Merge
-     ├─ STRUCTURAL_CHANGE → STOPPED
-     └─ LOCAL_FIX → FIXING (FIX Worker는 후속 구현)
+Human Merge (Human-only)
 ```
 
-이전에는 외부 ChatGPT가 `review.json`을 읽고 다음 상태와 GitHub action을 결정했습니다. Issue #26 / PR #27부터는 그 역할의 첫 slice를 Framework 내부 Orchestrator가 담당합니다.
+이전에는 외부 ChatGPT가 `review.json`을 읽고 다음 상태와 GitHub action을 결정했습니다. Issue #26 / PR #27부터 Framework 내부 Orchestrator가 그 역할의 첫 slice를 담당했고, Issue #30 / PR #31에서는 Orchestrator를 같은 Trusted Rail run의 Control Plane으로 재배치합니다.
 
 ## GitHub Actions 실행 구조
 
@@ -129,22 +130,21 @@ Trusted Rail workflow
         ├─ verify_prepare
         ├─ verify_candidate
         ├─ verify_finalize
-        └─ review ──uses──► semantic-review.yml
-                           ├─ review_prepare
-                           ├─ review_agent
-                           └─ review_finalize
-        ↓ workflow_run
-Embedded Orchestrator v0
-        ├─ route
-        ├─ merge_boundary (PASS only)
-        └─ record
+        ├─ review ──uses──► semantic-review.yml
+        │                  ├─ review_prepare
+        │                  ├─ review_agent
+        │                  └─ review_finalize
+        └─ orchestrate ──uses──► orchestrator.yml
+                              ├─ route
+                              ├─ merge_boundary (PASS only)
+                              └─ record
 ```
 
-`semantic-review.yml`은 별도 `workflow_run`이 아니라 동일 Trusted Rail run의 reusable workflow call입니다.
+`semantic-review.yml`과 `orchestrator.yml`은 모두 별도 `workflow_run`이 아니라 동일 Trusted Rail run의 reusable workflow call입니다. 따라서 REVIEW 이후 Orchestrator 실행은 GitHub `workflow_run` chain depth에 의존하지 않습니다.
 
-Orchestrator v0는 현재 GitHub adapter에서 `Trusted Rail` 완료를 `workflow_run`으로 받습니다. 이것은 현재 `AUTHORIZE → IMPLEMENT → Trusted Rail → Orchestrator` chain의 **마지막 허용 depth**를 사용하는 임시 v0 배치입니다. 따라서 실제 FIX 재진입 LOOP를 구현하기 전에 chain depth에 의존하지 않는 장기 Control Plane/GRAPH execution 구조로 재배치해야 합니다.
+`Re-run failed jobs`로 Trusted Rail의 후반 job만 다시 실행되는 경우에는 성공한 REVIEW job이 재실행되지 않을 수 있습니다. Orchestrator는 이 상황에서 current run의 **현재 attempt 이하 최신 REVIEW artifact**를 선택하고 그 artifact의 실제 attempt를 source REVIEW provenance identity로 사용합니다. 최신 attempt에 artifact가 중복되면 fail-closed 합니다.
 
-이 제약은 Embedded Orchestrator 개념의 한계가 아니라 GitHub Actions adapter v0의 실행 배치 제약입니다.
+이 same-run 배치는 향후 `LOCAL_FIX → FIX → SEAL → PUBLISH → VERIFY → REVIEW → Orchestrator` bounded loop를 Framework Control Plane 안에서 연결하기 위한 기반입니다.
 
 ## 권한 구조
 
@@ -182,7 +182,7 @@ Orchestrator의 PR job에는 `contents: write`가 없으므로 publish branch나
    - `PASS | LOCAL_FIX | STRUCTURAL_CHANGE`
    - structured findings
 7. `orchestration.json`
-   - source REVIEW artifact/provenance
+   - source REVIEW artifact/provenance와 실제 source REVIEW attempt
    - `fromState = REVIEWING`
    - REVIEW decision
    - `nextState = MERGE_READY | FIXING | STOPPED`
@@ -235,9 +235,9 @@ AI Reviewer가 만든 JSON을 그대로 trusted decision으로 사용하지 않�
 
 Reviewer는 exact candidate를 읽을 수 있지만 GitHub write credential은 받지 않습니다. Candidate repository의 `AGENTS.md`, `.codex`, README, 주석 등은 data로 취급하고 자동 project instruction 주입을 비활성화합니다.
 
-## Embedded Orchestrator v0 Trust Boundary
+## Embedded Orchestrator Trust Boundary
 
-Orchestrator는 source Trusted Rail의 exact REVIEW artifact를 다시 검증합니다. mutable Issue 본문이나 branch text는 next-state 판단에 사용하지 않습니다.
+Orchestrator는 같은 Trusted Rail run의 exact REVIEW artifact를 다시 검증합니다. mutable Issue 본문이나 branch text는 next-state 판단에 사용하지 않습니다.
 
 ```text
 trusted review.json
@@ -277,7 +277,7 @@ REVIEWING --LOCAL_FIX, count < 2--> FIXING
 REVIEWING --LOCAL_FIX, count >= 2-> STOPPED
 ```
 
-v0 Orchestrator는 첫 REVIEW cycle의 `PASS/LOCAL_FIX/STRUCTURAL_CHANGE` routing을 실행에 연결합니다. FIX count persistence와 재검토 LOOP는 아직 구현하지 않습니다.
+현재 Orchestrator는 첫 REVIEW cycle의 `PASS/LOCAL_FIX/STRUCTURAL_CHANGE` routing을 실행에 연결합니다. FIX count persistence와 재검토 LOOP는 아직 구현하지 않습니다.
 
 `LOCAL_FIX` 이후에는 즉시 PASS나 Merge로 갈 수 없습니다. 후속 구현에서도 반드시 `FIX → SEAL → PUBLISH → VERIFY → REVIEW` 전체 경로를 다시 거쳐야 합니다.
 
@@ -323,4 +323,4 @@ Actions artifact는 현재 **operational trust anchor**이지 영구 provenance 
 - AI 자동 승인 / risk-based autonomy
 - durable provenance ledger
 
-다음 핵심 단계는 v0의 `FIXING` 상태를 실제 untrusted FIX Worker와 다시 `SEAL → PUBLISH → VERIFY → REVIEW`로 연결하되, 현재 마지막 `workflow_run` depth에 의존하지 않도록 **GRAPH/Control Plane 실행 구조를 먼저 정리하는 것**입니다.
+다음 핵심 단계는 `FIXING` 상태를 실제 untrusted FIX Worker와 다시 `SEAL → PUBLISH → VERIFY → REVIEW → Embedded Orchestrator`로 연결하고, FIX 횟수 최대 2회의 bounded loop를 same-run Control Plane 위에서 증명하는 것입니다.
