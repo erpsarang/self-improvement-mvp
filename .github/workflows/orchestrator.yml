@@ -1,22 +1,15 @@
-name: Embedded Orchestrator v0
+name: Embedded Orchestrator
 
 on:
-  workflow_run:
-    workflows: ["Trusted Rail"]
-    types: [completed]
+  workflow_call:
 
-# v0는 REVIEW 이후의 deterministic routing을 Framework 내부로 흡수한다.
-# 이 workflow_run은 현재 AUTHORIZE → IMPLEMENT → Trusted Rail 뒤의 마지막 허용 chain depth를 사용한다.
-# FIX/LOOP 구현 전에 GRAPH/Control Plane 안으로 재배치하는 것이 후속 과제다.
+# Semantic REVIEW 이후 같은 Trusted Rail run 안에서 deterministic routing을 수행한다.
+# 별도 workflow_run chain을 만들지 않으며, 각 job은 필요한 최소 권한만 사용한다.
 permissions: {}
 
 jobs:
   route:
     name: trusted REVIEW decision routing
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
-      github.event.workflow_run.event == 'workflow_run'
     permissions:
       contents: read
       actions: read
@@ -33,37 +26,34 @@ jobs:
       requirements_digest: ${{ steps.prepare.outputs.requirements_digest }}
 
     steps:
-      - name: source Trusted Rail 및 REVIEW artifact 선택
+      - name: current Trusted Rail REVIEW artifact 선택
         id: review_artifact
         uses: actions/github-script@v7
         with:
           script: |
-            const run = context.payload.workflow_run;
-            if (run.path !== '.github/workflows/trusted-rail.yml') {
-              core.setFailed(`unexpected source workflow path: ${run.path}`);
-              return;
-            }
-            if (!Number.isSafeInteger(run.id) || run.id <= 0 ||
-                !Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0) {
-              core.setFailed('invalid source Trusted Rail identity');
+            const runId = Number(process.env.GITHUB_RUN_ID);
+            const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(runId) || runId <= 0 ||
+                !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
+              core.setFailed('invalid current Trusted Rail identity');
               return;
             }
 
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              run_id: run.id,
+              run_id: runId,
               per_page: 100,
             });
             const pattern = new RegExp(
-              `^review-provenance-issue-([1-9]\\d*)-${run.id}-attempt-${run.run_attempt}$`,
+              `^review-provenance-issue-([1-9]\\d*)-${runId}-attempt-${runAttempt}$`,
             );
             const matches = data.artifacts.filter(
               (artifact) => !artifact.expired && pattern.test(artifact.name),
             );
 
             if (matches.length !== 1) {
-              core.setFailed(`expected exactly one REVIEW provenance artifact; matches=${matches.length}`);
+              core.setFailed(`expected exactly one current REVIEW provenance artifact; matches=${matches.length}`);
               return;
             }
 
@@ -83,7 +73,7 @@ jobs:
           path: ${{ runner.temp }}/orchestrator-source
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ github.run_id }}
 
       - name: REVIEW artifact 구조 확인
         shell: bash
@@ -114,10 +104,10 @@ jobs:
           REVIEW_JSON: ${{ runner.temp }}/orchestrator/review.json
           REVIEW_ARTIFACT_NAME: ${{ steps.review_artifact.outputs.name }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
-          SOURCE_REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_REVIEW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SOURCE_REVIEW_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_REVIEW_CONCLUSION: success
+          SOURCE_REVIEW_WORKFLOW_PATH: .github/workflows/trusted-rail.yml
 
   merge_boundary:
     name: exact-SHA Human Merge PR boundary
@@ -291,16 +281,22 @@ jobs:
           PREPARED_REVIEW_ARTIFACT: ${{ needs.route.outputs.review_artifact_name }}
         with:
           script: |
-            const run = context.payload.workflow_run;
+            const runId = Number(process.env.GITHUB_RUN_ID);
+            const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
             const prepared = process.env.PREPARED_REVIEW_ARTIFACT;
+            if (!Number.isSafeInteger(runId) || runId <= 0 ||
+                !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
+              core.setFailed('invalid current Trusted Rail identity');
+              return;
+            }
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              run_id: run.id,
+              run_id: runId,
               per_page: 100,
             });
             const pattern = new RegExp(
-              `^review-provenance-issue-([1-9]\\d*)-${run.id}-attempt-${run.run_attempt}$`,
+              `^review-provenance-issue-([1-9]\\d*)-${runId}-attempt-${runAttempt}$`,
             );
             const matches = data.artifacts.filter(
               (artifact) => !artifact.expired && pattern.test(artifact.name),
@@ -318,7 +314,7 @@ jobs:
           path: ${{ runner.temp }}/orchestrator-source
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ github.run_id }}
 
       - name: REVIEW artifact 구조 확인
         shell: bash
@@ -349,10 +345,10 @@ jobs:
           REVIEW_JSON: ${{ runner.temp }}/orchestrator/review.json
           REVIEW_ARTIFACT_NAME: ${{ steps.review_artifact.outputs.name }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
-          SOURCE_REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_REVIEW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SOURCE_REVIEW_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_REVIEW_CONCLUSION: success
+          SOURCE_REVIEW_WORKFLOW_PATH: .github/workflows/trusted-rail.yml
 
       - name: route와 record exact identity 비교
         shell: bash
@@ -387,10 +383,10 @@ jobs:
           REVIEW_JSON: ${{ runner.temp }}/orchestrator/review.json
           REVIEW_ARTIFACT_NAME: ${{ steps.review_artifact.outputs.name }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
-          SOURCE_REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_REVIEW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SOURCE_REVIEW_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_REVIEW_CONCLUSION: success
+          SOURCE_REVIEW_WORKFLOW_PATH: .github/workflows/trusted-rail.yml
           ORCHESTRATOR_RUN_ID: ${{ github.run_id }}
           ORCHESTRATOR_RUN_ATTEMPT: ${{ github.run_attempt }}
           ORCHESTRATOR_TRUSTED_CODE_SHA: ${{ github.sha }}
