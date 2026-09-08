@@ -98,10 +98,30 @@ Phase 번호는 자동화 수준을 뜻하지 않습니다. 각 Phase의 실제 
 
 ## 현재 위치와 경계
 
-현재 저장소는 **Phase 0 Core State / Trust Model**, **Phase 1 Human Authorization**, 그리고 **Phase 2 AI IMPLEMENT candidate 생성**을 실제 코드와 GitHub Actions로 다룹니다. PR #11 이후 Codex Cloud는 write credential 없는 untrusted Worker로만 동작하고, 결과는 `candidate.patch + implement.json`으로 기록됩니다.
+현재 저장소는 **Phase 0 Core State / Trust Model**, **Phase 1 Human Authorization**, **Phase 2 AI IMPLEMENT**, **Phase 3 Independent VERIFY**, **Phase 4 Semantic REVIEW의 PASS/LOCAL_FIX/STRUCTURAL_CHANGE 판정**, 그리고 **Phase 5 GRAPH Orchestration의 첫 embedded control-plane slice**까지 실제 코드와 GitHub Actions로 연결했습니다.
 
-현재 Issue #12 / PR #13은 Worker 결과를 기능적으로 승인하거나 실행하지 않고 provenance 구조, source workflow identity, exact base SHA와 SHA-256을 검사해 exact bytes를 `SEALED` artifact로 승격하는 **Trusted SEAL** 경계를 추가합니다. Worker 완료 후 `.github/workflows/trusted-rail.yml`로 한 번만 trusted 영역에 진입하며, workflow-level 권한은 비어 있고 현재 `seal` job만 read-only 권한을 가집니다.
+현재 검증된 수직 흐름은 다음과 같습니다.
 
-GitHub Actions의 `workflow_run`은 장거리 workflow chaining에 제한이 있으므로 Trusted Rail의 후속 단계는 별도 `workflow_run`으로 계속 연결하지 않습니다. 다음 핵심 구현은 같은 Trusted Rail 내부에 **독립 `PUBLISH` job**을 추가해 `SEALED → immutable published_head_sha`를 만들고, 이어서 Phase 3의 `VERIFY` job이 exact published SHA만 검증하도록 하는 것입니다.
+```text
+Human SI-승인
+→ AUTHORIZE
+→ untrusted IMPLEMENT
+→ Trusted Rail
+   → SEAL
+   → PUBLISH
+   → VERIFY exact published SHA
+   → Semantic REVIEW
+   → Embedded Orchestrator
+       ├─ PASS → MERGE_READY → exact-SHA Human Merge PR
+       ├─ LOCAL_FIX → FIXING
+       └─ STRUCTURAL_CHANGE → STOPPED
+→ Human Merge
+```
 
-GRAPH / LOOP 실제 엔진, Semantic REVIEW / FIX, Self-Improvement 확장과 Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
+Issue #28 / PR #29 Smoke Test는 `PASS → MERGE_READY → exact-SHA Human Merge PR → Human Merge` 경로를 실환경에서 end-to-end로 증명했습니다. `review.json.reviewedHeadSha`, remote `ai-publish/issue-<N>` HEAD, Human Merge PR head SHA가 동일하게 유지됐고, `main`은 Human Merge 전까지 변경되지 않았습니다.
+
+Issue #30 / PR #31은 Embedded Orchestrator가 마지막 허용 `workflow_run` chain depth에 의존하던 임시 구조를 제거하고, Semantic REVIEW 성공 뒤 **같은 Trusted Rail run 안에서 reusable Control Plane으로 직접 실행**되도록 재배치합니다. REVIEW artifact는 current Trusted Rail `run_id` / `run_attempt`에 exact binding되며 route와 provenance record 사이에서 다시 선택·검증합니다.
+
+이 재배치가 완료되면 `AUTHORIZE → IMPLEMENT → Trusted Rail`까지만 `workflow_run` 진입 경계를 사용하고, Trusted Rail 내부에서는 `SEAL → PUBLISH → VERIFY → REVIEW → Orchestrator`가 명시적 job dependency / reusable workflow call로 연결됩니다. 이후 `LOCAL_FIX → untrusted FIX → SEAL → PUBLISH → VERIFY → REVIEW` bounded loop를 추가해도 Orchestrator 자체가 추가 `workflow_run` chain depth를 소비하지 않습니다.
+
+아직 구현하지 않은 핵심은 **untrusted FIX Worker와 최대 2회 bounded FIX loop**, 전체 GRAPH Engine, LOOP Execution, LEARN / IMPROVE 기반 Self-Improvement 확장입니다. Auto Merge는 계속 금지하며 최종 Merge는 Human-only입니다.
