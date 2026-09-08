@@ -17,6 +17,7 @@ jobs:
     outputs:
       should_run: ${{ steps.review_artifact.outputs.should_run }}
       review_artifact_name: ${{ steps.review_artifact.outputs.name }}
+      review_artifact_attempt: ${{ steps.review_artifact.outputs.attempt }}
       issue_number: ${{ steps.prepare.outputs.issue_number }}
       decision: ${{ steps.prepare.outputs.decision }}
       next_state: ${{ steps.prepare.outputs.next_state }}
@@ -26,7 +27,7 @@ jobs:
       requirements_digest: ${{ steps.prepare.outputs.requirements_digest }}
 
     steps:
-      - name: current Trusted Rail REVIEW artifact 선택
+      - name: current 또는 이전 Trusted Rail REVIEW artifact 선택
         id: review_artifact
         uses: actions/github-script@v7
         with:
@@ -46,18 +47,36 @@ jobs:
               per_page: 100,
             });
             const pattern = new RegExp(
-              `^review-provenance-issue-([1-9]\\d*)-${runId}-attempt-${runAttempt}$`,
+              `^review-provenance-issue-([1-9]\\d*)-${runId}-attempt-([1-9]\\d*)$`,
             );
-            const matches = data.artifacts.filter(
-              (artifact) => !artifact.expired && pattern.test(artifact.name),
-            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match
+                  ? { artifact, issueNumber: Number(match[1]), attempt: Number(match[2]) }
+                  : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= runAttempt);
 
-            if (matches.length !== 1) {
-              core.setFailed(`expected exactly one current REVIEW provenance artifact; matches=${matches.length}`);
+            if (matches.length === 0) {
+              core.setFailed('no current or prior REVIEW provenance artifact found');
               return;
             }
 
-            core.setOutput('name', matches[0].name);
+            const latestAttempt = Math.max(...matches.map(({ attempt }) => attempt));
+            const latest = matches.filter(({ attempt }) => attempt === latestAttempt);
+            if (latest.length !== 1) {
+              core.setFailed(`ambiguous REVIEW provenance artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              return;
+            }
+
+            if (latestAttempt < runAttempt) {
+              core.info(`Orchestrator attempt ${runAttempt} reuses REVIEW artifact from attempt ${latestAttempt}`);
+            }
+            core.setOutput('name', latest[0].artifact.name);
+            core.setOutput('attempt', String(latestAttempt));
             core.setOutput('should_run', 'true');
 
       - name: trusted Orchestrator control-plane checkout
@@ -105,7 +124,7 @@ jobs:
           REVIEW_ARTIFACT_NAME: ${{ steps.review_artifact.outputs.name }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
           SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
-          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ steps.review_artifact.outputs.attempt }}
           SOURCE_REVIEW_CONCLUSION: success
           SOURCE_REVIEW_WORKFLOW_PATH: .github/workflows/trusted-rail.yml
 
@@ -279,14 +298,17 @@ jobs:
         uses: actions/github-script@v7
         env:
           PREPARED_REVIEW_ARTIFACT: ${{ needs.route.outputs.review_artifact_name }}
+          PREPARED_REVIEW_ATTEMPT: ${{ needs.route.outputs.review_artifact_attempt }}
         with:
           script: |
             const runId = Number(process.env.GITHUB_RUN_ID);
             const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
             const prepared = process.env.PREPARED_REVIEW_ARTIFACT;
+            const preparedAttempt = Number(process.env.PREPARED_REVIEW_ATTEMPT);
             if (!Number.isSafeInteger(runId) || runId <= 0 ||
-                !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
-              core.setFailed('invalid current Trusted Rail identity');
+                !Number.isSafeInteger(runAttempt) || runAttempt <= 0 ||
+                !Number.isSafeInteger(preparedAttempt) || preparedAttempt <= 0) {
+              core.setFailed('invalid current or prepared Trusted Rail identity');
               return;
             }
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
@@ -296,16 +318,36 @@ jobs:
               per_page: 100,
             });
             const pattern = new RegExp(
-              `^review-provenance-issue-([1-9]\\d*)-${runId}-attempt-${runAttempt}$`,
+              `^review-provenance-issue-([1-9]\\d*)-${runId}-attempt-([1-9]\\d*)$`,
             );
-            const matches = data.artifacts.filter(
-              (artifact) => !artifact.expired && pattern.test(artifact.name),
-            );
-            if (matches.length !== 1 || matches[0].name !== prepared) {
-              core.setFailed(`REVIEW artifact changed between route and record; matches=${matches.length}`);
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match
+                  ? { artifact, issueNumber: Number(match[1]), attempt: Number(match[2]) }
+                  : null;
+              })
+              .filter(Boolean)
+              .filter(({ attempt }) => attempt <= runAttempt);
+            if (matches.length === 0) {
+              core.setFailed('no current or prior REVIEW provenance artifact found during record');
               return;
             }
-            core.setOutput('name', matches[0].name);
+            const latestAttempt = Math.max(...matches.map(({ attempt }) => attempt));
+            const latest = matches.filter(({ attempt }) => attempt === latestAttempt);
+            if (
+              latest.length !== 1 ||
+              latest[0].artifact.name !== prepared ||
+              latestAttempt !== preparedAttempt
+            ) {
+              core.setFailed(
+                `REVIEW artifact changed between route and record; latestAttempt=${latestAttempt}, matches=${latest.length}`,
+              );
+              return;
+            }
+            core.setOutput('name', latest[0].artifact.name);
+            core.setOutput('attempt', String(latestAttempt));
 
       - name: REVIEW provenance artifact 다운로드
         uses: actions/download-artifact@v4
@@ -346,7 +388,7 @@ jobs:
           REVIEW_ARTIFACT_NAME: ${{ steps.review_artifact.outputs.name }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
           SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
-          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ steps.review_artifact.outputs.attempt }}
           SOURCE_REVIEW_CONCLUSION: success
           SOURCE_REVIEW_WORKFLOW_PATH: .github/workflows/trusted-rail.yml
 
@@ -384,7 +426,7 @@ jobs:
           REVIEW_ARTIFACT_NAME: ${{ steps.review_artifact.outputs.name }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
           SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
-          SOURCE_REVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ steps.review_artifact.outputs.attempt }}
           SOURCE_REVIEW_CONCLUSION: success
           SOURCE_REVIEW_WORKFLOW_PATH: .github/workflows/trusted-rail.yml
           ORCHESTRATOR_RUN_ID: ${{ github.run_id }}
