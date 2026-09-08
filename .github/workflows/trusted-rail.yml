@@ -471,7 +471,7 @@ jobs:
             const latestAttempt = prior[0].attempt;
             const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
             if (latest.length !== 1) {
-              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}`);
               return;
             }
 
@@ -666,7 +666,7 @@ jobs:
             const latestAttempt = prior[0].attempt;
             const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
             if (latest.length !== 1) {
-              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}: ${latest.length}`);
+              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}`);
               return;
             }
 
@@ -785,3 +785,13 @@ jobs:
       actions: read
     uses: ./.github/workflows/semantic-review.yml
     secrets: inherit
+
+  orchestrate:
+    name: Embedded Orchestrator / same-run Control Plane
+    needs: review
+    if: needs.review.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    uses: ./.github/workflows/orchestrator.yml

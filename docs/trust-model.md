@@ -8,7 +8,7 @@ Semantic `REVIEW`의 AI Reviewer도 **untrusted reasoning worker**로 취급한�
 
 ## Trusted execution
 
-`AUTHORIZE`, `SEAL`, `PUBLISH`, `VERIFY`, REVIEW의 trusted prepare/finalize, 그리고 `Embedded Orchestrator v0`의 route/record는 trusted control-plane execution이다.
+`AUTHORIZE`, `SEAL`, `PUBLISH`, `VERIFY`, REVIEW의 trusted prepare/finalize, 그리고 `Embedded Orchestrator`의 route/record는 trusted control-plane execution이다.
 
 `AUTHORIZE`는 repository에서 version 관리되는 trusted approver policy를 사용하며 live collaborator permission에 의존하지 않는다. Policy는 재사용 가능한 login 대신 immutable GitHub numeric user ID를 권한 identity로 사용하고 login은 설명 메타데이터로만 보존한다. 승인 provenance에는 재조회한 approval, approver ID와 현재 login, exact policy digest, 승인 시각, repository와 trusted workflow run/creation-attempt identity를 보존하고, 신뢰 원본은 Issue comment가 아니라 Actions artifact이다.
 
@@ -72,9 +72,11 @@ review.json.requirementsDigest
 
 REVIEW prepare/finalize는 `contents: read`, `actions: read`, reviewer는 `contents: read`만 사용한다. REVIEW는 push, PR 생성, Merge, Auto Merge를 수행하지 않는다.
 
-## Embedded Orchestrator v0
+## Embedded Orchestrator
 
-Orchestrator v0는 trusted `review.json`을 source Trusted Rail run에서 다시 가져와 exact artifact/run/attempt identity와 provenance chain을 재검증한다. mutable Issue 본문이나 현재 branch text는 next-state 판단의 신뢰 입력이 아니다.
+Orchestrator는 Semantic REVIEW 성공 뒤 **같은 Trusted Rail run**에서 reusable workflow로 호출된다. 별도 `workflow_run` trigger를 사용하지 않으므로 REVIEW 이후 실행은 GitHub workflow chain depth에 의존하지 않는다.
+
+Orchestrator는 trusted `review.json`을 같은 Trusted Rail run에서 다시 가져와 exact artifact/run/attempt identity와 provenance chain을 재검증한다. mutable Issue 본문이나 현재 branch text는 next-state 판단의 신뢰 입력이 아니다.
 
 Orchestrator는 새 AI 판단을 하지 않고 이미 trusted finalize가 확정한 REVIEW decision만 결정론적으로 routing한다.
 
@@ -85,6 +87,20 @@ STRUCTURAL_CHANGE → STOPPED
 ```
 
 `PASS`가 아닌 경우 PR을 만들 수 없다. `LOCAL_FIX`에서 실제 FIX Worker를 실행하는 기능은 아직 없다.
+
+### REVIEW artifact rerun binding
+
+`Re-run failed jobs`에서는 Orchestrator job만 새 attempt로 실행되고 이미 성공한 REVIEW job은 재실행되지 않을 수 있다. 이때 current attempt 번호와 동일한 `review.json`이 없다는 이유만으로 실패해서는 안 된다.
+
+따라서 Orchestrator는 같은 Trusted Rail `run_id`에서 다음 규칙으로 source REVIEW artifact를 선택한다.
+
+- artifact attempt가 current `run_attempt`보다 크면 제외한다.
+- 남은 artifact 중 가장 최신 attempt를 선택한다.
+- 그 latest attempt에 artifact가 정확히 1개여야 한다.
+- 선택한 artifact의 **실제 attempt**를 `SOURCE_REVIEW_RUN_ATTEMPT`로 검증한다.
+- route와 fresh record 사이에 latest artifact identity가 달라지면 fail-closed 한다.
+
+이렇게 source REVIEW attempt와 current Orchestrator attempt를 분리함으로써 failed-job rerun의 복구 가능성을 유지하면서 provenance identity를 느슨하게 만들지 않는다.
 
 ### Human Merge PR boundary
 
@@ -112,11 +128,9 @@ PR 생성은 Merge가 아니다. Orchestrator는 `pulls.create`까지만 수행�
 
 ### Fresh record boundary
 
-PR 생성 여부와 별개로 fresh trusted `record` runner가 source REVIEW artifact를 다시 선택·검증하고 route 단계와 exact identity가 동일한지 확인한다. 이후에만 `orchestration.json`을 생성한다.
+PR 생성 여부와 별개로 fresh trusted `record` runner가 source REVIEW artifact를 다시 선택·검증하고 route 단계와 exact identity가 동일한지 확인한다. failed-job rerun에서 prior REVIEW attempt를 재사용했다면 record도 동일한 actual source attempt를 다시 확인한다. 이후에만 `orchestration.json`을 생성한다.
 
-`orchestration.json`은 source REVIEW provenance, REVIEW decision, `nextState`, exact reviewed SHA와 requirements digest, PASS인 경우 Human Merge PR identity를 기록한다.
-
-현재 GitHub adapter의 Orchestrator v0는 `Trusted Rail` 완료 뒤 별도 `workflow_run`으로 실행한다. 이 배치는 현재 chain의 마지막 허용 depth를 사용하므로 FIX/LOOP 구현 전에 chain depth에 의존하지 않는 장기 GRAPH/Control Plane 실행 구조로 재배치해야 한다.
+`orchestration.json`은 source REVIEW provenance, source REVIEW의 실제 attempt, current Orchestrator run/attempt, REVIEW decision, `nextState`, exact reviewed SHA와 requirements digest, PASS인 경우 Human Merge PR identity를 기록한다.
 
 ## Merge
 

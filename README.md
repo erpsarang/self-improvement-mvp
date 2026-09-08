@@ -53,7 +53,7 @@ AI Development Framework
 
 ## 현재 실험 트랙: Self-Improvement capability
 
-현재 구현은 전체 프레임워크 중 **Core Trust Layer**, **Human Authorization**, write credential 없는 **untrusted IMPLEMENT Worker**, Worker 결과를 봉인·공개·검증하는 **Trusted SEAL / PUBLISH / VERIFY**, exact verified SHA의 의미적 적합성을 판정하는 **Semantic REVIEW**, 그리고 REVIEW decision을 다음 상태와 Human Merge PR 경계로 연결하는 **Embedded Orchestrator v0**까지의 수직 단면을 실제 GitHub Actions로 연결합니다.
+현재 구현은 전체 프레임워크 중 **Core Trust Layer**, **Human Authorization**, write credential 없는 **untrusted IMPLEMENT Worker**, Worker 결과를 봉인·공개·검증하는 **Trusted SEAL / PUBLISH / VERIFY**, exact verified SHA의 의미적 적합성을 판정하는 **Semantic REVIEW**, 그리고 REVIEW decision을 다음 상태와 Human Merge PR 경계로 연결하는 **Embedded Orchestrator**까지의 수직 단면을 실제 GitHub Actions로 연결합니다.
 
 ```text
 Issue
@@ -65,10 +65,10 @@ Issue
    → PUBLISH
    → VERIFY exact published SHA
    → SEMANTIC REVIEW
-→ Embedded Orchestrator v0
-   ├─ PASS → MERGE_READY → exact-SHA Human Merge PR → Human Merge
-   ├─ STRUCTURAL_CHANGE → STOPPED
-   └─ LOCAL_FIX → FIXING (FIX Worker는 후속 구현)
+   → Embedded Orchestrator
+       ├─ PASS → MERGE_READY → exact-SHA Human Merge PR → Human Merge
+       ├─ STRUCTURAL_CHANGE → STOPPED
+       └─ LOCAL_FIX → FIXING (FIX Worker는 후속 구현)
 ```
 
 - Issue #1의 상태 머신과 Trust Boundary는 모든 capability가 공유하는 **Core Trust Layer**의 첫 구현입니다.
@@ -78,10 +78,11 @@ Issue
 - Issue #17 / PR #18은 sealed artifact만 재검증해 `ai-publish/issue-<N>` branch에 force 없이 공개하고, 실제 remote commit의 exact SHA를 `publish.json.publishedHeadSha`로 기록하는 Trusted `PUBLISH` 경계를 구현합니다.
 - Issue #20 / PR #21은 `publish.json`과 remote publish branch HEAD를 exact match로 재검증하고, 바로 그 `publishedHeadSha`를 credential-free checkout해 test/build/diff 검증을 수행한 뒤 `verify.json.verifiedHeadSha`로 동일 SHA를 기록하는 Trusted `VERIFY` 경계를 구현합니다.
 - Issue #23 / PR #24는 `verify.json.verifiedHeadSha`와 원본 AUTHORIZE requirements snapshot을 exact binding해 isolated AI Reviewer가 의미적 적합성을 판정하고, fresh trusted finalize가 raw reviewer output을 검증해 `review.json` provenance로 승격하는 Semantic `REVIEW`를 구현합니다.
-- Issue #26 / PR #27은 trusted `review.json`을 Framework 내부 Embedded Orchestrator v0가 다시 검증해 `PASS → MERGE_READY`, `LOCAL_FIX → FIXING`, `STRUCTURAL_CHANGE → STOPPED`로 결정론적으로 routing하고, PASS에서만 exact reviewed SHA의 Human Merge PR을 생성하거나 재사용하도록 구현합니다.
-- Worker에서 trusted 영역으로 넘어가는 GitHub Actions 진입점은 `.github/workflows/trusted-rail.yml` 하나로 유지합니다. `SEAL → PUBLISH → VERIFY → REVIEW`는 같은 Trusted Rail run의 job dependency와 reusable workflow call로 연결됩니다.
-- Orchestrator v0는 현재 GitHub adapter의 마지막 허용 `workflow_run` chain depth를 사용합니다. FIX/LOOP 구현 전에는 chain depth에 의존하지 않는 장기 Control Plane/GRAPH 실행 구조로 재배치해야 합니다.
-- `state.ts`는 상태 invariant의 순수 도메인 모델이며, Orchestrator v0는 검증된 REVIEW 사실을 실제 GitHub Adapter의 다음 동작으로 연결하는 첫 embedded control-plane slice입니다.
+- Issue #26 / PR #27은 trusted `review.json`을 Framework 내부 Embedded Orchestrator v0가 다시 검증해 `PASS → MERGE_READY`, `LOCAL_FIX → FIXING`, `STRUCTURAL_CHANGE → STOPPED`로 결정론적으로 routing하고, PASS에서만 exact reviewed SHA의 Human Merge PR을 생성하거나 재사용하도록 구현했습니다.
+- Issue #28 / PR #29 Smoke Test는 `SI-승인 → AUTHORIZE → IMPLEMENT → SEAL → PUBLISH → VERIFY → Semantic REVIEW → PASS → MERGE_READY → 자동 Human Merge PR → Human Merge` 전체 경로를 실환경에서 증명했습니다.
+- Issue #30 / PR #31은 Orchestrator가 마지막 허용 `workflow_run` chain depth에 의존하던 임시 구조를 제거하고, Semantic REVIEW 성공 뒤 같은 Trusted Rail run 안에서 reusable Control Plane으로 직접 실행되도록 재배치합니다.
+- Worker에서 trusted 영역으로 넘어가는 GitHub Actions 진입점은 `.github/workflows/trusted-rail.yml` 하나로 유지합니다. `SEAL → PUBLISH → VERIFY → REVIEW → Orchestrator`는 같은 Trusted Rail run의 job dependency와 reusable workflow call로 연결됩니다.
+- `state.ts`는 상태 invariant의 순수 도메인 모델이며, Embedded Orchestrator는 검증된 REVIEW 사실을 실제 GitHub Adapter의 다음 동작으로 연결하는 첫 embedded control-plane slice입니다.
 
 ## 변하지 않는 신뢰 원칙
 
@@ -97,7 +98,8 @@ Issue
 - `VERIFY` 실패는 전환 거부 또는 Human 경계로 처리하며, REVIEW 없이 `STOPPED`로 전환하지 않습니다.
 - Semantic Review는 exact `verifiedHeadSha`만 검토하고, 승인 당시 requirements snapshot을 원본 AUTHORIZE artifact에서 다시 검증합니다.
 - AI Reviewer는 untrusted reasoning worker입니다. raw `reviewer.json`은 곧바로 trusted 사실이 아니며 fresh trusted finalize가 schema, decision consistency, provenance identity를 재검증한 뒤에만 `review.json`으로 승격합니다.
-- Embedded Orchestrator v0는 새 AI 판단을 하지 않고 trusted REVIEW decision만 결정론적으로 routing합니다. mutable Issue 본문이나 branch 텍스트를 next-state 판단 근거로 사용하지 않습니다.
+- Embedded Orchestrator는 새 AI 판단을 하지 않고 trusted REVIEW decision만 결정론적으로 routing합니다. mutable Issue 본문이나 branch 텍스트를 next-state 판단 근거로 사용하지 않습니다.
+- Orchestrator는 current Trusted Rail run/attempt의 REVIEW artifact를 exact 선택하고 route와 record 사이에서 다시 검증합니다. 별도 `workflow_run` chain을 소비하지 않습니다.
 - `PASS → MERGE_READY`에서 PR 생성 job은 `contents: read`, `pull-requests: write`만 사용하며 branch를 수정하거나 merge하지 않습니다. PR head SHA는 `review.json.reviewedHeadSha`와 exact match해야 합니다.
 - 현재 GitHub adapter는 Reviewer provider로 `openai/codex-action`을 사용하지만 core의 reviewer output 계약은 provider-neutral하게 유지합니다.
 - `FIX`는 최대 2회이며 `LOCAL FIX`와 `STRUCTURAL CHANGE`를 구분합니다. 각 `FIX` 후에는 반드시 `SEAL → PUBLISH → VERIFY exact published SHA → REVIEW`를 다시 거친 뒤, 그 재검토 decision에서만 `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`로 전환합니다.
@@ -116,7 +118,7 @@ Issue
 | 7 | Self-Improvement | Provenance가 있는 결과에서 학습해 프레임워크 개선 candidate를 제안하고 같은 경계로 검증할 수 있다. |
 | 8 | Dogfooding | 프레임워크 자체와 실제 애플리케이션 개발에 전체 흐름을 적용해 범용성을 입증할 수 있다. |
 
-Phase는 구현 항목 체크리스트가 아니라 프레임워크가 차례로 증명해야 할 능력입니다. Embedded Orchestrator v0는 Roadmap의 GRAPH Orchestration을 향한 첫 control-plane slice이며 전체 GRAPH Engine은 아직 아닙니다. 자세한 범위와 완료 증거는 [`docs/roadmap.md`](docs/roadmap.md)를 참고하세요.
+Phase는 구현 항목 체크리스트가 아니라 프레임워크가 차례로 증명해야 할 능력입니다. Embedded Orchestrator는 Roadmap의 GRAPH Orchestration을 향한 첫 control-plane slice이며 전체 GRAPH Engine은 아직 아닙니다. 자세한 범위와 완료 증거는 [`docs/roadmap.md`](docs/roadmap.md)를 참고하세요.
 
 ## 현재 범위
 
@@ -132,8 +134,8 @@ Trusted `VERIFY`는 같은 workflow 안의 다음 read-only 단계입니다. cur
 
 Semantic `REVIEW`는 VERIFY 성공 뒤 같은 Trusted Rail run에서 reusable workflow로 동기 호출됩니다. trusted prepare가 `verify.json` chain에 봉인된 authorization identity를 이용해 원본 `authorize.json`을 다시 읽고 승인 당시 requirements digest를 재검증합니다. isolated AI Reviewer는 exact `verifiedHeadSha`를 read-only로 정적 검토하고 구조화된 raw `reviewer.json`만 생성합니다. fresh trusted finalize는 VERIFY/AUTHORIZE identity와 Reviewer output consistency를 다시 확인한 뒤 `review.json`에 exact reviewed SHA, requirements digest, decision, findings 및 raw output digest를 기록합니다. 자세한 설계는 [`docs/phase-5-review.md`](docs/phase-5-review.md)를 참고하세요.
 
-Embedded Orchestrator v0는 성공한 Trusted Rail의 `review.json`을 다시 검증한 뒤 REVIEW decision을 실제 next state로 routing합니다. `PASS`일 때만 remote publish branch HEAD가 exact reviewed SHA임을 다시 확인하고 Human Merge PR을 생성하거나 정확한 기존 open PR을 재사용합니다. `orchestration.json`은 source REVIEW, decision, next state, reviewed SHA와 PR identity를 하나의 provenance chain으로 기록합니다. `LOCAL_FIX`와 `STRUCTURAL_CHANGE`에서는 PR을 만들지 않습니다. 자세한 설계는 [`docs/phase-6-orchestrator.md`](docs/phase-6-orchestrator.md)를 참고하세요.
+Embedded Orchestrator는 Semantic REVIEW 성공 뒤 **같은 Trusted Rail run**에서 reusable workflow로 호출됩니다. current run/attempt의 `review.json`을 exact 선택해 다시 검증하고 REVIEW decision을 실제 next state로 routing합니다. `PASS`일 때만 remote publish branch HEAD가 exact reviewed SHA임을 다시 확인하고 Human Merge PR을 생성하거나 정확한 기존 open PR을 재사용합니다. `orchestration.json`은 source REVIEW, decision, next state, reviewed SHA와 PR identity를 하나의 provenance chain으로 기록합니다. `LOCAL_FIX`와 `STRUCTURAL_CHANGE`에서는 PR을 만들지 않습니다. 자세한 설계는 [`docs/phase-6-orchestrator.md`](docs/phase-6-orchestrator.md)를 참고하세요.
 
 Actions artifact는 현재 단계의 **operational trust anchor**일 뿐입니다. repository/org retention 정책에 따라 artifact가 만료되면 이 단계만으로는 장기 provenance 감사를 보장할 수 없습니다. Durable/append-only provenance 및 장기 검증 방식은 후속 Framework 설계 과제로 남깁니다(TODO).
 
-현재 구현 범위는 `AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted SEAL → Trusted PUBLISH → immutable publishedHeadSha → Trusted VERIFY exact published SHA → Semantic REVIEW → Embedded Orchestrator v0 → MERGE_READY Human Merge PR`까지입니다. 실제 `FIX` Worker/LOOP, 전체 GRAPH Engine, Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
+현재 구현 범위는 `AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted SEAL → Trusted PUBLISH → immutable publishedHeadSha → Trusted VERIFY exact published SHA → Semantic REVIEW → same-run Embedded Orchestrator → MERGE_READY Human Merge PR`까지입니다. 실제 `FIX` Worker/LOOP, 전체 GRAPH Engine, Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
