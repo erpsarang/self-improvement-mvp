@@ -1,141 +1,187 @@
 # AI Development Framework MVP
 
-AI를 이용해 소프트웨어의 요구사항 해석, 설계, 구현, 검증, 리뷰, 수정, 공개, 학습, 자기개선을 하나의 **신뢰 가능한 반복 개발 프레임워크**로 연결하는 실험 저장소입니다.
+AI를 이용해 소프트웨어의 요구사항 해석, 구현, 검증, 리뷰, 수정과 최종 반영을 하나의 **신뢰 가능한 반복 개발 프레임워크**로 연결하는 실험 저장소입니다.
 
-저장소 이름은 현재 `self-improvement-mvp`이지만 프로젝트의 주어는 **AI Development Framework MVP**입니다. Self-Improvement는 프레임워크 전체가 아니라 개발 결과와 실행 방식을 개선하는 하위 `SELF-IMPROVEMENT` capability입니다.
+저장소 이름은 `self-improvement-mvp`이지만 프로젝트의 주어는 **AI Development Framework MVP**입니다. Self-Improvement는 전체 프레임워크가 아니라 후속 capability입니다.
+
+## v0.1 상태
+
+**MVP v0.1의 핵심 bounded FIX loop는 실제 GitHub Actions 런타임에서 끝까지 검증되었습니다.**
+
+Smoke Test #48 / PR #49에서 다음 전체 경로가 성공했습니다.
 
 ```text
-REQUIREMENT
-→ PLAN
-→ IMPLEMENT
-→ SEAL
-→ PUBLISH
-→ VERIFY
-→ REVIEW
-→ 필요 시 FIX → SEAL → PUBLISH → VERIFY → REVIEW
-→ PASS → MERGE_READY → Human Merge (Human-only)
-검토 결과·provenance ── 별도 후속 흐름 ──→ LEARN → IMPROVE → LOOP
+Issue에 요구사항 작성
+→ Human: SI-승인
+→ Trusted AUTHORIZE
+→ Untrusted IMPLEMENT
+→ Trusted Rail
+   → SEAL
+   → PUBLISH
+   → VERIFY exact published SHA
+   → Semantic REVIEW
+       ├─ PASS
+       │   → MERGE_READY
+       │   → exact-SHA Human Merge PR
+       │   → Human Merge
+       ├─ LOCAL_FIX
+       │   → Trusted FIX Request
+       │   → Untrusted FIX Worker
+       │   → 다시 SEAL → PUBLISH → VERIFY → REVIEW
+       └─ STRUCTURAL_CHANGE
+           → STOPPED / Human 판단
 ```
 
-이 흐름은 특정 애플리케이션이나 AI 실행 도구에 종속되지 않습니다. 현재의 작은 도메인 모델에서 시작해 향후 SAP RAP 같은 실제 개발 대상에도 같은 신뢰 원칙을 적용하는 것이 목표입니다.
+최종 Merge는 **Human-only**이며 Auto Merge를 사용하지 않습니다.
+
+## 이 프레임워크가 해결하려는 문제
+
+AI에게 단순히 "코드를 만들어서 바로 Merge하라"고 맡기지 않습니다.
+
+```text
+AI가 만들었다 ≠ 신뢰할 수 있다
+```
+
+따라서 구현과 검증, 리뷰, 수정, 최종 승인 사이에 명확한 Trust Boundary를 둡니다.
+
+```text
+Human
+  ├─ 시작 승인: SI-승인
+  └─ 최종 승인: Human Merge
+
+Untrusted
+  ├─ IMPLEMENT Worker
+  ├─ FIX Worker
+  └─ AI Semantic Reviewer
+
+Trusted
+  ├─ AUTHORIZE
+  ├─ SEAL / PUBLISH / VERIFY
+  ├─ REVIEW provenance finalize
+  ├─ FIX Request
+  └─ Embedded Orchestrator
+```
+
+## 핵심 원칙
+
+- Human start는 Issue의 정확한 `SI-승인` 1회입니다.
+- 최종 Merge는 **Human-only**입니다.
+- Auto Merge는 금지합니다.
+- `IMPLEMENT` / `FIX` Worker에는 GitHub write credential을 주지 않습니다.
+- Worker 결과는 곧바로 신뢰하지 않고 candidate artifact로만 취급합니다.
+- candidate는 Trusted `SEAL`을 거친 뒤에만 publish할 수 있습니다.
+- `VERIFY`는 branch 이름이 아니라 exact published SHA를 검증합니다.
+- Semantic REVIEW는 승인 당시 requirements와 exact verified SHA를 함께 검토합니다.
+- AI Reviewer의 raw output은 trusted 사실이 아니며 trusted finalize 후에만 `review.json` provenance가 됩니다.
+- `LOCAL_FIX`는 최대 2회까지 허용하며, 매 FIX 후 전체 `SEAL → PUBLISH → VERIFY → REVIEW`를 다시 실행합니다.
+- `STRUCTURAL_CHANGE`는 자동 수정하지 않고 사람에게 돌려보냅니다.
+- `PASS`에서만 exact reviewed SHA에 대한 Human Merge PR을 생성합니다.
+
+## GitHub Actions 역할
+
+| Workflow | 역할 |
+| --- | --- |
+| `Trusted AUTHORIZE` | 사람의 `SI-승인`을 검증하고 요구사항과 기준 SHA를 고정 |
+| `Untrusted IMPLEMENT` | Codex가 최초 구현을 수행하고 candidate artifact 생성 |
+| `Trusted Rail` | candidate를 `SEAL → PUBLISH → VERIFY → REVIEW`로 검증 |
+| `Semantic REVIEW` | 요구사항 충족 여부를 `PASS / LOCAL_FIX / STRUCTURAL_CHANGE`로 판정 |
+| `Embedded Orchestrator` | REVIEW 결과에 따라 MERGE_READY / FIX / STOPPED로 routing |
+| `Trusted FIX Request` | 수정 대상 SHA와 수정 지시를 immutable artifact로 고정 |
+| `Untrusted FIX Worker` | Codex가 제한된 수정 수행 후 새 candidate artifact 생성 |
+| `CI` | Framework 자체 PR의 workflow/test/build 정적 검증 |
+
+## 신규 프로그래밍 요구사항에 사용하는 방법
+
+가장 기본적인 사용 흐름은 다음과 같습니다.
+
+```text
+1. 신규 개발 요구사항 Issue 작성
+2. 목표 / 범위 / 완료조건 / 검증방법을 명확히 기재
+3. `policy/trusted-approvers.yml`에 등록된 trusted approver가 Issue에 SI-승인 댓글 작성
+4. Framework가 자동으로 IMPLEMENT → 검증 → REVIEW 수행
+5. LOCAL_FIX면 Framework가 제한된 FIX loop 자동 수행
+6. PASS면 Human Merge PR 자동 생성
+7. 사람이 최종 diff와 상태를 확인하고 Merge
+```
+
+예:
+
+```text
+요구사항
+Sales Order 조회 API에 Sold-to Party 필터를 추가한다.
+
+완료조건
+- Sold-to Party로 조회 가능
+- 기존 조회 조건 영향 없음
+- 테스트 추가
+- build/test 통과
+
+금지사항
+- 무관한 파일 수정 금지
+- main 직접 push 금지
+```
+
+자세한 실사용 절차는 [`docs/usage.md`](docs/usage.md)를 참고하세요. 신규 Issue를 만들 때는 **AI 개발 요구사항** 템플릿을 사용할 수 있습니다.
 
 ## 프레임워크 구조
 
 ```text
 AI Development Framework
 ├─ Core
-│  ├─ GRAPH Engine       개발 단계와 의존 관계를 연결
-│  ├─ LOOP Engine        실행·피드백·개선 주기를 반복
-│  ├─ Trust Model        실행 권한과 신뢰 경계를 통제
-│  ├─ Human Approval     시작 승인과 최종 Merge를 보장
-│  ├─ State Model        허용된 상태와 전환을 강제
-│  └─ Provenance         승인·산출물·검증 대상의 근거를 보존
-├─ Agents / Roles
-│  ├─ Planner
+│  ├─ GRAPH / Orchestration
+│  ├─ LOOP / bounded retry
+│  ├─ Trust Model
+│  ├─ Human Approval
+│  ├─ State Model
+│  └─ Provenance
+├─ Roles
 │  ├─ Implementer
 │  ├─ Verifier
 │  ├─ Reviewer
-│  └─ Improver
+│  └─ Orchestrator
 └─ Capabilities
-   ├─ PLAN / IMPLEMENT / VERIFY / REVIEW
+   ├─ IMPLEMENT / VERIFY / REVIEW
    ├─ FIX / PUBLISH
-   └─ SELF-IMPROVEMENT
+   └─ SELF-IMPROVEMENT (후속)
 ```
 
-- **GRAPH**는 단계, 조건, 산출물과 역할을 연결하는 orchestration model입니다.
-- **LOOP**는 GRAPH 실행 결과를 `LEARN`과 `IMPROVE`로 되돌려 반복하는 execution model입니다.
-- **Trust Model**과 **State Model**은 GRAPH와 LOOP가 허용된 경계를 우회하지 못하게 합니다.
-- **Human Approval**은 AI가 대신할 수 없는 명시적 권한 경계이며, **Provenance**는 어떤 승인과 exact SHA를 근거로 실행했는지 추적하게 합니다.
-- **Agents / Roles**는 책임 주체를 표현하고, **Capabilities**는 그 주체에게 부여할 수 있는 동작 권한을 표현합니다. 이 문서의 capability 집합은 `PLAN`, `IMPLEMENT`, `VERIFY`, `REVIEW`, `FIX`, `PUBLISH`, `SELF-IMPROVEMENT`입니다. 특히 `IMPLEMENT` / `FIX`와 `VERIFY` / `REVIEW`는 가능한 한 역할과 신뢰 경계를 분리합니다.
-- **Human Authorization**은 capability가 아니라 Human Approval을 실행 권한으로 바꾸는 별도의 인가 경계입니다. `AUTHORIZE`, `SEAL`, `RECORD_PUBLISHED` 같은 이름은 State Model이 다루는 event이거나 Trust Boundary이며, 대문자로 표기됐다고 모두 capability인 것은 아닙니다. `REQUIREMENT`, `LEARN`, `IMPROVE`는 workflow의 입력·node입니다.
+상세 레이어 관계는 [`docs/architecture.md`](docs/architecture.md), 단계별 방향은 [`docs/roadmap.md`](docs/roadmap.md)를 참고하세요.
 
-상세한 레이어 관계는 [아키텍처](docs/architecture.md), 단계별 증명 목표는 [Roadmap](docs/roadmap.md)에서 설명합니다.
+## v0.1에서 실제 증명된 것
 
-## 현재 실험 트랙: Self-Improvement capability
+- Human `SI-승인 → AUTHORIZE` provenance
+- write credential 없는 untrusted IMPLEMENT
+- candidate artifact와 clean trusted provenance 기록
+- Trusted SEAL
+- force push 없는 deterministic PUBLISH
+- exact published SHA VERIFY
+- isolated read-only Semantic REVIEW
+- `PASS / LOCAL_FIX / STRUCTURAL_CHANGE` decision
+- Embedded Orchestrator routing
+- immutable Trusted FIX Request
+- explicit dispatch 기반 Untrusted FIX Worker
+- FIX 결과의 full Trusted Rail 재진입
+- bounded LOCAL_FIX loop
+- `PASS → MERGE_READY → exact-SHA Human Merge PR`
+- 최종 Human-only Merge
 
-현재 구현은 전체 프레임워크 중 **Core Trust Layer**, **Human Authorization**, write credential 없는 **untrusted IMPLEMENT Worker**, Worker 결과를 봉인·공개·검증하는 **Trusted SEAL / PUBLISH / VERIFY**, exact verified SHA의 의미적 적합성을 판정하는 **Semantic REVIEW**, 그리고 REVIEW decision을 다음 상태와 Human Merge PR 경계로 연결하는 **Embedded Orchestrator**까지의 수직 단면을 실제 GitHub Actions로 연결합니다.
+Smoke Test #48에서는 첫 구현을 의도적으로 `LOCAL_FIX` 상태로 만든 뒤, FIX #1이 수행되고 두 번째 Semantic REVIEW가 `PASS`하여 Human Merge PR #49가 자동 생성되었으며 사람이 최종 Merge했습니다.
 
-```text
-Issue
-→ Human: SI-승인
-→ AUTHORIZE
-→ IMPLEMENT
-→ Trusted Rail
-   → SEAL
-   → PUBLISH
-   → VERIFY exact published SHA
-   → SEMANTIC REVIEW
-   → Embedded Orchestrator
-       ├─ PASS → MERGE_READY → exact-SHA Human Merge PR → Human Merge
-       ├─ STRUCTURAL_CHANGE → STOPPED
-       └─ LOCAL_FIX → FIXING (FIX Worker는 후속 구현)
-```
+## 아직 v0.1 범위 밖인 것
 
-- Issue #1의 상태 머신과 Trust Boundary는 모든 capability가 공유하는 **Core Trust Layer**의 첫 구현입니다.
-- Issue #3의 `SI-승인 → AUTHORIZE`는 **Human Authorization** 인가 경계의 첫 구현입니다.
-- Issue #10 / PR #11은 trusted `AUTHORIZE` 이후 Codex Cloud를 write credential 없는 untrusted `IMPLEMENT` Worker로 실행하고, 결과를 candidate artifact로만 기록합니다.
-- Issue #12 / PR #13은 candidate를 실행하지 않고 identity와 digest를 검사해 `sealed.patch + seal.json`으로 승격하는 read-only Trusted `SEAL` 경계를 구현합니다.
-- Issue #17 / PR #18은 sealed artifact만 재검증해 `ai-publish/issue-<N>` branch에 force 없이 공개하고, 실제 remote commit의 exact SHA를 `publish.json.publishedHeadSha`로 기록하는 Trusted `PUBLISH` 경계를 구현합니다.
-- Issue #20 / PR #21은 `publish.json`과 remote publish branch HEAD를 exact match로 재검증하고, 바로 그 `publishedHeadSha`를 credential-free checkout해 test/build/diff 검증을 수행한 뒤 `verify.json.verifiedHeadSha`로 동일 SHA를 기록하는 Trusted `VERIFY` 경계를 구현합니다.
-- Issue #23 / PR #24는 `verify.json.verifiedHeadSha`와 원본 AUTHORIZE requirements snapshot을 exact binding해 isolated AI Reviewer가 의미적 적합성을 판정하고, fresh trusted finalize가 raw reviewer output을 검증해 `review.json` provenance로 승격하는 Semantic `REVIEW`를 구현합니다.
-- Issue #26 / PR #27은 trusted `review.json`을 Framework 내부 Embedded Orchestrator v0가 다시 검증해 `PASS → MERGE_READY`, `LOCAL_FIX → FIXING`, `STRUCTURAL_CHANGE → STOPPED`로 결정론적으로 routing하고, PASS에서만 exact reviewed SHA의 Human Merge PR을 생성하거나 재사용하도록 구현했습니다.
-- Issue #28 / PR #29 Smoke Test는 `SI-승인 → AUTHORIZE → IMPLEMENT → SEAL → PUBLISH → VERIFY → Semantic REVIEW → PASS → MERGE_READY → 자동 Human Merge PR → Human Merge` 전체 경로를 실환경에서 증명했습니다.
-- Issue #30 / PR #31은 Orchestrator가 마지막 허용 `workflow_run` chain depth에 의존하던 임시 구조를 제거하고, Semantic REVIEW 성공 뒤 같은 Trusted Rail run 안에서 reusable Control Plane으로 직접 실행되도록 재배치합니다.
-- Worker에서 trusted 영역으로 넘어가는 GitHub Actions 진입점은 `.github/workflows/trusted-rail.yml` 하나로 유지합니다. `SEAL → PUBLISH → VERIFY → REVIEW → Orchestrator`는 같은 Trusted Rail run의 job dependency와 reusable workflow call로 연결됩니다.
-- `state.ts`는 상태 invariant의 순수 도메인 모델이며, Embedded Orchestrator는 검증된 REVIEW 사실을 실제 GitHub Adapter의 다음 동작으로 연결하는 첫 embedded control-plane slice입니다.
+- PR 생성 후 외부 `@codex review` 실패를 공식 FIX loop에 연결
+- FIX #2 강제 runtime smoke test
+- durable / append-only 장기 provenance 저장소
+- 범용 GRAPH Engine 전체 구현
+- 자동 Self-Improvement loop
+- Auto Merge
 
-## 변하지 않는 신뢰 원칙
+이 항목들은 v0.1 완료를 막지 않으며 후속 버전에서 다룹니다.
 
-- Human start는 `SI-승인` 1회이며, trusted approver policy와 authorization provenance로 근거를 남깁니다.
-- 최종 Merge는 **Human-only**이며 Auto Merge를 금지합니다.
-- `IMPLEMENT` / `FIX`에는 GitHub write credential을 제공하지 않습니다.
-- untrusted candidate patch는 trusted `SEAL` 이후에만 Trusted Rail의 `PUBLISH` 대상이 됩니다.
-- `SEAL`은 candidate code를 실행하거나 기능적으로 승인하지 않고 source identity와 exact bytes를 provenance에 봉인합니다.
-- Trusted Rail 전체에 일괄 권한을 부여하지 않고 각 trusted job이 필요한 최소 권한만 가집니다.
-- `PUBLISH` write 권한은 `SEAL` read-only 경계와 분리하며 publish branch에만 사용합니다. `main` 직접 push와 force push는 금지합니다.
-- `VERIFY`는 read-only이며 `publish.json.publishedHeadSha`, 실제 remote publish branch HEAD, exact checkout HEAD, `verify.json.verifiedHeadSha`가 모두 동일할 때만 성공합니다.
-- candidate 검증 코드는 실행할 수 있지만 GitHub write credential과 secrets를 제공하지 않습니다.
-- `VERIFY` 실패는 전환 거부 또는 Human 경계로 처리하며, REVIEW 없이 `STOPPED`로 전환하지 않습니다.
-- Semantic Review는 exact `verifiedHeadSha`만 검토하고, 승인 당시 requirements snapshot을 원본 AUTHORIZE artifact에서 다시 검증합니다.
-- AI Reviewer는 untrusted reasoning worker입니다. raw `reviewer.json`은 곧바로 trusted 사실이 아니며 fresh trusted finalize가 schema, decision consistency, provenance identity를 재검증한 뒤에만 `review.json`으로 승격합니다.
-- Embedded Orchestrator는 새 AI 판단을 하지 않고 trusted REVIEW decision만 결정론적으로 routing합니다. mutable Issue 본문이나 branch 텍스트를 next-state 판단 근거로 사용하지 않습니다.
-- Orchestrator는 current Trusted Rail run/attempt의 REVIEW artifact를 exact 선택하고 route와 record 사이에서 다시 검증합니다. 별도 `workflow_run` chain을 소비하지 않습니다.
-- `PASS → MERGE_READY`에서 PR 생성 job은 `contents: read`, `pull-requests: write`만 사용하며 branch를 수정하거나 merge하지 않습니다. PR head SHA는 `review.json.reviewedHeadSha`와 exact match해야 합니다.
-- 현재 GitHub adapter는 Reviewer provider로 `openai/codex-action`을 사용하지만 core의 reviewer output 계약은 provider-neutral하게 유지합니다.
-- `FIX`는 최대 2회이며 `LOCAL FIX`와 `STRUCTURAL CHANGE`를 구분합니다. 각 `FIX` 후에는 반드시 `SEAL → PUBLISH → VERIFY exact published SHA → REVIEW`를 다시 거친 뒤, 그 재검토 decision에서만 `MERGE_READY`, `STOPPED`, 또는 다음 `FIX`로 전환합니다.
+## 관련 문서
 
-## Roadmap
-
-| Phase | 프레임워크 능력 | 증명 목표 |
-| --- | --- | --- |
-| 0 | Core State / Trust Model | 상태 전환, 신뢰 경계, exact SHA, Human-only Merge invariant를 강제할 수 있다. |
-| 1 | Human Authorization | versioned policy와 provenance를 근거로 Human 승인만 실행 시작 권한으로 바꿀 수 있다. |
-| 2 | AI IMPLEMENT | write credential 없는 Implementer가 요구사항에서 candidate patch를 만들 수 있다. |
-| 3 | Independent VERIFY | 구현과 분리된 Verifier가 공개된 동일 SHA를 재현 가능하게 검증할 수 있다. |
-| 4 | Semantic REVIEW / FIX | Reviewer가 의미적 품질을 판정하고 제한된 local fix만 안전하게 되돌릴 수 있다. |
-| 5 | GRAPH Orchestration | 단계·역할·조건·산출물 의존 관계를 명시적인 GRAPH로 조정할 수 있다. |
-| 6 | LOOP Execution | 종료 조건과 실행 한도를 지키며 검증·피드백·수정 주기를 반복할 수 있다. |
-| 7 | Self-Improvement | Provenance가 있는 결과에서 학습해 프레임워크 개선 candidate를 제안하고 같은 경계로 검증할 수 있다. |
-| 8 | Dogfooding | 프레임워크 자체와 실제 애플리케이션 개발에 전체 흐름을 적용해 범용성을 입증할 수 있다. |
-
-Phase는 구현 항목 체크리스트가 아니라 프레임워크가 차례로 증명해야 할 능력입니다. Embedded Orchestrator는 Roadmap의 GRAPH Orchestration을 향한 첫 control-plane slice이며 전체 GRAPH Engine은 아직 아닙니다. 자세한 범위와 완료 증거는 [`docs/roadmap.md`](docs/roadmap.md)를 참고하세요.
-
-## 현재 범위
-
-Phase 1 Human Authorization은 Human이 Issue에 남긴 정확한 `SI-승인`을 GitHub API로 다시 조회하고 versioned trusted approver policy로 검증합니다. Policy의 권한 identity는 재사용될 수 있는 login이 아니라 GitHub의 immutable numeric user ID이며, login은 가독성과 provenance를 위한 설명값입니다. `AUTHORIZE` provenance는 trusted `authorize.yml` run과 실제 생성 attempt에 귀속된 Actions artifact에 저장하며, Issue comment에는 run과 artifact를 찾는 최소 pointer만 남깁니다. 같은 approval event의 재실행은 검증 가능한 기존 artifact를 재사용하는 no-op이며 live collaborator permission을 조회하지 않습니다.
-
-Phase 2 AI IMPLEMENT는 `.github/workflows/implement.yml`에서 Codex Cloud를 untrusted Worker로 실행합니다. Worker에는 GitHub write credential을 주지 않으며, 승인 시점 exact SHA와 요구사항 snapshot만 입력합니다. Worker workspace는 곧바로 신뢰하지 않고 clean trusted job이 `candidate.patch`와 `implement.json` provenance를 생성해 candidate artifact로 기록합니다.
-
-`.github/workflows/trusted-rail.yml`은 Worker 이후 trusted 영역의 단일 진입점입니다. workflow-level 권한은 비워 두고 `seal` job은 `contents: read`, `actions: read`만 가집니다. Trusted `SEAL`은 candidate를 실행하거나 적용하지 않고 source IMPLEMENT workflow identity, base SHA, provenance 구조와 SHA-256을 검증해 exact bytes 그대로 `sealed.patch`로 보존하고 `seal.json`으로 authorization → IMPLEMENT → SEAL chain을 기록합니다.
-
-Trusted `PUBLISH`는 같은 workflow 안의 별도 job이며 `seal` 성공 뒤에만 실행됩니다. PUBLISH job에만 `contents: write`를 부여하고, sealed artifact를 다시 검증한 뒤 exact `baseSha` worktree에 patch를 적용해 deterministic `ai-publish/issue-<N>` branch를 생성하거나 fast-forward합니다. force push와 `main` 직접 push는 허용하지 않습니다. push 후 실제 remote SHA를 다시 확인하고 그 exact 값을 `publish.json.publishedHeadSha`로 기록합니다.
-
-Trusted `VERIFY`는 같은 workflow 안의 다음 read-only 단계입니다. current 또는 동일 Trusted Rail run의 가장 최근 prior `publish.json` artifact를 fail-closed 방식으로 선택한 뒤 provenance를 재검증합니다. 실제 remote publish branch HEAD가 `publishedHeadSha`와 같음을 검증 시작 전과 종료 후 확인하고, 별도 runner가 branch 이름이 아니라 exact `publishedHeadSha` 자체를 `persist-credentials: false`로 checkout해 `npm ci`, `npm test`, `npm run build`, `git show --check`를 실행합니다. fresh trusted finalize가 성공 시 동일 SHA를 `verify.json.verifiedHeadSha`로 기록합니다.
-
-Semantic `REVIEW`는 VERIFY 성공 뒤 같은 Trusted Rail run에서 reusable workflow로 동기 호출됩니다. trusted prepare가 `verify.json` chain에 봉인된 authorization identity를 이용해 원본 `authorize.json`을 다시 읽고 승인 당시 requirements digest를 재검증합니다. isolated AI Reviewer는 exact `verifiedHeadSha`를 read-only로 정적 검토하고 구조화된 raw `reviewer.json`만 생성합니다. fresh trusted finalize는 VERIFY/AUTHORIZE identity와 Reviewer output consistency를 다시 확인한 뒤 `review.json`에 exact reviewed SHA, requirements digest, decision, findings 및 raw output digest를 기록합니다. 자세한 설계는 [`docs/phase-5-review.md`](docs/phase-5-review.md)를 참고하세요.
-
-Embedded Orchestrator는 Semantic REVIEW 성공 뒤 **같은 Trusted Rail run**에서 reusable workflow로 호출됩니다. current run/attempt의 `review.json`을 exact 선택해 다시 검증하고 REVIEW decision을 실제 next state로 routing합니다. `PASS`일 때만 remote publish branch HEAD가 exact reviewed SHA임을 다시 확인하고 Human Merge PR을 생성하거나 정확한 기존 open PR을 재사용합니다. `orchestration.json`은 source REVIEW, decision, next state, reviewed SHA와 PR identity를 하나의 provenance chain으로 기록합니다. `LOCAL_FIX`와 `STRUCTURAL_CHANGE`에서는 PR을 만들지 않습니다. 자세한 설계는 [`docs/phase-6-orchestrator.md`](docs/phase-6-orchestrator.md)를 참고하세요.
-
-Actions artifact는 현재 단계의 **operational trust anchor**일 뿐입니다. repository/org retention 정책에 따라 artifact가 만료되면 이 단계만으로는 장기 provenance 감사를 보장할 수 없습니다. Durable/append-only provenance 및 장기 검증 방식은 후속 Framework 설계 과제로 남깁니다(TODO).
-
-현재 구현 범위는 `AUTHORIZE → untrusted IMPLEMENT → candidate artifact → Trusted SEAL → Trusted PUBLISH → immutable publishedHeadSha → Trusted VERIFY exact published SHA → Semantic REVIEW → same-run Embedded Orchestrator → MERGE_READY Human Merge PR`까지입니다. 실제 `FIX` Worker/LOOP, 전체 GRAPH Engine, Auto Merge는 아직 구현하지 않습니다. 최종 Merge는 계속 Human-only입니다.
+- [`docs/usage.md`](docs/usage.md) — 신규 요구사항 실사용 방법
+- [`docs/architecture.md`](docs/architecture.md) — Framework 구조와 Trust Boundary
+- [`docs/roadmap.md`](docs/roadmap.md) — 단계별 발전 방향
+- [`docs/phase-5-review.md`](docs/phase-5-review.md) — Semantic REVIEW 설계
+- [`docs/phase-6-orchestrator.md`](docs/phase-6-orchestrator.md) — Embedded Orchestrator 설계
