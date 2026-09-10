@@ -25,6 +25,16 @@ test("Trusted FIX Request는 workflow_run 연쇄 대신 FIX Worker를 explicit w
   assert.match(requestDispatch, /source_fix_request_artifact_name/);
 });
 
+test("FIX Worker dispatch는 GitHub Actions의 명시적 run id/attempt를 exact identity로 사용한다", () => {
+  assert.match(requestDispatch, /CURRENT_RUN_ID: \$\{\{ github\.run_id \}\}/);
+  assert.match(requestDispatch, /CURRENT_RUN_ATTEMPT: \$\{\{ github\.run_attempt \}\}/);
+  assert.match(requestDispatch, /const currentRunId = Number\(process\.env\.CURRENT_RUN_ID\)/);
+  assert.match(requestDispatch, /const currentRunAttempt = Number\(process\.env\.CURRENT_RUN_ATTEMPT\)/);
+  assert.match(requestDispatch, /source_fix_request_run_id: String\(currentRunId\)/);
+  assert.match(requestDispatch, /source_fix_request_run_attempt: String\(currentRunAttempt\)/);
+  assert.doesNotMatch(requestDispatch, /context\.runAttempt/);
+});
+
 test("FIX Request trusted job은 source Trusted Rail completion과 exact REVIEW artifact를 기다려 검증한다", () => {
   assert.match(requestJob, /permissions:\n      contents: read\n      actions: read/);
   assert.doesNotMatch(requestJob, /contents: write|pull-requests: write|issues: write/);
@@ -85,6 +95,16 @@ test("candidate 기록 성공 뒤 actions:write 전용 job만 Trusted Rail을 ex
   assert.match(railDispatch, /source_candidate_run_id/);
   assert.match(railDispatch, /source_candidate_run_attempt/);
   assert.match(railDispatch, /source_candidate_artifact_name/);
+});
+
+test("Trusted Rail dispatch도 명시적 FIX Worker run id/attempt를 exact identity로 사용한다", () => {
+  assert.match(railDispatch, /CURRENT_RUN_ID: \$\{\{ github\.run_id \}\}/);
+  assert.match(railDispatch, /CURRENT_RUN_ATTEMPT: \$\{\{ github\.run_attempt \}\}/);
+  assert.match(railDispatch, /const currentRunId = Number\(process\.env\.CURRENT_RUN_ID\)/);
+  assert.match(railDispatch, /const currentRunAttempt = Number\(process\.env\.CURRENT_RUN_ATTEMPT\)/);
+  assert.match(railDispatch, /source_candidate_run_id: String\(currentRunId\)/);
+  assert.match(railDispatch, /source_candidate_run_attempt: String\(currentRunAttempt\)/);
+  assert.doesNotMatch(railDispatch, /context\.runAttempt/);
 });
 
 test("Trusted Rail explicit entry는 FIX Worker completion과 exact candidate identity를 fail-closed 검증한다", () => {
