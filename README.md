@@ -97,7 +97,7 @@ Trusted
 ```text
 1. 신규 개발 요구사항 Issue 작성
 2. 목표 / 범위 / 완료조건 / 검증방법을 명확히 기재
-3. 사람이 Issue에 SI-승인 댓글 작성
+3. `policy/trusted-approvers.yml`에 등록된 trusted approver가 Issue에 SI-승인 댓글 작성
 4. Framework가 자동으로 IMPLEMENT → 검증 → REVIEW 수행
 5. LOCAL_FIX면 Framework가 제한된 FIX loop 자동 수행
 6. PASS면 Human Merge PR 자동 생성
