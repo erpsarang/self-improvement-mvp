@@ -1,6 +1,10 @@
 import type { ImplementProvenance } from "./implement.js";
 import { IMPLEMENT_WORKFLOW_PATH, sha256 } from "./implement.js";
-import { FIX_WORKFLOW_PATH, type FixProvenance } from "./fix.js";
+import {
+  FIX_REQUEST_WORKFLOW_PATH,
+  FIX_WORKFLOW_PATH,
+  type FixProvenance,
+} from "./fix.js";
 
 export const TRUSTED_RAIL_WORKFLOW_PATH = ".github/workflows/trusted-rail.yml" as const;
 
@@ -45,6 +49,7 @@ export interface SealProvenance {
     readonly candidatePatchDigest: string;
     readonly fixAttempt: 1 | 2;
     readonly sourceReview: FixProvenance["sourceReview"];
+    readonly sourceRequest: FixProvenance["sourceRequest"];
     readonly aiExecution: FixProvenance["aiExecution"];
   };
   readonly sealWorkflow: {
@@ -97,6 +102,30 @@ function validAiExecution(value: unknown): value is ImplementProvenance["aiExecu
   );
 }
 
+function validReviewBinding(value: unknown, issueNumber: number): boolean {
+  if (!record(value)) return false;
+  return (
+    typeof value.artifactName === "string" &&
+    positiveInteger(value.runId) &&
+    positiveInteger(value.runAttempt) &&
+    value.reviewedBranch === `ai-publish/issue-${issueNumber}` &&
+    validSha(value.reviewedHeadSha) &&
+    validDigest(value.requirementsDigest) &&
+    validDigest(value.findingsDigest)
+  );
+}
+
+function validRequestBinding(value: unknown): boolean {
+  if (!record(value)) return false;
+  return (
+    value.workflowPath === FIX_REQUEST_WORKFLOW_PATH &&
+    positiveInteger(value.runId) &&
+    positiveInteger(value.runAttempt) &&
+    typeof value.artifactName === "string" &&
+    validSha(value.trustedCodeSha)
+  );
+}
+
 function validImplementProvenance(value: unknown): value is ImplementProvenance {
   if (!record(value) || !record(value.implementWorkflow)) return false;
   return (
@@ -114,27 +143,30 @@ function validImplementProvenance(value: unknown): value is ImplementProvenance 
 }
 
 function validFixProvenance(value: unknown): value is FixProvenance {
-  if (!record(value) || !record(value.sourceReview) || !record(value.fixWorkflow)) return false;
-  const fixAttempt = value.fixAttempt;
+  if (
+    !record(value) ||
+    !record(value.fixWorkflow) ||
+    !validReviewBinding(value.sourceReview, Number(value.issueNumber)) ||
+    !validRequestBinding(value.sourceRequest)
+  ) {
+    return false;
+  }
+  const sourceReview = value.sourceReview as Record<string, unknown>;
+  const sourceRequest = value.sourceRequest as Record<string, unknown>;
   return (
     value.type === "FIX" &&
     validRepository(value.repository) &&
     positiveInteger(value.issueNumber) &&
     validSha(value.baseSha) &&
-    (fixAttempt === 1 || fixAttempt === 2) &&
+    (value.fixAttempt === 1 || value.fixAttempt === 2) &&
     validAuthorizationBinding(value.sourceAuthorization) &&
-    typeof value.sourceReview.artifactName === "string" &&
-    positiveInteger(value.sourceReview.runId) &&
-    positiveInteger(value.sourceReview.runAttempt) &&
-    value.sourceReview.reviewedBranch === `ai-publish/issue-${String(value.issueNumber)}` &&
-    validSha(value.sourceReview.reviewedHeadSha) &&
-    validDigest(value.sourceReview.requirementsDigest) &&
-    validDigest(value.sourceReview.findingsDigest) &&
-    value.baseSha === value.sourceReview.reviewedHeadSha &&
-    value.sourceReview.requirementsDigest === value.sourceAuthorization.requirementsDigest &&
+    value.baseSha === sourceReview.reviewedHeadSha &&
+    sourceReview.requirementsDigest === (value.sourceAuthorization as Record<string, unknown>).requirementsDigest &&
     value.fixWorkflow.workflowPath === FIX_WORKFLOW_PATH &&
     positiveInteger(value.fixWorkflow.runId) &&
     positiveInteger(value.fixWorkflow.runAttempt) &&
+    sourceRequest.artifactName ===
+      `fix-request-${sourceReview.runId}-fix-${value.fixAttempt}-${sourceRequest.runId}-attempt-${sourceRequest.runAttempt}` &&
     validDigest(value.candidatePatchDigest) &&
     validAiExecution(value.aiExecution)
   );
@@ -156,13 +188,12 @@ function validateImplementArtifactName(
 }
 
 function validateFixArtifactName(artifactName: string, fix: FixProvenance): void {
-  const match = /^fix-candidate-(\d+)-fix-([12])-(\d+)-attempt-(\d+)$/.exec(artifactName);
-  if (!match) throw new Error("FIX candidate artifact 이름이 올바르지 않습니다");
+  const match = /^implement-candidate-(\d+)-(\d+)-attempt-(\d+)$/.exec(artifactName);
+  if (!match) throw new Error("FIX candidate envelope 이름이 올바르지 않습니다");
   if (
-    Number(match[1]) !== fix.sourceReview.runId ||
-    Number(match[2]) !== fix.fixAttempt ||
-    Number(match[3]) !== fix.fixWorkflow.runId ||
-    Number(match[4]) !== fix.fixWorkflow.runAttempt
+    Number(match[1]) !== fix.sourceRequest.runId ||
+    Number(match[2]) !== fix.fixWorkflow.runId ||
+    Number(match[3]) !== fix.fixWorkflow.runAttempt
   ) {
     throw new Error("FIX candidate artifact identity가 provenance와 일치하지 않습니다");
   }
@@ -318,6 +349,7 @@ export function sealFixCandidate(input: {
         candidatePatchDigest: fix.candidatePatchDigest,
         fixAttempt: fix.fixAttempt,
         sourceReview: { ...fix.sourceReview },
+        sourceRequest: { ...fix.sourceRequest },
         aiExecution: { ...fix.aiExecution },
       },
       sealWorkflow: {
@@ -356,7 +388,7 @@ export function validateSealProvenance(value: unknown): SealProvenance {
   }
 
   if (hasImplement) {
-    const source = value.sourceImplement!;
+    const source = value.sourceImplement as Record<string, unknown>;
     if (
       source.workflowPath !== IMPLEMENT_WORKFLOW_PATH ||
       !positiveInteger(source.runId) ||
@@ -371,7 +403,7 @@ export function validateSealProvenance(value: unknown): SealProvenance {
       throw new Error("SEAL IMPLEMENT source가 올바르지 않습니다");
     }
   } else {
-    const source = value.sourceFix!;
+    const source = value.sourceFix as Record<string, unknown>;
     if (
       source.workflowPath !== FIX_WORKFLOW_PATH ||
       !positiveInteger(source.runId) ||
@@ -380,20 +412,22 @@ export function validateSealProvenance(value: unknown): SealProvenance {
       typeof source.candidateArtifactName !== "string" ||
       !validDigest(source.candidatePatchDigest) ||
       !(source.fixAttempt === 1 || source.fixAttempt === 2) ||
-      !record(source.sourceReview) ||
-      typeof source.sourceReview.artifactName !== "string" ||
-      !positiveInteger(source.sourceReview.runId) ||
-      !positiveInteger(source.sourceReview.runAttempt) ||
-      source.sourceReview.reviewedBranch !== `ai-publish/issue-${String(value.issueNumber)}` ||
-      !validSha(source.sourceReview.reviewedHeadSha) ||
-      !validDigest(source.sourceReview.requirementsDigest) ||
-      !validDigest(source.sourceReview.findingsDigest) ||
+      !validReviewBinding(source.sourceReview, value.issueNumber as number) ||
+      !validRequestBinding(source.sourceRequest) ||
       !validAiExecution(source.aiExecution) ||
-      source.candidatePatchDigest !== value.sealedPatchDigest ||
-      source.sourceReview.reviewedHeadSha !== value.baseSha ||
-      source.sourceReview.requirementsDigest !== (value.sourceAuthorization as Record<string, unknown>).requirementsDigest
+      source.candidatePatchDigest !== value.sealedPatchDigest
     ) {
       throw new Error("SEAL FIX source가 올바르지 않습니다");
+    }
+    const sourceReview = source.sourceReview as Record<string, unknown>;
+    const sourceRequest = source.sourceRequest as Record<string, unknown>;
+    if (
+      sourceReview.reviewedHeadSha !== value.baseSha ||
+      sourceReview.requirementsDigest !== (value.sourceAuthorization as Record<string, unknown>).requirementsDigest ||
+      sourceRequest.artifactName !==
+        `fix-request-${sourceReview.runId}-fix-${source.fixAttempt}-${sourceRequest.runId}-attempt-${sourceRequest.runAttempt}`
+    ) {
+      throw new Error("SEAL FIX provenance chain이 올바르지 않습니다");
     }
   }
 
