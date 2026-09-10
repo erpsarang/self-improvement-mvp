@@ -331,7 +331,7 @@ jobs:
               .filter(({ attempt }) => attempt < trustedRunAttempt)
               .sort((left, right) => right.attempt - left.attempt);
             if (prior.length === 0) {
-              core.setFailed('no current or prior VERIFY artifacts found');
+              core.setFailed('no current or prior VERIFY provenance artifact found');
               return;
             }
             const latestAttempt = prior[0].attempt;
