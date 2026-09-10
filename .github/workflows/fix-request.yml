@@ -212,7 +212,7 @@ jobs:
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'implement.yml',
+              workflow_id: 'fix-worker.yml',
               ref: context.payload.repository.default_branch,
               inputs: {
                 source_fix_request_run_id: String(context.runId),
