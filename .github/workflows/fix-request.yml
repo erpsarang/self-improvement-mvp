@@ -197,12 +197,21 @@ jobs:
         env:
           REQUEST_ARTIFACT: ${{ needs.request.outputs.request_artifact_name }}
           FIX_ATTEMPT: ${{ needs.request.outputs.fix_attempt }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           script: |
             const artifactName = process.env.REQUEST_ARTIFACT;
             const fixAttempt = process.env.FIX_ATTEMPT;
+            const currentRunId = Number(process.env.CURRENT_RUN_ID);
+            const currentRunAttempt = Number(process.env.CURRENT_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(currentRunId) || currentRunId <= 0 ||
+                !Number.isSafeInteger(currentRunAttempt) || currentRunAttempt <= 0) {
+              core.setFailed('invalid current FIX request run identity');
+              return;
+            }
             const expected = new RegExp(
-              `^fix-request-\\d+-fix-${fixAttempt}-${context.runId}-attempt-${context.runAttempt}$`,
+              `^fix-request-\\d+-fix-${fixAttempt}-${currentRunId}-attempt-${currentRunAttempt}$`,
             );
             if (!expected.test(artifactName)) {
               core.setFailed(`unexpected FIX request artifact identity: ${artifactName}`);
@@ -215,8 +224,8 @@ jobs:
               workflow_id: 'fix-worker.yml',
               ref: context.payload.repository.default_branch,
               inputs: {
-                source_fix_request_run_id: String(context.runId),
-                source_fix_request_run_attempt: String(context.runAttempt),
+                source_fix_request_run_id: String(currentRunId),
+                source_fix_request_run_attempt: String(currentRunAttempt),
                 source_fix_request_artifact_name: artifactName,
               },
             });
