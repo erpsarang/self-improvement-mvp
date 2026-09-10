@@ -1,7 +1,15 @@
 import { appendFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createFixProvenance, nextFixAttempt } from "./fix.js";
+import {
+  FIX_REQUEST_WORKFLOW_PATH,
+  createFixProvenance,
+  createFixRequestProvenance,
+  nextFixAttempt,
+  validateFixRequestAgainstReview,
+  validateFixRequestProvenance,
+  type FixRequestProvenance,
+} from "./fix.js";
 import {
   validateReviewForOrchestration,
   type ReviewSourceRun,
@@ -12,6 +20,11 @@ function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name}이 필요합니다`);
   return value;
+}
+
+function optional(name: string): string | undefined {
+  const value = process.env[name];
+  return value && value.trim().length > 0 ? value : undefined;
 }
 
 function positiveInteger(name: string): number {
@@ -30,7 +43,7 @@ function writeOutput(name: string, value: string | number): void {
   appendFileSync(required("GITHUB_OUTPUT"), `${name}=${String(value)}\n`, "utf8");
 }
 
-function sourceRun(): ReviewSourceRun {
+function reviewSourceRunFromEnv(): ReviewSourceRun {
   return {
     id: positiveInteger("SOURCE_REVIEW_RUN_ID"),
     runAttempt: positiveInteger("SOURCE_REVIEW_RUN_ATTEMPT"),
@@ -40,30 +53,98 @@ function sourceRun(): ReviewSourceRun {
   };
 }
 
-async function loadValidatedReview(): Promise<ReviewProvenance> {
+async function loadReview(
+  reviewArtifactName: string,
+  sourceRun: ReviewSourceRun,
+): Promise<ReviewProvenance> {
   const review = JSON.parse(await readFile(required("REVIEW_JSON"), "utf8")) as unknown;
-  const validated = validateReviewForOrchestration({
+  return validateReviewForOrchestration({
     review,
-    reviewArtifactName: required("SOURCE_REVIEW_ARTIFACT_NAME"),
-    sourceRun: sourceRun(),
+    reviewArtifactName,
+    sourceRun,
   });
-  if (validated.decision !== "LOCAL_FIX") {
-    throw new Error("FIX는 LOCAL_FIX REVIEW에서만 시작할 수 있습니다");
-  }
-  const expectedAttempt = positiveInteger("FIX_ATTEMPT");
+}
+
+function ensureExpectedAttempt(review: ReviewProvenance, expectedAttempt: number): 1 | 2 {
   if (expectedAttempt !== 1 && expectedAttempt !== 2) {
     throw new Error("FIX_ATTEMPT는 1 또는 2여야 합니다");
   }
-  if (nextFixAttempt(validated) !== expectedAttempt) {
+  if (nextFixAttempt(review) !== expectedAttempt) {
     throw new Error("FIX attempt가 trusted REVIEW provenance에서 계산한 값과 일치하지 않습니다");
   }
-  return validated;
+  return expectedAttempt;
+}
+
+function requestArtifactName(request: FixRequestProvenance): string {
+  return `fix-request-${request.sourceReview.runId}-fix-${request.fixAttempt}-${request.requestWorkflow.runId}-attempt-${request.requestWorkflow.runAttempt}`;
+}
+
+async function validateWorkerRequest(): Promise<{
+  readonly request: FixRequestProvenance;
+  readonly review: ReviewProvenance;
+}> {
+  const request = validateFixRequestProvenance(
+    JSON.parse(await readFile(required("FIX_REQUEST_JSON"), "utf8")) as unknown,
+  );
+  const sourceRequestRunId = positiveInteger("SOURCE_FIX_REQUEST_RUN_ID");
+  const sourceRequestRunAttempt = positiveInteger("SOURCE_FIX_REQUEST_RUN_ATTEMPT");
+  const sourceRequestSha = required("SOURCE_FIX_REQUEST_CONTROL_PLANE_SHA").toLowerCase();
+  const sourceRequestPath = required("SOURCE_FIX_REQUEST_WORKFLOW_PATH");
+  const sourceRequestArtifact = required("SOURCE_FIX_REQUEST_ARTIFACT_NAME");
+
+  if (
+    sourceRequestPath !== FIX_REQUEST_WORKFLOW_PATH ||
+    request.requestWorkflow.runId !== sourceRequestRunId ||
+    request.requestWorkflow.runAttempt !== sourceRequestRunAttempt ||
+    request.requestWorkflow.trustedCodeSha !== sourceRequestSha ||
+    requestArtifactName(request) !== sourceRequestArtifact
+  ) {
+    throw new Error("FIX request source workflow identity가 provenance와 일치하지 않습니다");
+  }
+
+  const review = await loadReview(request.sourceReview.artifactName, {
+    id: request.sourceReview.runId,
+    runAttempt: request.sourceReview.runAttempt,
+    repository: request.repository,
+    conclusion: "success",
+    workflowPath: ".github/workflows/trusted-rail.yml",
+  });
+  validateFixRequestAgainstReview(request, review, request.sourceReview.artifactName);
+  return Object.freeze({ request, review });
+}
+
+export async function createFixRequest(): Promise<void> {
+  await mkdir(required("FIX_RUNTIME_DIR"), { recursive: true });
+  const reviewArtifactName = required("SOURCE_REVIEW_ARTIFACT_NAME");
+  const review = await loadReview(reviewArtifactName, reviewSourceRunFromEnv());
+  const expectedAttempt = ensureExpectedAttempt(review, positiveInteger("FIX_ATTEMPT"));
+  if (review.decision !== "LOCAL_FIX") {
+    throw new Error("FIX request는 LOCAL_FIX REVIEW에서만 만들 수 있습니다");
+  }
+
+  const request = createFixRequestProvenance({
+    review,
+    reviewArtifactName,
+    requestRun: {
+      runId: positiveInteger("GITHUB_RUN_ID"),
+      runAttempt: positiveInteger("GITHUB_RUN_ATTEMPT"),
+      trustedCodeSha: required("GITHUB_SHA").toLowerCase(),
+    },
+  });
+  if (request.fixAttempt !== expectedAttempt) {
+    throw new Error("FIX request attempt가 expected attempt와 일치하지 않습니다");
+  }
+  await writeFile(runtimePath("fix-request.json"), `${JSON.stringify(request, null, 2)}\n`);
+  writeOutput("issue_number", review.issueNumber);
+  writeOutput("reviewed_branch", review.reviewedBranch);
+  writeOutput("reviewed_head_sha", review.reviewedHeadSha);
+  writeOutput("fix_attempt", request.fixAttempt);
+  writeOutput("request_artifact_name", requestArtifactName(request));
 }
 
 export async function prepareFix(): Promise<void> {
   await mkdir(required("FIX_RUNTIME_DIR"), { recursive: true });
-  const review = await loadValidatedReview();
-  const attempt = positiveInteger("FIX_ATTEMPT");
+  const { request, review } = await validateWorkerRequest();
   const blockers = review.findings.filter(
     (finding) => finding.severity === "BLOCKER" && finding.scope === "LOCAL",
   );
@@ -71,7 +152,7 @@ export async function prepareFix(): Promise<void> {
 
   const prompt = [
     "당신은 AI Development Framework의 untrusted FIX Worker입니다.",
-    `이번 작업은 FIX #${attempt}이며 최대 허용 횟수는 2회입니다.`,
+    `이번 작업은 FIX #${request.fixAttempt}이며 최대 허용 횟수는 2회입니다.`,
     `아래 exact reviewed SHA ${review.reviewedHeadSha}에 존재하는 코드만 수정하세요.`,
     "승인된 요구사항의 범위를 확대하거나 구조를 재설계하지 마세요.",
     "아래 LOCAL BLOCKER만 해결하세요. FOLLOW_UP은 이번 FIX 범위가 아닙니다.",
@@ -89,16 +170,17 @@ export async function prepareFix(): Promise<void> {
   writeOutput("issue_number", review.issueNumber);
   writeOutput("reviewed_branch", review.reviewedBranch);
   writeOutput("reviewed_head_sha", review.reviewedHeadSha);
-  writeOutput("fix_attempt", attempt);
+  writeOutput("fix_attempt", request.fixAttempt);
 }
 
 export async function finalizeFix(): Promise<void> {
   await mkdir(required("FIX_RUNTIME_DIR"), { recursive: true });
-  const review = await loadValidatedReview();
+  const { request, review } = await validateWorkerRequest();
   const patch = await readFile(runtimePath("candidate.patch"));
   const provenance = createFixProvenance({
     review,
-    reviewArtifactName: required("SOURCE_REVIEW_ARTIFACT_NAME"),
+    reviewArtifactName: request.sourceReview.artifactName,
+    request,
     fixRun: {
       runId: positiveInteger("GITHUB_RUN_ID"),
       runAttempt: positiveInteger("GITHUB_RUN_ATTEMPT"),
@@ -106,12 +188,14 @@ export async function finalizeFix(): Promise<void> {
     candidatePatch: patch,
     aiResultId: required("AI_RESULT_ID"),
   });
-  await writeFile(runtimePath("fix.json"), `${JSON.stringify(provenance, null, 2)}\n`);
+  const outputPath = optional("FIX_PROVENANCE_JSON") ?? runtimePath("implement.json");
+  await writeFile(outputPath, `${JSON.stringify(provenance, null, 2)}\n`);
 }
 
 if (process.argv[1]?.endsWith("fix-handler.ts")) {
   const mode = process.argv[2];
-  if (mode === "prepare") await prepareFix();
+  if (mode === "request") await createFixRequest();
+  else if (mode === "prepare") await prepareFix();
   else if (mode === "finalize") await finalizeFix();
-  else throw new Error("prepare 또는 finalize mode가 필요합니다");
+  else throw new Error("request, prepare 또는 finalize mode가 필요합니다");
 }
