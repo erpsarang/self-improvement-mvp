@@ -242,6 +242,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.CODEX_API_KEY }}
           permission-profile: ":read-only"
+          allow-bot-users: "github-actions[bot]"
           safety-strategy: drop-sudo
           working-directory: review-neutral
           codex-home: ${{ runner.temp }}/semantic-review-codex-home
