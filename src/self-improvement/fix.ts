@@ -141,7 +141,7 @@ function reviewBinding(review: ReviewProvenance, artifactName: string): FixRevie
 }
 
 export function fixRequestArtifactName(request: FixRequestProvenance): string {
-  return `fix-request-${request.sourceReview.runId}-attempt-${request.sourceReview.runAttempt}-fix-${request.fixAttempt}-${request.requestWorkflow.runId}-attempt-${request.requestWorkflow.runAttempt}`;
+  return `fix-request-${request.sourceReview.runId}-fix-${request.fixAttempt}-${request.requestWorkflow.runId}-attempt-${request.requestWorkflow.runAttempt}`;
 }
 
 export function createFixRequestProvenance(input: {
