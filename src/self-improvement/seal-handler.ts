@@ -11,6 +11,11 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+function optionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value && value.trim().length > 0 ? value : undefined;
+}
+
 function positiveIntegerEnv(name: string): number {
   const value = Number(requiredEnv(name));
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -19,17 +24,22 @@ function positiveIntegerEnv(name: string): number {
   return value;
 }
 
-const candidateKind = requiredEnv("CANDIDATE_KIND");
-if (candidateKind !== "IMPLEMENT" && candidateKind !== "FIX") {
-  throw new Error("CANDIDATE_KIND는 IMPLEMENT 또는 FIX여야 합니다");
-}
-
-const provenancePath = requiredEnv("CANDIDATE_PROVENANCE_JSON");
+// Trusted Rail의 기존 generic envelope 이름 `implement.json`을 유지한다.
+// 내부 provenance type이 IMPLEMENT인지 FIX인지 trusted code가 결정한다.
+const provenancePath = optionalEnv("CANDIDATE_PROVENANCE_JSON") ?? requiredEnv("IMPLEMENT_JSON");
 const candidatePatchPath = requiredEnv("CANDIDATE_PATCH");
 const sealedPatchPath = requiredEnv("SEALED_PATCH");
 const sealJsonPath = requiredEnv("SEAL_JSON");
-const candidate: unknown = JSON.parse(readFileSync(provenancePath, "utf8"));
+const candidate = JSON.parse(readFileSync(provenancePath, "utf8")) as { readonly type?: unknown };
 const candidatePatch = readFileSync(candidatePatchPath);
+
+const candidateKind = optionalEnv("CANDIDATE_KIND") ?? candidate.type;
+if (candidateKind !== "IMPLEMENT" && candidateKind !== "FIX") {
+  throw new Error("candidate provenance type은 IMPLEMENT 또는 FIX여야 합니다");
+}
+if (candidate.type !== candidateKind) {
+  throw new Error("CANDIDATE_KIND와 candidate provenance type이 일치하지 않습니다");
+}
 
 const sourceRun: CandidateSourceRun = {
   id: positiveIntegerEnv("SOURCE_RUN_ID"),
