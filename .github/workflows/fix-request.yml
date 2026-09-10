@@ -33,6 +33,12 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
+    outputs:
+      request_artifact_name: ${{ steps.request.outputs.request_artifact_name }}
+      issue_number: ${{ steps.request.outputs.issue_number }}
+      reviewed_branch: ${{ steps.request.outputs.reviewed_branch }}
+      reviewed_head_sha: ${{ steps.request.outputs.reviewed_head_sha }}
+      fix_attempt: ${{ steps.request.outputs.fix_attempt }}
 
     steps:
       - name: trusted control-plane exact SHA checkout
@@ -41,7 +47,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: source Trusted Rail 및 REVIEW artifact exact 확인
+      - name: source Trusted Rail 완료 및 REVIEW artifact exact 확인
         uses: actions/github-script@v7
         env:
           SOURCE_RUN_ID: ${{ inputs.source_review_run_id }}
@@ -65,20 +71,32 @@ jobs:
               return;
             }
 
-            const { data: sourceRun } = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId,
-            });
+            let sourceRun = null;
+            for (let attempt = 0; attempt < 30; attempt += 1) {
+              const response = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              });
+              sourceRun = response.data;
+              if (sourceRun.status === 'completed') break;
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+
+            const allowedEvent =
+              sourceRun?.event === 'workflow_run' || sourceRun?.event === 'workflow_dispatch';
             if (
+              !sourceRun ||
+              sourceRun.status !== 'completed' ||
               sourceRun.path !== '.github/workflows/trusted-rail.yml' ||
               sourceRun.conclusion !== 'success' ||
-              sourceRun.event !== 'workflow_run' ||
+              !allowedEvent ||
               sourceRun.head_branch !== context.payload.repository.default_branch ||
+              sourceRun.head_sha !== context.sha ||
               reviewAttempt > sourceRun.run_attempt
             ) {
               core.setFailed(
-                `invalid source Trusted Rail: path=${sourceRun.path}, conclusion=${sourceRun.conclusion}, event=${sourceRun.event}, head=${sourceRun.head_branch}, attempt=${sourceRun.run_attempt}`,
+                `invalid source Trusted Rail: status=${sourceRun?.status}, path=${sourceRun?.path}, conclusion=${sourceRun?.conclusion}, event=${sourceRun?.event}, head=${sourceRun?.head_branch}, sha=${sourceRun?.head_sha}, attempt=${sourceRun?.run_attempt}`,
               );
               return;
             }
@@ -164,3 +182,41 @@ jobs:
             ${{ runner.temp }}/fix-request/fix-request.json
             ${{ runner.temp }}/fix-request/review.json
           if-no-files-found: error
+
+  dispatch_worker:
+    name: explicit untrusted FIX Worker dispatch
+    needs: request
+    if: needs.request.result == 'success'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: exact request identity로 FIX Worker 시작
+        uses: actions/github-script@v7
+        env:
+          REQUEST_ARTIFACT: ${{ needs.request.outputs.request_artifact_name }}
+          FIX_ATTEMPT: ${{ needs.request.outputs.fix_attempt }}
+        with:
+          script: |
+            const artifactName = process.env.REQUEST_ARTIFACT;
+            const fixAttempt = process.env.FIX_ATTEMPT;
+            const expected = new RegExp(
+              `^fix-request-\\d+-fix-${fixAttempt}-${context.runId}-attempt-${context.runAttempt}$`,
+            );
+            if (!expected.test(artifactName)) {
+              core.setFailed(`unexpected FIX request artifact identity: ${artifactName}`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'implement.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                source_fix_request_run_id: String(context.runId),
+                source_fix_request_run_attempt: String(context.runAttempt),
+                source_fix_request_artifact_name: artifactName,
+              },
+            });
