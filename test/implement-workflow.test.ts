@@ -60,3 +60,10 @@ test("IMPLEMENT workflow는 GitHub write 권한과 publish 경로를 갖지 않�
   assert.doesNotMatch(workflow, /contents: write|pull-requests: write|issues: write|git push|gh pr create|AUTO_MERGE/);
   assert.match(workflow, /persist-credentials: false/);
 });
+
+test("initial IMPLEMENT는 Trusted AUTHORIZE만 구독하고 legacy FIX workflow_run 경로를 갖지 않는다", () => {
+  assert.match(workflow, /workflows: \["Trusted AUTHORIZE"\]/);
+  assert.doesNotMatch(workflow, /Trusted FIX Request/);
+  assert.doesNotMatch(workflow, /\n  fix_prepare:\n|\n  fix_worker:\n|\n  fix_record:\n/);
+  assert.doesNotMatch(workflow, /fix-handler\.ts|fix-request\.json|fix-prompt\.txt/);
+});

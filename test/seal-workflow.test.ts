@@ -6,11 +6,27 @@ const workflow = readFileSync(".github/workflows/trusted-rail.yml", "utf8");
 const semanticReviewWorkflow = readFileSync(".github/workflows/semantic-review.yml", "utf8");
 const sealSection = workflow.split("\n  publish:\n")[0] ?? "";
 
-test("Trusted Rail은 Untrusted IMPLEMENT 완료 후 한 번만 진입한다", () => {
-  assert.match(workflow, /name: Trusted Rail/);
+test("Trusted Rail은 initial IMPLEMENT workflow_run과 explicit FIX dispatch 두 진입만 허용한다", () => {
   assert.match(workflow, /workflows:\s*\["Untrusted IMPLEMENT"\]/);
   assert.match(workflow, /types:\s*\[completed\]/);
-  assert.match(workflow, /run\.path !== '\.github\/workflows\/implement\.yml'/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /source_candidate_run_id:/);
+  assert.match(workflow, /source_candidate_run_attempt:/);
+  assert.match(workflow, /source_candidate_artifact_name:/);
+  assert.match(sealSection, /context\.eventName === 'workflow_dispatch'/);
+  assert.match(sealSection, /run\.path !== '\.github\/workflows\/implement\.yml'/);
+  assert.match(sealSection, /run\.path !== '\.github\/workflows\/fix-worker\.yml'|run\.path !==/);
+});
+
+test("explicit FIX source는 완료 success와 exact workflow/run/artifact identity를 검증한다", () => {
+  assert.match(sealSection, /sourceRun|run\.status/);
+  assert.match(sealSection, /run\.status !== 'completed'/);
+  assert.match(sealSection, /run\.conclusion !== 'success'/);
+  assert.match(sealSection, /run\.path !== '\.github\/workflows\/fix-worker\.yml'/);
+  assert.match(sealSection, /run\.event !== 'workflow_dispatch'/);
+  assert.match(sealSection, /run\.run_attempt !== runAttempt/);
+  assert.match(sealSection, /expected exactly one explicit FIX candidate artifact/);
+  assert.match(sealSection, /implement-candidate-/);
 });
 
 test("Trusted Rail 전체 권한은 비어 있고 SEAL job은 read-only 권한을 가진다", () => {
@@ -32,31 +48,23 @@ test("SEAL은 candidate를 실행하거나 publish하지 않는다", () => {
   assert.match(sealSection, /seal-handler\.ts/);
 });
 
-test("candidate artifact는 정확한 source run에 결합되고 ambiguity를 fail-closed 한다", () => {
-  assert.equal(
-    sealSection.includes(
-      "const pattern = new RegExp(`^implement-candidate-(\\\\d+)-${run.id}-attempt-${run.run_attempt}$`);",
-    ),
-    true,
-  );
+test("candidate artifact는 exact source run에 결합되고 ambiguity를 fail-closed 한다", () => {
+  assert.match(sealSection, /new RegExp\(`\^implement-candidate-/);
   assert.match(sealSection, /matches\.length === 1/);
   assert.match(sealSection, /valid no-op source run/);
   assert.match(sealSection, /candidate artifact must contain exactly candidate\.patch and implement\.json/);
+  assert.match(sealSection, /source_run_id/);
+  assert.match(sealSection, /source_run_attempt/);
 });
 
-test("candidate base와 IMPLEMENT/SEAL control-plane SHA를 서로 다른 값으로 취급한다", () => {
+test("candidate source control-plane SHA와 Trusted Rail code SHA를 분리해 기록한다", () => {
   assert.match(sealSection, /name: trusted control-plane exact SHA checkout/);
   assert.match(sealSection, /ref: \$\{\{ github\.sha \}\}/);
-  assert.doesNotMatch(
-    sealSection,
-    /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
-  );
   assert.match(sealSection, /persist-credentials: false/);
   assert.match(
     sealSection,
-    /SOURCE_CONTROL_PLANE_SHA: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
+    /SOURCE_CONTROL_PLANE_SHA: \$\{\{ steps\.candidate_artifact\.outputs\.source_control_plane_sha \}\}/,
   );
-  assert.doesNotMatch(sealSection, /SOURCE_HEAD_SHA:/);
   assert.match(sealSection, /SEAL_TRUSTED_CODE_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(sealSection, /sealed\.patch/);
   assert.match(sealSection, /seal\.json/);

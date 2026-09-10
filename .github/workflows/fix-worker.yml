@@ -1,0 +1,435 @@
+name: Untrusted FIX Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_fix_request_run_id:
+        description: source Trusted FIX Request run ID
+        required: true
+        type: string
+      source_fix_request_run_attempt:
+        description: source Trusted FIX Request run attempt
+        required: true
+        type: string
+      source_fix_request_artifact_name:
+        description: exact FIX request artifact name
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: fix-worker-${{ github.repository }}-${{ inputs.source_fix_request_run_id }}-${{ inputs.source_fix_request_artifact_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: trusted FIX Worker 입력 준비
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    outputs:
+      request_artifact_name: ${{ steps.source.outputs.artifact_name }}
+      request_artifact_attempt: ${{ steps.source.outputs.run_attempt }}
+      source_control_plane_sha: ${{ steps.source.outputs.head_sha }}
+      reviewed_head_sha: ${{ steps.prepare.outputs.reviewed_head_sha }}
+      reviewed_branch: ${{ steps.prepare.outputs.reviewed_branch }}
+      fix_attempt: ${{ steps.prepare.outputs.fix_attempt }}
+
+    steps:
+      - name: source FIX Request 완료 및 artifact exact 확인
+        id: source
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_fix_request_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_fix_request_run_attempt }}
+          SOURCE_ARTIFACT: ${{ inputs.source_fix_request_artifact_name }}
+        with:
+          script: |
+            const runId = Number(process.env.SOURCE_RUN_ID);
+            const runAttempt = Number(process.env.SOURCE_RUN_ATTEMPT);
+            const artifactName = process.env.SOURCE_ARTIFACT;
+            if (!Number.isSafeInteger(runId) || runId <= 0 ||
+                !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
+              core.setFailed('invalid source FIX request run identity');
+              return;
+            }
+            const expectedArtifact = new RegExp(
+              `^fix-request-\\d+-fix-[12]-${runId}-attempt-${runAttempt}$`,
+            );
+            if (!expectedArtifact.test(artifactName)) {
+              core.setFailed(`unexpected FIX request artifact identity: ${artifactName}`);
+              return;
+            }
+
+            let sourceRun = null;
+            for (let wait = 0; wait < 30; wait += 1) {
+              const response = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              });
+              sourceRun = response.data;
+              if (sourceRun.status === 'completed') break;
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+
+            if (
+              !sourceRun ||
+              sourceRun.status !== 'completed' ||
+              sourceRun.conclusion !== 'success' ||
+              sourceRun.path !== '.github/workflows/fix-request.yml' ||
+              sourceRun.event !== 'workflow_dispatch' ||
+              sourceRun.head_branch !== context.payload.repository.default_branch ||
+              sourceRun.head_sha !== context.sha ||
+              sourceRun.run_attempt !== runAttempt
+            ) {
+              core.setFailed(
+                `invalid source FIX Request: status=${sourceRun?.status}, conclusion=${sourceRun?.conclusion}, path=${sourceRun?.path}, event=${sourceRun?.event}, head=${sourceRun?.head_branch}, sha=${sourceRun?.head_sha}, attempt=${sourceRun?.run_attempt}`,
+              );
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+              per_page: 100,
+            });
+            const matches = data.artifacts.filter(
+              (artifact) => !artifact.expired && artifact.name === artifactName,
+            );
+            if (matches.length !== 1) {
+              core.setFailed(`expected exactly one FIX request artifact; matches=${matches.length}`);
+              return;
+            }
+
+            core.setOutput('artifact_name', artifactName);
+            core.setOutput('run_attempt', String(runAttempt));
+            core.setOutput('head_sha', sourceRun.head_sha);
+
+      - name: trusted control-plane exact SHA checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: FIX request artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.artifact_name }}
+          path: ${{ runner.temp }}/fix-request
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_fix_request_run_id }}
+
+      - name: FIX request artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t request_files < <(find "${RUNNER_TEMP}/fix-request" -type f -name fix-request.json -print)
+          mapfile -t review_files < <(find "${RUNNER_TEMP}/fix-request" -type f -name review.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/fix-request" -type f -print)
+          if [ "${#request_files[@]}" -ne 1 ] || [ "${#review_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 2 ]; then
+            echo "FIX request artifact must contain exactly fix-request.json and review.json" >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/fix"
+          cp "${request_files[0]}" "${RUNNER_TEMP}/fix/fix-request.json"
+          cp "${review_files[0]}" "${RUNNER_TEMP}/fix/review.json"
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted FIX 입력 의존성 설치
+        run: npm ci
+
+      - name: FIX request/review 재검증 및 prompt 생성
+        id: prepare
+        run: npm exec -- tsx src/self-improvement/fix-handler.ts prepare
+        env:
+          REVIEW_JSON: ${{ runner.temp }}/fix/review.json
+          FIX_REQUEST_JSON: ${{ runner.temp }}/fix/fix-request.json
+          FIX_RUNTIME_DIR: ${{ runner.temp }}/fix
+          SOURCE_FIX_REQUEST_RUN_ID: ${{ inputs.source_fix_request_run_id }}
+          SOURCE_FIX_REQUEST_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
+          SOURCE_FIX_REQUEST_CONTROL_PLANE_SHA: ${{ steps.source.outputs.head_sha }}
+          SOURCE_FIX_REQUEST_WORKFLOW_PATH: .github/workflows/fix-request.yml
+          SOURCE_FIX_REQUEST_ARTIFACT_NAME: ${{ steps.source.outputs.artifact_name }}
+
+      - name: FIX 시작 직전 remote publish HEAD exact match 확인
+        uses: actions/github-script@v7
+        env:
+          REVIEWED_BRANCH: ${{ steps.prepare.outputs.reviewed_branch }}
+          REVIEWED_HEAD_SHA: ${{ steps.prepare.outputs.reviewed_head_sha }}
+        with:
+          script: |
+            const branch = process.env.REVIEWED_BRANCH;
+            const expected = process.env.REVIEWED_HEAD_SHA;
+            const { data } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branch}`,
+            });
+            if (data.object.type !== 'commit' || data.object.sha !== expected) {
+              core.setFailed(`FIX base HEAD mismatch: expected=${expected}, actual=${data.object.sha}`);
+            }
+
+      - name: trusted FIX prompt 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: fix-prompt-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: fix-prompt.txt
+          if-no-files-found: error
+
+  worker:
+    name: untrusted FIX Worker
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+
+    steps:
+      - name: exact reviewed SHA checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.reviewed_head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: exact FIX base SHA 확인
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.reviewed_head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: trusted FIX prompt 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: fix-prompt-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fix-prompt
+
+      - name: prompt를 worker workspace에 복사
+        shell: bash
+        run: cp "${RUNNER_TEMP}/fix-prompt/fix-prompt.txt" fix-prompt.txt
+
+      - name: Untrusted Codex FIX
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":workspace"
+          prompt-file: fix-prompt.txt
+
+      - name: trusted prompt 제거
+        shell: bash
+        run: rm -f fix-prompt.txt
+
+      - name: mode 보존 FIX workspace tar 생성
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./fix-prompt.txt' \
+            -czf "${RUNNER_TEMP}/fix-workspace.tar.gz" .
+
+      - name: untrusted FIX workspace snapshot 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: fix-workspace-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fix-workspace.tar.gz
+          if-no-files-found: error
+
+  record:
+    name: clean FIX provenance 기록
+    needs: [prepare, worker]
+    if: needs.prepare.result == 'success' && needs.worker.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_artifact_name: ${{ steps.identity.outputs.name }}
+
+    steps:
+      - name: trusted control-plane exact SHA clean checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_control_plane_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: FIX request artifact 재다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.request_artifact_name }}
+          path: ${{ runner.temp }}/fix-request
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_fix_request_run_id }}
+
+      - name: FIX request clean runtime에 복사
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/fix"
+          mapfile -t request_files < <(find "${RUNNER_TEMP}/fix-request" -type f -name fix-request.json -print)
+          mapfile -t review_files < <(find "${RUNNER_TEMP}/fix-request" -type f -name review.json -print)
+          mapfile -t all_files < <(find "${RUNNER_TEMP}/fix-request" -type f -print)
+          if [ "${#request_files[@]}" -ne 1 ] || [ "${#review_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 2 ]; then
+            echo "FIX request artifact must contain exactly fix-request.json and review.json" >&2
+            exit 1
+          fi
+          cp "${request_files[0]}" "${RUNNER_TEMP}/fix/fix-request.json"
+          cp "${review_files[0]}" "${RUNNER_TEMP}/fix/review.json"
+
+      - name: untrusted FIX workspace snapshot 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: fix-workspace-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-archive
+
+      - name: mode 보존 FIX workspace tar 해제
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/candidate-workspace"
+          tar -xzf "${RUNNER_TEMP}/candidate-archive/fix-workspace.tar.gz" \
+            -C "${RUNNER_TEMP}/candidate-workspace"
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted clean checkout 의존성 설치
+        run: npm ci
+
+      - name: exact reviewed SHA fetch 및 FIX candidate patch 생성
+        shell: bash
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.reviewed_head_sha }}
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate-workspace
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_SHA"
+          PATCH_WORKTREE="${RUNNER_TEMP}/fix-patch-worktree"
+          PATCH_FILE="${RUNNER_TEMP}/fix/candidate.patch"
+          git worktree add --detach "$PATCH_WORKTREE" "$BASE_SHA"
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='node_modules/' \
+            "$CANDIDATE_DIR/" "$PATCH_WORKTREE/"
+
+          : > "$PATCH_FILE"
+          (
+            cd "$PATCH_WORKTREE"
+            export GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL=/dev/null
+            unset GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_CONFIG_COUNT || true
+
+            git -c core.hooksPath=/dev/null diff \
+              --binary --full-index --no-ext-diff --no-textconv \
+              "$BASE_SHA" -- . >> "$PATCH_FILE"
+
+            while IFS= read -r -d '' file; do
+              set +e
+              git -c core.hooksPath=/dev/null diff \
+                --no-index --binary --full-index --no-ext-diff --no-textconv \
+                -- /dev/null "$file" >> "$PATCH_FILE"
+              status=$?
+              set -e
+              if [ "$status" -gt 1 ]; then
+                echo "untracked file diff failed for $file: $status" >&2
+                exit "$status"
+              fi
+            done < <(git -c core.hooksPath=/dev/null ls-files --others -z)
+          )
+
+          if [ ! -s "$PATCH_FILE" ]; then
+            echo "FIX candidate.patch is empty" >&2
+            exit 1
+          fi
+
+      - name: clean trusted code로 FIX provenance 생성
+        run: npm exec -- tsx src/self-improvement/fix-handler.ts finalize
+        env:
+          REVIEW_JSON: ${{ runner.temp }}/fix/review.json
+          FIX_REQUEST_JSON: ${{ runner.temp }}/fix/fix-request.json
+          FIX_RUNTIME_DIR: ${{ runner.temp }}/fix
+          SOURCE_FIX_REQUEST_RUN_ID: ${{ inputs.source_fix_request_run_id }}
+          SOURCE_FIX_REQUEST_RUN_ATTEMPT: ${{ needs.prepare.outputs.request_artifact_attempt }}
+          SOURCE_FIX_REQUEST_CONTROL_PLANE_SHA: ${{ needs.prepare.outputs.source_control_plane_sha }}
+          SOURCE_FIX_REQUEST_WORKFLOW_PATH: .github/workflows/fix-request.yml
+          SOURCE_FIX_REQUEST_ARTIFACT_NAME: ${{ needs.prepare.outputs.request_artifact_name }}
+          AI_RESULT_ID: codex-action-fix:${{ github.run_id }}:${{ github.run_attempt }}
+
+      - name: candidate artifact identity 고정
+        id: identity
+        shell: bash
+        env:
+          SOURCE_REQUEST_RUN_ID: ${{ inputs.source_fix_request_run_id }}
+        run: |
+          set -euo pipefail
+          echo "name=implement-candidate-${SOURCE_REQUEST_RUN_ID}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: generic candidate artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.identity.outputs.name }}
+          path: |
+            ${{ runner.temp }}/fix/candidate.patch
+            ${{ runner.temp }}/fix/implement.json
+          if-no-files-found: error
+
+  dispatch_trusted_rail:
+    name: explicit Trusted Rail dispatch
+    needs: record
+    if: needs.record.result == 'success'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: exact candidate identity로 Trusted Rail 시작
+        uses: actions/github-script@v7
+        env:
+          CANDIDATE_ARTIFACT: ${{ needs.record.outputs.candidate_artifact_name }}
+        with:
+          script: |
+            const artifactName = process.env.CANDIDATE_ARTIFACT;
+            const expected = new RegExp(
+              `^implement-candidate-\\d+-${context.runId}-attempt-${context.runAttempt}$`,
+            );
+            if (!expected.test(artifactName)) {
+              core.setFailed(`unexpected FIX candidate artifact identity: ${artifactName}`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'trusted-rail.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                source_candidate_run_id: String(context.runId),
+                source_candidate_run_attempt: String(context.runAttempt),
+                source_candidate_artifact_name: artifactName,
+              },
+            });
