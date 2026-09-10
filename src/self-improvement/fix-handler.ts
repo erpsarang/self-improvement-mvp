@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createFixProvenance, nextFixAttempt } from "./fix.js";
@@ -23,6 +24,10 @@ function positiveInteger(name: string): number {
 
 function runtimePath(name: string): string {
   return join(required("FIX_RUNTIME_DIR"), name);
+}
+
+function writeOutput(name: string, value: string | number): void {
+  appendFileSync(required("GITHUB_OUTPUT"), `${name}=${String(value)}\n`, "utf8");
 }
 
 function sourceRun(): ReviewSourceRun {
@@ -81,6 +86,10 @@ export async function prepareFix(): Promise<void> {
   ].join("\n");
 
   await writeFile("fix-prompt.txt", `${prompt}\n`);
+  writeOutput("issue_number", review.issueNumber);
+  writeOutput("reviewed_branch", review.reviewedBranch);
+  writeOutput("reviewed_head_sha", review.reviewedHeadSha);
+  writeOutput("fix_attempt", attempt);
 }
 
 export async function finalizeFix(): Promise<void> {
