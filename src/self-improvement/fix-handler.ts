@@ -5,6 +5,7 @@ import {
   FIX_REQUEST_WORKFLOW_PATH,
   createFixProvenance,
   createFixRequestProvenance,
+  fixRequestArtifactName,
   nextFixAttempt,
   validateFixRequestAgainstReview,
   validateFixRequestProvenance,
@@ -75,10 +76,6 @@ function ensureExpectedAttempt(review: ReviewProvenance, expectedAttempt: number
   return expectedAttempt;
 }
 
-function requestArtifactName(request: FixRequestProvenance): string {
-  return `fix-request-${request.sourceReview.runId}-fix-${request.fixAttempt}-${request.requestWorkflow.runId}-attempt-${request.requestWorkflow.runAttempt}`;
-}
-
 async function validateWorkerRequest(): Promise<{
   readonly request: FixRequestProvenance;
   readonly review: ReviewProvenance;
@@ -97,7 +94,7 @@ async function validateWorkerRequest(): Promise<{
     request.requestWorkflow.runId !== sourceRequestRunId ||
     request.requestWorkflow.runAttempt !== sourceRequestRunAttempt ||
     request.requestWorkflow.trustedCodeSha !== sourceRequestSha ||
-    requestArtifactName(request) !== sourceRequestArtifact
+    fixRequestArtifactName(request) !== sourceRequestArtifact
   ) {
     throw new Error("FIX request source workflow identity가 provenance와 일치하지 않습니다");
   }
@@ -139,7 +136,7 @@ export async function createFixRequest(): Promise<void> {
   writeOutput("reviewed_branch", review.reviewedBranch);
   writeOutput("reviewed_head_sha", review.reviewedHeadSha);
   writeOutput("fix_attempt", request.fixAttempt);
-  writeOutput("request_artifact_name", requestArtifactName(request));
+  writeOutput("request_artifact_name", fixRequestArtifactName(request));
 }
 
 export async function prepareFix(): Promise<void> {
