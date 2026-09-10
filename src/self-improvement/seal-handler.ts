@@ -1,5 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { sealImplementCandidate, type ImplementSourceRun } from "./seal.js";
+import {
+  sealFixCandidate,
+  sealImplementCandidate,
+  type CandidateSourceRun,
+} from "./seal.js";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -15,15 +19,19 @@ function positiveIntegerEnv(name: string): number {
   return value;
 }
 
-const implementJsonPath = requiredEnv("IMPLEMENT_JSON");
+const candidateKind = requiredEnv("CANDIDATE_KIND");
+if (candidateKind !== "IMPLEMENT" && candidateKind !== "FIX") {
+  throw new Error("CANDIDATE_KIND는 IMPLEMENT 또는 FIX여야 합니다");
+}
+
+const provenancePath = requiredEnv("CANDIDATE_PROVENANCE_JSON");
 const candidatePatchPath = requiredEnv("CANDIDATE_PATCH");
 const sealedPatchPath = requiredEnv("SEALED_PATCH");
 const sealJsonPath = requiredEnv("SEAL_JSON");
-
-const implement: unknown = JSON.parse(readFileSync(implementJsonPath, "utf8"));
+const candidate: unknown = JSON.parse(readFileSync(provenancePath, "utf8"));
 const candidatePatch = readFileSync(candidatePatchPath);
 
-const sourceRun: ImplementSourceRun = {
+const sourceRun: CandidateSourceRun = {
   id: positiveIntegerEnv("SOURCE_RUN_ID"),
   runAttempt: positiveIntegerEnv("SOURCE_RUN_ATTEMPT"),
   controlPlaneSha: requiredEnv("SOURCE_CONTROL_PLANE_SHA").toLowerCase(),
@@ -32,8 +40,7 @@ const sourceRun: ImplementSourceRun = {
   workflowPath: requiredEnv("SOURCE_WORKFLOW_PATH"),
 };
 
-const sealed = sealImplementCandidate({
-  implement,
+const common = {
   candidatePatch,
   sourceRun,
   sealRun: {
@@ -42,7 +49,11 @@ const sealed = sealImplementCandidate({
     trustedCodeSha: requiredEnv("SEAL_TRUSTED_CODE_SHA").toLowerCase(),
   },
   candidateArtifactName: requiredEnv("CANDIDATE_ARTIFACT_NAME"),
-});
+};
+
+const sealed = candidateKind === "IMPLEMENT"
+  ? sealImplementCandidate({ ...common, implement: candidate })
+  : sealFixCandidate({ ...common, fix: candidate });
 
 writeFileSync(sealedPatchPath, sealed.sealedPatch);
 writeFileSync(sealJsonPath, `${JSON.stringify(sealed.provenance, null, 2)}\n`, "utf8");
