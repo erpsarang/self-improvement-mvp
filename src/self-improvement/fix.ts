@@ -140,6 +140,10 @@ function reviewBinding(review: ReviewProvenance, artifactName: string): FixRevie
   });
 }
 
+export function fixRequestArtifactName(request: FixRequestProvenance): string {
+  return `fix-request-${request.sourceReview.runId}-attempt-${request.sourceReview.runAttempt}-fix-${request.fixAttempt}-${request.requestWorkflow.runId}-attempt-${request.requestWorkflow.runAttempt}`;
+}
+
 export function createFixRequestProvenance(input: {
   readonly review: ReviewProvenance;
   readonly reviewArtifactName: string;
@@ -194,7 +198,13 @@ export function validateFixRequestProvenance(value: unknown): FixRequestProvenan
   ) {
     throw new Error("FIX request provenance가 올바르지 않습니다");
   }
-  return value as unknown as FixRequestProvenance;
+  const request = value as unknown as FixRequestProvenance;
+  if (!new RegExp(
+    `^review-provenance-issue-${request.issueNumber}-${request.sourceReview.runId}-attempt-${request.sourceReview.runAttempt}$`,
+  ).test(request.sourceReview.artifactName)) {
+    throw new Error("FIX request source REVIEW artifact identity가 올바르지 않습니다");
+  }
+  return request;
 }
 
 export function validateFixRequestAgainstReview(
@@ -264,7 +274,7 @@ export function createFixProvenance(input: {
       workflowPath: FIX_REQUEST_WORKFLOW_PATH,
       runId: request.requestWorkflow.runId,
       runAttempt: request.requestWorkflow.runAttempt,
-      artifactName: `fix-request-${request.sourceReview.runId}-fix-${request.fixAttempt}-${request.requestWorkflow.runId}-attempt-${request.requestWorkflow.runAttempt}`,
+      artifactName: fixRequestArtifactName(request),
       trustedCodeSha: request.requestWorkflow.trustedCodeSha,
     },
     fixWorkflow: {
