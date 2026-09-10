@@ -44,6 +44,8 @@ test("AI reviewer는 exact verified SHA를 credential-free checkout하고 neutra
   assert.match(agentSection, /NPM_TOKEN: ""/);
   assert.match(agentSection, /working-directory: review-neutral/);
   assert.match(agentSection, /permission-profile: ":read-only"/);
+  assert.match(agentSection, /allow-bot-users: "github-actions\[bot\]"/);
+  assert.doesNotMatch(agentSection, /allow-bots:\s*true/);
   assert.match(agentSection, /safety-strategy: drop-sudo/);
   assert.match(agentSection, /project_doc_max_bytes=0/);
 });
