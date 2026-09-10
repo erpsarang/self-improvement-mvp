@@ -1,9 +1,26 @@
 name: Trusted Rail
 
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && format('Trusted Rail FIX {0}-attempt-{1}', inputs.source_worker_run_id, inputs.source_worker_run_attempt) || 'Trusted Rail' }}
+
 on:
   workflow_run:
     workflows: ["Untrusted IMPLEMENT"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_worker_run_id:
+        description: exact Untrusted FIX worker run ID
+        required: true
+        type: string
+      source_worker_run_attempt:
+        description: exact Untrusted FIX worker run attempt
+        required: true
+        type: string
+      source_candidate_artifact_name:
+        description: exact FIX candidate artifact name
+        required: true
+        type: string
 
 # Trusted Rail에 진입했다고 전체 workflow가 권한을 얻지 않는다.
 # 각 job은 필요한 최소 권한을 명시한다.
@@ -12,15 +29,22 @@ permissions: {}
 jobs:
   seal:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
-      github.event.workflow_run.event == 'workflow_run'
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+       github.event.workflow_run.event == 'workflow_run') ||
+      github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       actions: read
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.candidate_artifact.outputs.should_run }}
+      source_run_id: ${{ steps.candidate_artifact.outputs.source_run_id }}
+      source_run_attempt: ${{ steps.candidate_artifact.outputs.source_run_attempt }}
+      source_head_sha: ${{ steps.candidate_artifact.outputs.source_head_sha }}
+      source_workflow_path: ${{ steps.candidate_artifact.outputs.source_workflow_path }}
+      source_conclusion: ${{ steps.candidate_artifact.outputs.source_conclusion }}
 
     steps:
       - name: IMPLEMENT candidate artifact 선택 또는 no-op 판정
@@ -28,11 +52,61 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const run = context.payload.workflow_run;
-            if (run.path !== '.github/workflows/implement.yml') {
-              core.setFailed(`unexpected source workflow path: ${run.path}`);
-              return;
+            const explicit = context.eventName === 'workflow_dispatch';
+            let run;
+            let requestedArtifact = null;
+
+            if (explicit) {
+              const runId = Number(context.payload.inputs?.source_worker_run_id);
+              const runAttempt = Number(context.payload.inputs?.source_worker_run_attempt);
+              requestedArtifact = context.payload.inputs?.source_candidate_artifact_name;
+              if (!Number.isSafeInteger(runId) || runId <= 0 ||
+                  !Number.isSafeInteger(runAttempt) || runAttempt <= 0 ||
+                  typeof requestedArtifact !== 'string' || requestedArtifact.length === 0) {
+                core.setFailed('invalid explicit FIX source identity');
+                return;
+              }
+
+              const { data } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              });
+              run = data;
+              if (
+                run.path !== '.github/workflows/implement.yml' ||
+                run.event !== 'workflow_dispatch' ||
+                run.status !== 'completed' ||
+                run.conclusion !== 'success' ||
+                run.head_branch !== context.payload.repository.default_branch ||
+                run.run_attempt !== runAttempt
+              ) {
+                core.setFailed(
+                  `invalid explicit FIX worker run: path=${run.path}, event=${run.event}, status=${run.status}, conclusion=${run.conclusion}, head=${run.head_branch}, attempt=${run.run_attempt}`,
+                );
+                return;
+              }
+
+              const expected = new RegExp(
+                `^implement-candidate-(\\d+)-${run.id}-attempt-${run.run_attempt}$`,
+              );
+              if (!expected.test(requestedArtifact)) {
+                core.setFailed(`explicit candidate artifact does not bind worker run: ${requestedArtifact}`);
+                return;
+              }
+            } else {
+              run = context.payload.workflow_run;
+              if (run.path !== '.github/workflows/implement.yml') {
+                core.setFailed(`unexpected source workflow path: ${run.path}`);
+                return;
+              }
             }
+
+            core.setOutput('source_run_id', String(run.id));
+            core.setOutput('source_run_attempt', String(run.run_attempt));
+            core.setOutput('source_head_sha', run.head_sha);
+            core.setOutput('source_workflow_path', run.path);
+            core.setOutput('source_conclusion', 'success');
 
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
@@ -40,6 +114,19 @@ jobs:
               run_id: run.id,
               per_page: 100,
             });
+
+            if (explicit) {
+              const matches = data.artifacts.filter(
+                (artifact) => !artifact.expired && artifact.name === requestedArtifact,
+              );
+              if (matches.length !== 1) {
+                core.setFailed(`expected exactly one explicit FIX candidate artifact; matches=${matches.length}`);
+                return;
+              }
+              core.setOutput('name', requestedArtifact);
+              core.setOutput('should_run', 'true');
+              return;
+            }
 
             const pattern = new RegExp(`^implement-candidate-(\\d+)-${run.id}-attempt-${run.run_attempt}$`);
             const matches = data.artifacts
@@ -91,7 +178,7 @@ jobs:
           path: ${{ runner.temp }}/candidate
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.candidate_artifact.outputs.source_run_id }}
 
       - name: candidate artifact 구조 확인
         if: steps.candidate_artifact.outputs.should_run == 'true'
@@ -128,12 +215,12 @@ jobs:
           CANDIDATE_PATCH: ${{ runner.temp }}/seal/candidate.patch
           SEALED_PATCH: ${{ runner.temp }}/seal/sealed.patch
           SEAL_JSON: ${{ runner.temp }}/seal/seal.json
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_CONTROL_PLANE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ steps.candidate_artifact.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.candidate_artifact.outputs.source_run_attempt }}
+          SOURCE_CONTROL_PLANE_SHA: ${{ steps.candidate_artifact.outputs.source_head_sha }}
           SOURCE_REPOSITORY: ${{ github.repository }}
-          SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SOURCE_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          SOURCE_CONCLUSION: ${{ steps.candidate_artifact.outputs.source_conclusion }}
+          SOURCE_WORKFLOW_PATH: ${{ steps.candidate_artifact.outputs.source_workflow_path }}
           CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
           SEAL_RUN_ID: ${{ github.run_id }}
           SEAL_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -143,7 +230,7 @@ jobs:
         if: steps.candidate_artifact.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: sealed-candidate-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: sealed-candidate-${{ steps.candidate_artifact.outputs.source_run_id }}-attempt-${{ steps.candidate_artifact.outputs.source_run_attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/seal/sealed.patch
             ${{ runner.temp }}/seal/seal.json
@@ -173,11 +260,20 @@ jobs:
       - name: current 또는 이전 SEAL artifact 선택
         id: sealed_artifact
         uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ needs.seal.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.seal.outputs.source_run_attempt }}
         with:
           script: |
-            const sourceRun = context.payload.workflow_run;
+            const sourceRunId = Number(process.env.SOURCE_RUN_ID);
+            const sourceRunAttempt = Number(process.env.SOURCE_RUN_ATTEMPT);
             const trustedRunId = Number(process.env.GITHUB_RUN_ID);
             const trustedRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(sourceRunId) || sourceRunId <= 0 ||
+                !Number.isSafeInteger(sourceRunAttempt) || sourceRunAttempt <= 0) {
+              core.setFailed('invalid candidate source run identity');
+              return;
+            }
             if (!Number.isSafeInteger(trustedRunId) || trustedRunId <= 0) {
               core.setFailed('invalid trusted run id');
               return;
@@ -195,7 +291,7 @@ jobs:
             });
 
             const pattern = new RegExp(
-              `^sealed-candidate-${sourceRun.id}-attempt-${sourceRun.run_attempt}-${trustedRunId}-attempt-([1-9]\\d*)$`,
+              `^sealed-candidate-${sourceRunId}-attempt-${sourceRunAttempt}-${trustedRunId}-attempt-([1-9]\\d*)$`,
             );
             const matches = data.artifacts
               .filter((artifact) => !artifact.expired)
