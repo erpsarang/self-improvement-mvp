@@ -33,6 +33,8 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
+    outputs:
+      request_artifact_name: ${{ steps.request.outputs.request_artifact_name }}
 
     steps:
       - name: trusted control-plane exact SHA checkout
@@ -70,15 +72,20 @@ jobs:
               repo: context.repo.repo,
               run_id: runId,
             });
+            const sourceStateOkay =
+              (sourceRun.status === 'in_progress' && sourceRun.conclusion == null) ||
+              (sourceRun.status === 'completed' && sourceRun.conclusion === 'success');
+            const sourceEventOkay =
+              sourceRun.event === 'workflow_run' || sourceRun.event === 'workflow_dispatch';
             if (
               sourceRun.path !== '.github/workflows/trusted-rail.yml' ||
-              sourceRun.conclusion !== 'success' ||
-              sourceRun.event !== 'workflow_run' ||
+              !sourceStateOkay ||
+              !sourceEventOkay ||
               sourceRun.head_branch !== context.payload.repository.default_branch ||
               reviewAttempt > sourceRun.run_attempt
             ) {
               core.setFailed(
-                `invalid source Trusted Rail: path=${sourceRun.path}, conclusion=${sourceRun.conclusion}, event=${sourceRun.event}, head=${sourceRun.head_branch}, attempt=${sourceRun.run_attempt}`,
+                `invalid source Trusted Rail: path=${sourceRun.path}, status=${sourceRun.status}, conclusion=${sourceRun.conclusion}, event=${sourceRun.event}, head=${sourceRun.head_branch}, attempt=${sourceRun.run_attempt}`,
               );
               return;
             }
@@ -164,3 +171,172 @@ jobs:
             ${{ runner.temp }}/fix-request/fix-request.json
             ${{ runner.temp }}/fix-request/review.json
           if-no-files-found: error
+
+  dispatch_fix_cycle:
+    name: explicit FIX cycle dispatch
+    needs: request
+    if: needs.request.result == 'success'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Untrusted FIX workflow explicit dispatch 및 완료 대기
+        id: worker
+        uses: actions/github-script@v7
+        env:
+          REQUEST_ARTIFACT: ${{ needs.request.outputs.request_artifact_name }}
+        with:
+          script: |
+            const requestRunId = Number(process.env.GITHUB_RUN_ID);
+            const requestRunAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            const requestArtifact = process.env.REQUEST_ARTIFACT;
+            const defaultBranch = context.payload.repository.default_branch;
+            const dispatchKey = `fix-request-${requestRunId}-attempt-${requestRunAttempt}`;
+            const expectedTitle = `Untrusted FIX ${dispatchKey}`;
+
+            if (!Number.isSafeInteger(requestRunId) || requestRunId <= 0 ||
+                !Number.isSafeInteger(requestRunAttempt) || requestRunAttempt <= 0 ||
+                !requestArtifact) {
+              core.setFailed('invalid FIX request dispatch identity');
+              return;
+            }
+
+            const listMatchingRuns = async () => {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'implement.yml',
+                event: 'workflow_dispatch',
+                per_page: 100,
+              });
+              return data.workflow_runs.filter(
+                (run) => run.display_title === expectedTitle && run.head_branch === defaultBranch,
+              );
+            };
+
+            let matches = await listMatchingRuns();
+            if (matches.length > 1) {
+              core.setFailed(`ambiguous Untrusted FIX runs for ${dispatchKey}: ${matches.length}`);
+              return;
+            }
+
+            if (matches.length === 0) {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'implement.yml',
+                ref: defaultBranch,
+                inputs: {
+                  fix_request_run_id: String(requestRunId),
+                  fix_request_run_attempt: String(requestRunAttempt),
+                  fix_request_artifact_name: requestArtifact,
+                  fix_dispatch_key: dispatchKey,
+                },
+              });
+
+              for (let attempt = 0; attempt < 60; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                matches = await listMatchingRuns();
+                if (matches.length > 1) {
+                  core.setFailed(`ambiguous Untrusted FIX runs after dispatch: ${matches.length}`);
+                  return;
+                }
+                if (matches.length === 1) break;
+              }
+            } else {
+              core.info(`exact Untrusted FIX run already exists: ${matches[0].id}`);
+            }
+
+            if (matches.length !== 1) {
+              core.setFailed('dispatched Untrusted FIX run was not discoverable');
+              return;
+            }
+
+            let workerRun = matches[0];
+            for (let attempt = 0; attempt < 180; attempt += 1) {
+              const { data } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: workerRun.id,
+              });
+              workerRun = data;
+              if (workerRun.status === 'completed') break;
+              await new Promise((resolve) => setTimeout(resolve, 10000));
+            }
+
+            if (workerRun.status !== 'completed' || workerRun.conclusion !== 'success') {
+              core.setFailed(
+                `Untrusted FIX run did not complete successfully: status=${workerRun.status}, conclusion=${workerRun.conclusion}`,
+              );
+              return;
+            }
+
+            const { data: artifactsData } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: workerRun.id,
+              per_page: 100,
+            });
+            const expectedCandidate =
+              `implement-candidate-${requestRunId}-${workerRun.id}-attempt-${workerRun.run_attempt}`;
+            const candidates = artifactsData.artifacts.filter(
+              (artifact) => !artifact.expired && artifact.name === expectedCandidate,
+            );
+            if (candidates.length !== 1) {
+              core.setFailed(`expected exactly one FIX candidate artifact; matches=${candidates.length}`);
+              return;
+            }
+
+            core.setOutput('worker_run_id', String(workerRun.id));
+            core.setOutput('worker_run_attempt', String(workerRun.run_attempt));
+            core.setOutput('candidate_artifact_name', expectedCandidate);
+
+      - name: Trusted Rail explicit dispatch
+        uses: actions/github-script@v7
+        env:
+          WORKER_RUN_ID: ${{ steps.worker.outputs.worker_run_id }}
+          WORKER_RUN_ATTEMPT: ${{ steps.worker.outputs.worker_run_attempt }}
+          CANDIDATE_ARTIFACT: ${{ steps.worker.outputs.candidate_artifact_name }}
+        with:
+          script: |
+            const workerRunId = Number(process.env.WORKER_RUN_ID);
+            const workerRunAttempt = Number(process.env.WORKER_RUN_ATTEMPT);
+            const candidateArtifact = process.env.CANDIDATE_ARTIFACT;
+            const defaultBranch = context.payload.repository.default_branch;
+            const expectedTitle = `Trusted Rail FIX ${workerRunId}-attempt-${workerRunAttempt}`;
+
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'trusted-rail.yml',
+              event: 'workflow_dispatch',
+              per_page: 100,
+            });
+            const matches = data.workflow_runs.filter(
+              (run) => run.display_title === expectedTitle && run.head_branch === defaultBranch,
+            );
+            if (matches.length > 1) {
+              core.setFailed(`ambiguous explicit Trusted Rail runs: ${matches.length}`);
+              return;
+            }
+            if (matches.length === 1) {
+              if (matches[0].status === 'completed' && matches[0].conclusion !== 'success') {
+                core.setFailed(`existing explicit Trusted Rail failed: ${matches[0].id}`);
+                return;
+              }
+              core.info(`exact explicit Trusted Rail already exists: ${matches[0].id}`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'trusted-rail.yml',
+              ref: defaultBranch,
+              inputs: {
+                source_worker_run_id: String(workerRunId),
+                source_worker_run_attempt: String(workerRunAttempt),
+                source_candidate_artifact_name: candidateArtifact,
+              },
+            });
