@@ -10,7 +10,9 @@
 - 신규 API / 화면 / 배치 / 도메인 로직 추가
 - 작은 버그 수정
 - 테스트 추가
-- SAP RAP 같은 실제 애플리케이션 개발 작업
+- 현재 Node 기반 verifier로 검증 가능한 애플리케이션 개발 작업
+
+SAP RAP 같은 비-Node 대상은 향후 verifier 확장 대상이며, 현재 v0.1의 직접 지원 범위에는 포함하지 않습니다.
 
 핵심은 사람이 구현 방법을 세세하게 지시하는 것이 아니라 **무엇을 만들어야 하는지와 완료 조건을 명확히 정의하는 것**입니다.
 
@@ -63,7 +65,9 @@ Sales Order 조회 API에 Sold-to Party 필터를 추가한다.
 
 ## 4. 요구사항을 고정하고 시작하기
 
-Issue 본문을 최종 확인한 뒤 댓글에 정확히 다음 한 줄을 작성합니다.
+`SI-승인`은 `policy/trusted-approvers.yml`에 등록된 trusted approver가 직접 남겨야 합니다. 일반 Issue 작성자가 이 정책에 등록되어 있지 않다면 댓글을 남겨도 개발 사이클은 시작되지 않습니다.
+
+Issue 본문을 최종 확인한 뒤 trusted approver가 댓글에 정확히 다음 한 줄을 작성합니다.
 
 ```text
 SI-승인
@@ -200,6 +204,8 @@ Human 승인
 → MERGE_READY
 → Human Merge
 ```
+
+현재 VERIFY는 Node 기반으로 `npm ci`, `npm test`, `npm run build`를 실행합니다. 따라서 SAP RAP/ABAP처럼 다른 빌드·검증 체계가 필요한 대상은 verifier adapter가 추가되기 전까지 v0.1의 직접 지원 대상이 아닙니다.
 
 아직 범위 밖인 기능은 다음과 같습니다.
 
