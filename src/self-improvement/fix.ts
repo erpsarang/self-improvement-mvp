@@ -1,8 +1,8 @@
 import { sha256 } from "./implement.js";
 import type { ReviewProvenance, SemanticReviewFinding } from "./review.js";
 
-// GitHub adapter는 기존 Untrusted IMPLEMENT workflow를 Worker runtime으로 재사용한다.
-export const FIX_WORKFLOW_PATH = ".github/workflows/implement.yml" as const;
+// FIX는 IMPLEMENT와 같은 trust class이지만 explicit dispatch 재진입을 위해 전용 Worker workflow를 사용한다.
+export const FIX_WORKFLOW_PATH = ".github/workflows/fix-worker.yml" as const;
 export const FIX_REQUEST_WORKFLOW_PATH = ".github/workflows/fix-request.yml" as const;
 export type FixAttempt = 1 | 2;
 
