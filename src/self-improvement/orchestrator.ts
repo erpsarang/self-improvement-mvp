@@ -2,6 +2,7 @@ import {
   requirementsSnapshot,
   type ApprovedRequirements,
 } from "./authorization.js";
+import { completedFixCount, nextFixAttempt, type FixAttempt } from "./fix.js";
 import {
   validateSemanticReviewerOutput,
   validateVerifyProvenanceForReview,
@@ -52,6 +53,8 @@ export interface OrchestrationProvenance {
   readonly fromState: "REVIEWING";
   readonly decision: ReviewProvenance["decision"];
   readonly nextState: OrchestratorNextState;
+  readonly completedFixCount: 0 | 1 | 2;
+  readonly nextFixAttempt: FixAttempt | null;
   readonly reviewedBranch: string;
   readonly reviewedHeadSha: string;
   readonly requirementsDigest: string;
@@ -229,12 +232,19 @@ export function routeReviewDecision(
   readonly fromState: "REVIEWING";
   readonly nextState: OrchestratorNextState;
   readonly shouldCreatePullRequest: boolean;
+  readonly shouldDispatchFix: boolean;
+  readonly completedFixCount: 0 | 1 | 2;
+  readonly nextFixAttempt: FixAttempt | null;
 } {
+  const completed = completedFixCount(review);
   if (review.decision === "PASS") {
     return Object.freeze({
       fromState: "REVIEWING" as const,
       nextState: "MERGE_READY" as const,
       shouldCreatePullRequest: true,
+      shouldDispatchFix: false,
+      completedFixCount: completed,
+      nextFixAttempt: null,
     });
   }
   if (review.decision === "STRUCTURAL_CHANGE") {
@@ -242,13 +252,30 @@ export function routeReviewDecision(
       fromState: "REVIEWING" as const,
       nextState: "STOPPED" as const,
       shouldCreatePullRequest: false,
+      shouldDispatchFix: false,
+      completedFixCount: completed,
+      nextFixAttempt: null,
     });
   }
   if (review.decision === "LOCAL_FIX") {
+    const next = nextFixAttempt(review);
+    if (next === null) {
+      return Object.freeze({
+        fromState: "REVIEWING" as const,
+        nextState: "STOPPED" as const,
+        shouldCreatePullRequest: false,
+        shouldDispatchFix: false,
+        completedFixCount: completed,
+        nextFixAttempt: null,
+      });
+    }
     return Object.freeze({
       fromState: "REVIEWING" as const,
       nextState: "FIXING" as const,
       shouldCreatePullRequest: false,
+      shouldDispatchFix: true,
+      completedFixCount: completed,
+      nextFixAttempt: next,
     });
   }
   throw new Error(`지원하지 않는 REVIEW decision입니다: ${String(review.decision)}`);
@@ -263,7 +290,7 @@ function validateMergeBoundary(input: {
   const requiresPr = input.nextState === "MERGE_READY";
   if (!requiresPr) {
     if (input.value !== null) {
-      throw new Error("PASS가 아닌 REVIEW decision에는 Merge PR이 있을 수 없습니다");
+      throw new Error("MERGE_READY가 아닌 상태에는 Merge PR이 있을 수 없습니다");
     }
     return null;
   }
@@ -335,6 +362,8 @@ export function createOrchestrationProvenance(input: {
     fromState: route.fromState,
     decision: review.decision,
     nextState: route.nextState,
+    completedFixCount: route.completedFixCount,
+    nextFixAttempt: route.nextFixAttempt,
     reviewedBranch: review.reviewedBranch,
     reviewedHeadSha: review.reviewedHeadSha,
     requirementsDigest: review.requirementsDigest,
