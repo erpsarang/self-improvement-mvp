@@ -1,5 +1,6 @@
 import {
   publishBranchName,
+  validatePublishProvenance,
   type PublishProvenance,
 } from "./publish.js";
 import { TRUSTED_RAIL_WORKFLOW_PATH } from "./seal.js";
@@ -27,86 +28,12 @@ export interface VerifyProvenance {
   readonly result: "PASS";
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function validRepository(value: unknown): value is string {
-  return typeof value === "string" && /^[^/]+\/[^/]+$/.test(value);
-}
-
 function validSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
-}
-
-function validDigest(value: unknown): value is string {
-  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
-}
-
-function validPublishProvenance(value: unknown): value is PublishProvenance {
-  if (!record(value)) return false;
-  const sourceSeal = value.sourceSeal;
-  const publishWorkflow = value.publishWorkflow;
-  if (!record(sourceSeal) || !record(publishWorkflow)) return false;
-
-  const sourceAuthorization = sourceSeal.sourceAuthorization;
-  const sourceImplement = sourceSeal.sourceImplement;
-  const sealWorkflow = sourceSeal.sealWorkflow;
-  if (
-    !record(sourceAuthorization) ||
-    !record(sourceImplement) ||
-    !record(sealWorkflow)
-  ) {
-    return false;
-  }
-  const aiExecution = sourceImplement.aiExecution;
-  if (!record(aiExecution)) return false;
-
-  return (
-    value.type === "PUBLISH" &&
-    validRepository(value.repository) &&
-    positiveInteger(value.issueNumber) &&
-    validSha(value.baseSha) &&
-    typeof value.sourceSealArtifactName === "string" &&
-    sourceSeal.type === "SEAL" &&
-    sourceSeal.repository === value.repository &&
-    sourceSeal.issueNumber === value.issueNumber &&
-    sourceSeal.baseSha === value.baseSha &&
-    positiveInteger(sourceAuthorization.runId) &&
-    positiveInteger(sourceAuthorization.runAttempt) &&
-    positiveInteger(sourceAuthorization.approvalCommentId) &&
-    validDigest(sourceAuthorization.policySnapshot) &&
-    validDigest(sourceAuthorization.requirementsDigest) &&
-    validSha(sourceAuthorization.authorizedBaseSha) &&
-    sourceAuthorization.authorizedBaseSha === value.baseSha &&
-    sourceImplement.workflowPath === ".github/workflows/implement.yml" &&
-    positiveInteger(sourceImplement.runId) &&
-    positiveInteger(sourceImplement.runAttempt) &&
-    validSha(sourceImplement.controlPlaneSha) &&
-    typeof sourceImplement.candidateArtifactName === "string" &&
-    validDigest(sourceImplement.candidatePatchDigest) &&
-    aiExecution.provider === "openai-codex-action" &&
-    typeof aiExecution.resultId === "string" &&
-    aiExecution.resultId.trim().length > 0 &&
-    sealWorkflow.workflowPath === TRUSTED_RAIL_WORKFLOW_PATH &&
-    positiveInteger(sealWorkflow.runId) &&
-    positiveInteger(sealWorkflow.runAttempt) &&
-    validSha(sealWorkflow.trustedCodeSha) &&
-    validDigest(sourceSeal.sealedPatchDigest) &&
-    sourceImplement.candidatePatchDigest === sourceSeal.sealedPatchDigest &&
-    publishWorkflow.workflowPath === TRUSTED_RAIL_WORKFLOW_PATH &&
-    positiveInteger(publishWorkflow.runId) &&
-    positiveInteger(publishWorkflow.runAttempt) &&
-    validSha(publishWorkflow.trustedCodeSha) &&
-    sealWorkflow.runId === publishWorkflow.runId &&
-    sealWorkflow.runAttempt <= publishWorkflow.runAttempt &&
-    value.publishedBranch === publishBranchName(value.issueNumber) &&
-    validSha(value.publishedHeadSha)
-  );
 }
 
 function validatePublishArtifactName(
@@ -118,13 +45,10 @@ function validatePublishArtifactName(
   );
   if (!match) throw new Error("PUBLISH provenance artifact 이름이 올바르지 않습니다");
 
-  const issueNumber = Number(match[1]);
-  const runId = Number(match[2]);
-  const runAttempt = Number(match[3]);
   if (
-    issueNumber !== publish.issueNumber ||
-    runId !== publish.publishWorkflow.runId ||
-    runAttempt !== publish.publishWorkflow.runAttempt
+    Number(match[1]) !== publish.issueNumber ||
+    Number(match[2]) !== publish.publishWorkflow.runId ||
+    Number(match[3]) !== publish.publishWorkflow.runAttempt
   ) {
     throw new Error("PUBLISH provenance artifact identity가 provenance와 일치하지 않습니다");
   }
@@ -135,12 +59,12 @@ export function validatePublishedCandidateForVerify(input: {
   readonly publishArtifactName: string;
   readonly repository: string;
 }): PublishProvenance {
-  if (!validPublishProvenance(input.publish)) {
-    throw new Error("PUBLISH provenance가 올바르지 않습니다");
-  }
-  const publish = input.publish;
+  const publish = validatePublishProvenance(input.publish);
   if (publish.repository !== input.repository) {
     throw new Error("PUBLISH repository가 현재 repository와 일치하지 않습니다");
+  }
+  if (publish.publishedBranch !== publishBranchName(publish.issueNumber)) {
+    throw new Error("PUBLISH branch가 issue identity와 일치하지 않습니다");
   }
   validatePublishArtifactName(input.publishArtifactName, publish);
   return publish;
