@@ -411,11 +411,20 @@ jobs:
         uses: actions/github-script@v7
         env:
           CANDIDATE_ARTIFACT: ${{ needs.record.outputs.candidate_artifact_name }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           script: |
             const artifactName = process.env.CANDIDATE_ARTIFACT;
+            const currentRunId = Number(process.env.CURRENT_RUN_ID);
+            const currentRunAttempt = Number(process.env.CURRENT_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(currentRunId) || currentRunId <= 0 ||
+                !Number.isSafeInteger(currentRunAttempt) || currentRunAttempt <= 0) {
+              core.setFailed('invalid current FIX Worker run identity');
+              return;
+            }
             const expected = new RegExp(
-              `^implement-candidate-\\d+-${context.runId}-attempt-${context.runAttempt}$`,
+              `^implement-candidate-\\d+-${currentRunId}-attempt-${currentRunAttempt}$`,
             );
             if (!expected.test(artifactName)) {
               core.setFailed(`unexpected FIX candidate artifact identity: ${artifactName}`);
@@ -428,8 +437,8 @@ jobs:
               workflow_id: 'trusted-rail.yml',
               ref: context.payload.repository.default_branch,
               inputs: {
-                source_candidate_run_id: String(context.runId),
-                source_candidate_run_attempt: String(context.runAttempt),
+                source_candidate_run_id: String(currentRunId),
+                source_candidate_run_attempt: String(currentRunAttempt),
                 source_candidate_artifact_name: artifactName,
               },
             });
