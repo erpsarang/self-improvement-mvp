@@ -76,6 +76,11 @@ test("untrusted FIX Worker에는 write credential과 push/Merge 경로가 없다
   assert.doesNotMatch(workerJob, /contents: write|pull-requests: write|issues: write|git push|gh pr|mergePullRequest/);
 });
 
+test("untrusted FIX Codex는 github-actions[bot]만 exact allowlist하고 전체 bot 허용은 금지한다", () => {
+  assert.match(workerJob, /allow-bot-users: "github-actions\[bot\]"/);
+  assert.doesNotMatch(workerJob, /allow-bots:\s*true/);
+});
+
 test("FIX candidate provenance 기록은 fresh trusted runner의 read-only job에서 수행한다", () => {
   assert.match(workerRecord, /permissions:\n      contents: read\n      actions: read/);
   assert.doesNotMatch(workerRecord, /contents: write|pull-requests: write|issues: write/);
