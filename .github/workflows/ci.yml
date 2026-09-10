@@ -25,6 +25,7 @@ jobs:
         run: >-
           "$(go env GOPATH)/bin/actionlint"
           -ignore 'input "permission-profile" is not defined in action "openai/codex-action@v1"'
+          -ignore 'input "allow-bot-users" is not defined in action "openai/codex-action@v1"'
       - uses: actions/setup-node@v4
         with:
           node-version: 22
