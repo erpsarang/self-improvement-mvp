@@ -233,6 +233,7 @@ jobs:
           openai-api-key: ${{ secrets.CODEX_API_KEY }}
           permission-profile: ":workspace"
           prompt-file: fix-prompt.txt
+          allow-bot-users: "github-actions[bot]"
 
       - name: trusted prompt 제거
         shell: bash
