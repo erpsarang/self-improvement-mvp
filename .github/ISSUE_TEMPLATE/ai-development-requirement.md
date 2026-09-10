@@ -62,10 +62,10 @@ assignees: ""
 
 ### 시작 방법
 
-위 요구사항을 최종 확인한 뒤 **사람이 직접** Issue 댓글에 정확히 다음 한 줄을 작성합니다.
+위 요구사항을 최종 확인한 뒤 `policy/trusted-approvers.yml`에 등록된 **trusted approver가 직접** Issue 댓글에 정확히 다음 한 줄을 작성합니다.
 
 ```text
 SI-승인
 ```
 
-그 이후 Framework가 `AUTHORIZE → IMPLEMENT → Trusted Rail → Semantic REVIEW → 필요 시 bounded FIX → MERGE_READY`를 진행합니다. 최종 Human Merge PR은 사람이 검토하고 직접 Merge합니다.
+그 이후 Framework가 `AUTHORIZE → IMPLEMENT → Trusted Rail → Semantic REVIEW → 필요 시 bounded FIX`를 진행합니다. REVIEW가 `PASS`이면 `MERGE_READY`와 Human Merge PR을 생성하고, `STRUCTURAL_CHANGE` 또는 FIX 한도 초과 시 `STOPPED`에서 사람의 판단을 기다립니다. 최종 Human Merge PR은 사람이 검토하고 직접 Merge합니다.
