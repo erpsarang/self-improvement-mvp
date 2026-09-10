@@ -4,7 +4,7 @@ on:
   workflow_call:
 
 # Semantic REVIEW 이후 같은 Trusted Rail run 안에서 deterministic routing을 수행한다.
-# 별도 workflow_run chain을 만들지 않으며, 각 job은 필요한 최소 권한만 사용한다.
+# 별도 workflow_run chain을 만들지 않으며, FIX 재진입만 새 workflow_dispatch root로 시작한다.
 permissions: {}
 
 jobs:
@@ -22,6 +22,9 @@ jobs:
       decision: ${{ steps.prepare.outputs.decision }}
       next_state: ${{ steps.prepare.outputs.next_state }}
       should_create_pr: ${{ steps.prepare.outputs.should_create_pr }}
+      should_dispatch_fix: ${{ steps.prepare.outputs.should_dispatch_fix }}
+      completed_fix_count: ${{ steps.prepare.outputs.completed_fix_count }}
+      next_fix_attempt: ${{ steps.prepare.outputs.next_fix_attempt }}
       reviewed_branch: ${{ steps.prepare.outputs.reviewed_branch }}
       reviewed_head_sha: ${{ steps.prepare.outputs.reviewed_head_sha }}
       requirements_digest: ${{ steps.prepare.outputs.requirements_digest }}
@@ -398,12 +401,16 @@ jobs:
           EXPECTED_ISSUE: ${{ needs.route.outputs.issue_number }}
           EXPECTED_DECISION: ${{ needs.route.outputs.decision }}
           EXPECTED_STATE: ${{ needs.route.outputs.next_state }}
+          EXPECTED_COMPLETED_FIX_COUNT: ${{ needs.route.outputs.completed_fix_count }}
+          EXPECTED_NEXT_FIX_ATTEMPT: ${{ needs.route.outputs.next_fix_attempt }}
           EXPECTED_BRANCH: ${{ needs.route.outputs.reviewed_branch }}
           EXPECTED_SHA: ${{ needs.route.outputs.reviewed_head_sha }}
           EXPECTED_REQUIREMENTS: ${{ needs.route.outputs.requirements_digest }}
           ACTUAL_ISSUE: ${{ steps.revalidate.outputs.issue_number }}
           ACTUAL_DECISION: ${{ steps.revalidate.outputs.decision }}
           ACTUAL_STATE: ${{ steps.revalidate.outputs.next_state }}
+          ACTUAL_COMPLETED_FIX_COUNT: ${{ steps.revalidate.outputs.completed_fix_count }}
+          ACTUAL_NEXT_FIX_ATTEMPT: ${{ steps.revalidate.outputs.next_fix_attempt }}
           ACTUAL_BRANCH: ${{ steps.revalidate.outputs.reviewed_branch }}
           ACTUAL_SHA: ${{ steps.revalidate.outputs.reviewed_head_sha }}
           ACTUAL_REQUIREMENTS: ${{ steps.revalidate.outputs.requirements_digest }}
@@ -412,6 +419,8 @@ jobs:
           if [ "$EXPECTED_ISSUE" != "$ACTUAL_ISSUE" ] || \
              [ "$EXPECTED_DECISION" != "$ACTUAL_DECISION" ] || \
              [ "$EXPECTED_STATE" != "$ACTUAL_STATE" ] || \
+             [ "$EXPECTED_COMPLETED_FIX_COUNT" != "$ACTUAL_COMPLETED_FIX_COUNT" ] || \
+             [ "$EXPECTED_NEXT_FIX_ATTEMPT" != "$ACTUAL_NEXT_FIX_ATTEMPT" ] || \
              [ "$EXPECTED_BRANCH" != "$ACTUAL_BRANCH" ] || \
              [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ] || \
              [ "$EXPECTED_REQUIREMENTS" != "$ACTUAL_REQUIREMENTS" ]; then
@@ -446,3 +455,92 @@ jobs:
           name: orchestration-provenance-issue-${{ steps.revalidate.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/orchestrator/orchestration.json
           if-no-files-found: error
+
+  fix_dispatch:
+    name: bounded FIX request dispatch
+    needs: [route, record]
+    if: >-
+      always() &&
+      needs.route.result == 'success' &&
+      needs.record.result == 'success' &&
+      needs.route.outputs.should_dispatch_fix == 'true'
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: LOCAL_FIX exact identity 확인 후 새 root FIX request 시작
+        uses: actions/github-script@v7
+        env:
+          REVIEW_DECISION: ${{ needs.route.outputs.decision }}
+          NEXT_STATE: ${{ needs.route.outputs.next_state }}
+          SOURCE_REVIEW_RUN_ID: ${{ github.run_id }}
+          SOURCE_REVIEW_RUN_ATTEMPT: ${{ needs.route.outputs.review_artifact_attempt }}
+          SOURCE_REVIEW_ARTIFACT_NAME: ${{ needs.route.outputs.review_artifact_name }}
+          FIX_ATTEMPT: ${{ needs.route.outputs.next_fix_attempt }}
+          REVIEWED_BRANCH: ${{ needs.route.outputs.reviewed_branch }}
+          REVIEWED_HEAD_SHA: ${{ needs.route.outputs.reviewed_head_sha }}
+        with:
+          script: |
+            const decision = process.env.REVIEW_DECISION;
+            const nextState = process.env.NEXT_STATE;
+            const sourceRunId = Number(process.env.SOURCE_REVIEW_RUN_ID);
+            const sourceAttempt = Number(process.env.SOURCE_REVIEW_RUN_ATTEMPT);
+            const artifactName = process.env.SOURCE_REVIEW_ARTIFACT_NAME;
+            const fixAttempt = Number(process.env.FIX_ATTEMPT);
+            const branch = process.env.REVIEWED_BRANCH;
+            const reviewedSha = process.env.REVIEWED_HEAD_SHA;
+            const base = context.payload.repository.default_branch;
+
+            if (decision !== 'LOCAL_FIX' || nextState !== 'FIXING') {
+              core.setFailed(`FIX dispatch requires LOCAL_FIX → FIXING; decision=${decision}, next=${nextState}`);
+              return;
+            }
+            if (!Number.isSafeInteger(sourceRunId) || sourceRunId <= 0 ||
+                !Number.isSafeInteger(sourceAttempt) || sourceAttempt <= 0 ||
+                !(fixAttempt === 1 || fixAttempt === 2)) {
+              core.setFailed('invalid FIX dispatch identity');
+              return;
+            }
+            const expectedArtifact =
+              `review-provenance-issue-${process.env.GITHUB_EVENT_PATH ? process.env.ISSUE_NUMBER ?? '' : ''}`;
+            const artifactPattern = new RegExp(
+              `^review-provenance-issue-[1-9]\\d*-${sourceRunId}-attempt-${sourceAttempt}$`,
+            );
+            if (!artifactPattern.test(artifactName)) {
+              core.setFailed(`invalid source REVIEW artifact: ${artifactName}`);
+              return;
+            }
+            if (branch !== artifactName.replace(/^review-provenance-issue-(\d+)-.*$/, 'ai-publish/issue-$1')) {
+              core.setFailed(`source REVIEW issue/branch mismatch: artifact=${artifactName}, branch=${branch}`);
+              return;
+            }
+            if (!/^[0-9a-f]{40}$/.test(reviewedSha)) {
+              core.setFailed('invalid reviewed SHA');
+              return;
+            }
+
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branch}`,
+            });
+            if (ref.object.type !== 'commit' || ref.object.sha !== reviewedSha) {
+              core.setFailed(`FIX dispatch reviewed HEAD mismatch: expected=${reviewedSha}, actual=${ref.object.sha}`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'fix-request.yml',
+              ref: base,
+              inputs: {
+                source_review_run_id: String(sourceRunId),
+                source_review_run_attempt: String(sourceAttempt),
+                source_review_artifact_name: artifactName,
+                fix_attempt: String(fixAttempt),
+              },
+            });
+            core.info(`dispatched Trusted FIX Request for ${artifactName}, FIX #${fixAttempt}`);
