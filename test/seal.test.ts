@@ -137,21 +137,25 @@ test("SEAL은 candidate patch bytes를 변경하지 않고 provenance chain을 �
     candidateArtifactName: "implement-candidate-100-300-attempt-2",
   });
 
+  const sourceImplement = sealed.provenance.sourceImplement;
+  assert.ok(sourceImplement);
+  assert.equal(sealed.provenance.sourceFix, undefined);
+
   assert.equal(sealed.sealedPatch.equals(candidatePatch), true);
   assert.equal(sealed.provenance.type, "SEAL");
   assert.equal(sealed.provenance.repository, implement.repository);
   assert.equal(sealed.provenance.issueNumber, implement.issueNumber);
   assert.equal(sealed.provenance.baseSha, implement.baseSha);
   assert.deepEqual(sealed.provenance.sourceAuthorization, implement.sourceAuthorization);
-  assert.equal(sealed.provenance.sourceImplement.runId, 300);
-  assert.equal(sealed.provenance.sourceImplement.runAttempt, 2);
-  assert.equal(sealed.provenance.sourceImplement.controlPlaneSha, "d".repeat(40));
-  assert.notEqual(sealed.provenance.sourceImplement.controlPlaneSha, implement.baseSha);
+  assert.equal(sourceImplement.runId, 300);
+  assert.equal(sourceImplement.runAttempt, 2);
+  assert.equal(sourceImplement.controlPlaneSha, "d".repeat(40));
+  assert.notEqual(sourceImplement.controlPlaneSha, implement.baseSha);
   assert.equal(
-    sealed.provenance.sourceImplement.candidatePatchDigest,
+    sourceImplement.candidatePatchDigest,
     implement.candidatePatchDigest,
   );
-  assert.deepEqual(sealed.provenance.sourceImplement.aiExecution, implement.aiExecution);
+  assert.deepEqual(sourceImplement.aiExecution, implement.aiExecution);
   assert.equal(
     sealed.provenance.sealWorkflow.workflowPath,
     ".github/workflows/trusted-rail.yml",

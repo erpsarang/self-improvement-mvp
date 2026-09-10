@@ -158,15 +158,42 @@ test("REVIEW decision은 새 AI 판단 없이 다음 상태로 결정론적으�
     fromState: "REVIEWING",
     nextState: "MERGE_READY",
     shouldCreatePullRequest: true,
+    shouldDispatchFix: false,
+    completedFixCount: 0,
+    nextFixAttempt: null,
   });
-  assert.equal(
-    routeReviewDecision({ ...review, decision: "LOCAL_FIX" }).nextState,
-    "FIXING",
-  );
-  assert.equal(
-    routeReviewDecision({ ...review, decision: "STRUCTURAL_CHANGE" }).nextState,
-    "STOPPED",
-  );
+
+  const localFixReview = {
+    ...review,
+    decision: "LOCAL_FIX" as const,
+    findings: [{
+      severity: "BLOCKER" as const,
+      scope: "LOCAL" as const,
+      title: "국소 수정 필요",
+      evidence: "한 파일의 구현 오류",
+      recommendation: "해당 파일만 수정",
+    }],
+  };
+  const localFixRoute = routeReviewDecision(localFixReview);
+  assert.equal(localFixRoute.nextState, "FIXING");
+  assert.equal(localFixRoute.shouldDispatchFix, true);
+  assert.equal(localFixRoute.completedFixCount, 0);
+  assert.equal(localFixRoute.nextFixAttempt, 1);
+
+  const structuralReview = {
+    ...review,
+    decision: "STRUCTURAL_CHANGE" as const,
+    findings: [{
+      severity: "BLOCKER" as const,
+      scope: "STRUCTURAL" as const,
+      title: "구조 변경 필요",
+      evidence: "승인 범위를 넘어서는 설계 변경 필요",
+      recommendation: "사람이 요구사항과 PLAN을 다시 승인",
+    }],
+  };
+  const structuralRoute = routeReviewDecision(structuralReview);
+  assert.equal(structuralRoute.nextState, "STOPPED");
+  assert.equal(structuralRoute.shouldDispatchFix, false);
 });
 
 test("PASS orchestration provenance는 exact reviewed SHA Human Merge PR을 요구한다", () => {

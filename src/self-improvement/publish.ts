@@ -1,6 +1,8 @@
 import { sha256 } from "./implement.js";
 import {
   TRUSTED_RAIL_WORKFLOW_PATH,
+  sealSourceRunIdentity,
+  validateSealProvenance,
   type SealProvenance,
 } from "./seal.js";
 
@@ -43,72 +45,18 @@ function validSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 }
 
-function validDigest(value: unknown): value is string {
-  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
-}
-
-function validSealProvenance(value: unknown): value is SealProvenance {
-  if (!record(value)) return false;
-  const sourceAuthorization = value.sourceAuthorization;
-  const sourceImplement = value.sourceImplement;
-  const sealWorkflow = value.sealWorkflow;
-  if (
-    !record(sourceAuthorization) ||
-    !record(sourceImplement) ||
-    !record(sealWorkflow)
-  ) {
-    return false;
-  }
-  const aiExecution = sourceImplement.aiExecution;
-  if (!record(aiExecution)) return false;
-
-  return (
-    value.type === "SEAL" &&
-    validRepository(value.repository) &&
-    positiveInteger(value.issueNumber) &&
-    validSha(value.baseSha) &&
-    positiveInteger(sourceAuthorization.runId) &&
-    positiveInteger(sourceAuthorization.runAttempt) &&
-    positiveInteger(sourceAuthorization.approvalCommentId) &&
-    validDigest(sourceAuthorization.policySnapshot) &&
-    validDigest(sourceAuthorization.requirementsDigest) &&
-    validSha(sourceAuthorization.authorizedBaseSha) &&
-    sourceImplement.workflowPath === ".github/workflows/implement.yml" &&
-    positiveInteger(sourceImplement.runId) &&
-    positiveInteger(sourceImplement.runAttempt) &&
-    validSha(sourceImplement.controlPlaneSha) &&
-    typeof sourceImplement.candidateArtifactName === "string" &&
-    validDigest(sourceImplement.candidatePatchDigest) &&
-    aiExecution.provider === "openai-codex-action" &&
-    typeof aiExecution.resultId === "string" &&
-    aiExecution.resultId.trim().length > 0 &&
-    sealWorkflow.workflowPath === TRUSTED_RAIL_WORKFLOW_PATH &&
-    positiveInteger(sealWorkflow.runId) &&
-    positiveInteger(sealWorkflow.runAttempt) &&
-    validSha(sealWorkflow.trustedCodeSha) &&
-    validDigest(value.sealedPatchDigest)
-  );
-}
-
-function validateSealedArtifactName(
-  artifactName: string,
-  seal: SealProvenance,
-): void {
+function validateSealedArtifactName(artifactName: string, seal: SealProvenance): void {
   const match = /^sealed-candidate-(\d+)-attempt-(\d+)-(\d+)-attempt-(\d+)$/.exec(
     artifactName,
   );
   if (!match) throw new Error("sealed artifact 이름이 올바르지 않습니다");
 
-  const implementRunId = Number(match[1]);
-  const implementRunAttempt = Number(match[2]);
-  const sealRunId = Number(match[3]);
-  const sealRunAttempt = Number(match[4]);
-
+  const source = sealSourceRunIdentity(seal);
   if (
-    implementRunId !== seal.sourceImplement.runId ||
-    implementRunAttempt !== seal.sourceImplement.runAttempt ||
-    sealRunId !== seal.sealWorkflow.runId ||
-    sealRunAttempt !== seal.sealWorkflow.runAttempt
+    Number(match[1]) !== source.runId ||
+    Number(match[2]) !== source.runAttempt ||
+    Number(match[3]) !== seal.sealWorkflow.runId ||
+    Number(match[4]) !== seal.sealWorkflow.runAttempt
   ) {
     throw new Error("sealed artifact identity가 SEAL provenance와 일치하지 않습니다");
   }
@@ -127,18 +75,9 @@ export function validateSealedCandidateForPublish(input: {
   readonly sealedArtifactName: string;
   readonly repository: string;
 }): SealProvenance {
-  if (!validSealProvenance(input.seal)) {
-    throw new Error("SEAL provenance가 올바르지 않습니다");
-  }
-  const seal = input.seal;
+  const seal = validateSealProvenance(input.seal);
   if (seal.repository !== input.repository) {
     throw new Error("SEAL repository가 현재 repository와 일치하지 않습니다");
-  }
-  if (seal.baseSha !== seal.sourceAuthorization.authorizedBaseSha) {
-    throw new Error("SEAL base SHA가 승인 SHA와 일치하지 않습니다");
-  }
-  if (seal.sourceImplement.candidatePatchDigest !== seal.sealedPatchDigest) {
-    throw new Error("SEAL candidate digest와 sealed digest가 일치하지 않습니다");
   }
   const patchSize =
     typeof input.sealedPatch === "string"
@@ -150,6 +89,41 @@ export function validateSealedCandidateForPublish(input: {
   }
   validateSealedArtifactName(input.sealedArtifactName, seal);
   return seal;
+}
+
+export function validatePublishProvenance(value: unknown): PublishProvenance {
+  if (!record(value) || !record(value.publishWorkflow)) {
+    throw new Error("PUBLISH provenance가 올바르지 않습니다");
+  }
+  if (
+    value.type !== "PUBLISH" ||
+    !validRepository(value.repository) ||
+    !positiveInteger(value.issueNumber) ||
+    !validSha(value.baseSha) ||
+    typeof value.sourceSealArtifactName !== "string" ||
+    !record(value.sourceSeal) ||
+    value.publishWorkflow.workflowPath !== TRUSTED_RAIL_WORKFLOW_PATH ||
+    !positiveInteger(value.publishWorkflow.runId) ||
+    !positiveInteger(value.publishWorkflow.runAttempt) ||
+    !validSha(value.publishWorkflow.trustedCodeSha) ||
+    value.publishedBranch !== publishBranchName(value.issueNumber) ||
+    !validSha(value.publishedHeadSha)
+  ) {
+    throw new Error("PUBLISH provenance가 올바르지 않습니다");
+  }
+
+  const seal = validateSealProvenance(value.sourceSeal);
+  if (
+    seal.repository !== value.repository ||
+    seal.issueNumber !== value.issueNumber ||
+    seal.baseSha !== value.baseSha ||
+    seal.sealWorkflow.runId !== value.publishWorkflow.runId ||
+    seal.sealWorkflow.runAttempt > value.publishWorkflow.runAttempt
+  ) {
+    throw new Error("PUBLISH provenance와 source SEAL identity가 일치하지 않습니다");
+  }
+  validateSealedArtifactName(value.sourceSealArtifactName, seal);
+  return value as unknown as PublishProvenance;
 }
 
 export function createPublishProvenance(input: {
@@ -167,6 +141,13 @@ export function createPublishProvenance(input: {
   if (!validSha(input.publishRun.trustedCodeSha)) {
     throw new Error("PUBLISH trusted control-plane SHA가 올바르지 않습니다");
   }
+  if (input.publishRun.runId !== seal.sealWorkflow.runId) {
+    throw new Error("PUBLISH run이 SEAL과 같은 Trusted Rail run이 아닙니다");
+  }
+  if (input.publishRun.runAttempt < seal.sealWorkflow.runAttempt) {
+    throw new Error("PUBLISH attempt가 SEAL attempt보다 이전입니다");
+  }
+
   const publishedHeadSha = input.publishedHeadSha.toLowerCase();
   if (!validSha(publishedHeadSha)) {
     throw new Error("published_head_sha는 40자리 Git SHA여야 합니다");

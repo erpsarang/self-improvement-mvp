@@ -792,6 +792,6 @@ jobs:
     if: needs.review.result == 'success'
     permissions:
       contents: read
-      actions: read
+      actions: write
       pull-requests: write
     uses: ./.github/workflows/orchestrator.yml

@@ -23,7 +23,7 @@ test("Trusted Rail은 Semantic REVIEW 성공 뒤 Orchestrator를 명시적으로
   assert.match(orchestrateSection, /uses: \.\/\.github\/workflows\/orchestrator\.yml/);
   assert.match(
     orchestrateSection,
-    /permissions:\n      contents: read\n      actions: read\n      pull-requests: write/,
+    /permissions:\n      contents: read\n      actions: write\n      pull-requests: write/,
   );
 });
 

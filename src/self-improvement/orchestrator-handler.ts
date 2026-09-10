@@ -52,7 +52,7 @@ function mergeBoundaryOrNull(shouldCreatePr: boolean): HumanMergePullRequest | n
 
   if (!shouldCreatePr) {
     if (provided !== 0) {
-      throw new Error("PASS가 아닌 decision에는 Merge PR 환경값을 제공할 수 없습니다");
+      throw new Error("MERGE_READY가 아닌 decision에는 Merge PR 환경값을 제공할 수 없습니다");
     }
     return null;
   }
@@ -95,6 +95,9 @@ if (command === "prepare") {
   writeOutput("decision", validatedReview.decision);
   writeOutput("next_state", route.nextState);
   writeOutput("should_create_pr", route.shouldCreatePullRequest);
+  writeOutput("should_dispatch_fix", route.shouldDispatchFix);
+  writeOutput("completed_fix_count", route.completedFixCount);
+  writeOutput("next_fix_attempt", route.nextFixAttempt ?? "");
   writeOutput("reviewed_branch", validatedReview.reviewedBranch);
   writeOutput("reviewed_head_sha", validatedReview.reviewedHeadSha);
   writeOutput("requirements_digest", validatedReview.requirementsDigest);
