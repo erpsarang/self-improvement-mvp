@@ -17,7 +17,7 @@ jobs:
       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
       github.event.workflow_run.event == 'issue_comment'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 7
     outputs:
       authorization_artifact_name: ${{ steps.authorization_artifact.outputs.name }}
       should_run: ${{ steps.authorization_artifact.outputs.should_run }}
@@ -137,12 +137,14 @@ jobs:
 
       - name: Untrusted Codex IMPLEMENT
         if: steps.authorization_artifact.outputs.should_run == 'true'
+        timeout-minutes: 5
         id: codex
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.CODEX_API_KEY }}
           permission-profile: ":workspace"
           prompt-file: codex-prompt.txt
+          effort: medium
 
       - name: trusted prompt 제거
         if: steps.authorization_artifact.outputs.should_run == 'true'

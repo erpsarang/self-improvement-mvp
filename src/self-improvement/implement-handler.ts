@@ -71,6 +71,8 @@ export async function prepareImplement(): Promise<void> {
     "아래 승인 시점에 고정된 Issue 요구사항만 구현하세요.",
     "GitHub에 commit, push, branch 생성, PR 생성, merge를 시도하지 마세요.",
     "작업 디렉터리의 파일만 수정하세요. 기존 테스트가 있으면 실행하고 실패 원인을 해결하세요.",
+    "요구사항 구현에 필요한 범위만 수정하고 광범위한 리팩터링이나 불필요한 저장소 전역 탐색을 하지 마세요.",
+    "테스트 실패를 무한 반복하지 마세요. 제한 시간 안에 안전하게 완료하기 어렵다면 작업 범위를 억지로 확장하지 말고 종료하세요.",
     "SEAL, PUBLISH, VERIFY, REVIEW, MERGE_READY는 수행하지 마세요.",
     "",
     `Issue #${authorization.issueNumber}: ${authorization.requirements.title}`,
