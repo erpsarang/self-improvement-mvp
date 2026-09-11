@@ -17,6 +17,7 @@ jobs:
       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
       github.event.workflow_run.event == 'issue_comment'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       authorization_artifact_name: ${{ steps.authorization_artifact.outputs.name }}
       should_run: ${{ steps.authorization_artifact.outputs.should_run }}
