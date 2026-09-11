@@ -1,0 +1,105 @@
+name: Read-only AI PLAN
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 업무 요구를 작성한 Issue 번호
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: read
+    env:
+      GH_TOKEN: ""
+      GITHUB_TOKEN: ""
+      GIT_OPTIONAL_LOCKS: "0"
+    steps:
+      - name: Framework checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: planner-control
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Framework dependencies
+        working-directory: planner-control
+        run: npm ci --ignore-scripts
+
+      - name: Freeze user requirement and target SHA
+        id: input
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const raw = process.env.ISSUE_NUMBER;
+            if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('Invalid issue number');
+            const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: Number(raw) });
+            if (issue.pull_request || !issue.body?.trim()) throw new Error('A requirement Issue with a body is required');
+            const { data: repo } = await github.rest.repos.get(context.repo);
+            const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: repo.default_branch });
+            const output = path.join(process.env.RUNNER_TEMP, 'ai-plan');
+            fs.mkdirSync(output);
+            fs.mkdirSync(path.join(process.env.RUNNER_TEMP, 'plan-neutral'));
+            fs.writeFileSync(path.join(output, 'requirement.md'), `${issue.title}\n\n${issue.body}`);
+            core.setOutput('sha', commit.sha);
+
+      - name: Target checkout at frozen SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.input.outputs.sha }}
+          persist-credentials: false
+          path: plan-target
+
+      - name: Prepare PLAN input outside target
+        working-directory: planner-control
+        run: node --import tsx src/self-improvement/planner-handler.ts prepare
+        env:
+          PLAN_TARGET: ${{ github.workspace }}/plan-target
+          PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
+          PLAN_REQUIREMENT: ${{ runner.temp }}/ai-plan/requirement.md
+          PLAN_REPOSITORY: ${{ github.repository }}
+          PLAN_SHA: ${{ steps.input.outputs.sha }}
+
+      - name: Read-only AI Planner
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/plan-neutral
+          codex-home: ${{ runner.temp }}/plan-codex-home
+          prompt-file: ${{ runner.temp }}/ai-plan/prompt.md
+          output-schema-file: ${{ runner.temp }}/ai-plan/schema.json
+          output-file: ${{ runner.temp }}/ai-plan/raw-plan.json
+          effort: high
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: Check unchanged target and create PLAN artifact
+        working-directory: planner-control
+        run: node --import tsx src/self-improvement/planner-handler.ts artifact
+        env:
+          PLAN_TARGET: ${{ github.workspace }}/plan-target
+          PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
+
+      - name: Store PLAN only
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-issue-${{ inputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ai-plan/PLAN.json
+            ${{ runner.temp }}/ai-plan/PLAN.md
+          if-no-files-found: error
