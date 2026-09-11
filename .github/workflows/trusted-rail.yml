@@ -258,7 +258,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
       - name: current 또는 이전 SEAL artifact 선택
         id: sealed_artifact
@@ -380,6 +380,8 @@ jobs:
           ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
           PUBLISH_BRANCH: ${{ steps.prepare.outputs.publish_branch }}
           SEALED_PATCH: ${{ runner.temp }}/publish/sealed.patch
+          GITHUB_PUSH_TOKEN: ${{ github.token }}
+          TRUSTED_PUBLISH_TOKEN: ${{ secrets.TRUSTED_PUBLISH_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -396,6 +398,7 @@ jobs:
 
           PUBLISH_WORKTREE="${RUNNER_TEMP}/publish-worktree"
           cleanup() {
+            git config --local --unset-all http.https://github.com/.extraheader >/dev/null 2>&1 || true
             git worktree remove --force "$PUBLISH_WORKTREE" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
@@ -413,6 +416,29 @@ jobs:
             echo "sealed patch produced no staged change" >&2
             exit 1
           fi
+
+          WORKFLOW_CHANGE=false
+          while IFS= read -r -d '' changed_path; do
+            case "$changed_path" in
+              .github/workflows/*)
+                WORKFLOW_CHANGE=true
+                break
+                ;;
+            esac
+          done < <(git -C "$PUBLISH_WORKTREE" diff --cached --name-only -z)
+
+          PUSH_TOKEN="$GITHUB_PUSH_TOKEN"
+          if [ "$WORKFLOW_CHANGE" = "true" ]; then
+            if [ -z "$TRUSTED_PUBLISH_TOKEN" ]; then
+              echo "workflow change requires TRUSTED_PUBLISH_TOKEN" >&2
+              exit 1
+            fi
+            PUSH_TOKEN="$TRUSTED_PUBLISH_TOKEN"
+          fi
+
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH_HEADER"
 
           CANDIDATE_TREE="$(git -C "$PUBLISH_WORKTREE" write-tree)"
           REMOTE_REF="refs/heads/${PUBLISH_BRANCH}"

@@ -39,6 +39,18 @@ test("PUBLISH는 sealed artifact를 다시 검증하고 exact base worktree에 p
   assert.match(publishSection, /write-tree/);
 });
 
+test("workflow 변경은 별도 trusted publish token을 요구하고 일반 변경은 GITHUB_TOKEN을 유지한다", () => {
+  assert.match(publishSection, /persist-credentials: false/);
+  assert.match(publishSection, /GITHUB_PUSH_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(publishSection, /TRUSTED_PUBLISH_TOKEN: \$\{\{ secrets\.TRUSTED_PUBLISH_TOKEN \}\}/);
+  assert.match(publishSection, /git -C "\$PUBLISH_WORKTREE" diff --cached --name-only -z/);
+  assert.match(publishSection, /\.github\/workflows\/\*/);
+  assert.match(publishSection, /PUSH_TOKEN="\$GITHUB_PUSH_TOKEN"/);
+  assert.match(publishSection, /workflow change requires TRUSTED_PUBLISH_TOKEN/);
+  assert.match(publishSection, /PUSH_TOKEN="\$TRUSTED_PUBLISH_TOKEN"/);
+  assert.match(publishSection, /::add-mask::\$AUTH_HEADER/);
+});
+
 test("publish branch는 force overwrite 없이 idempotent 또는 fast-forward만 허용한다", () => {
   assert.match(publishSection, /ai-publish\/issue-/);
   assert.match(publishSection, /refusing non-fast-forward overwrite/);
