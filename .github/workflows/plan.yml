@@ -12,6 +12,12 @@ permissions: {}
 
 jobs:
   plan:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    outputs:
+      identity: ${{ steps.input.outputs.identity }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -45,6 +51,7 @@ jobs:
           script: |
             const fs = require('node:fs');
             const path = require('node:path');
+            const { createHash } = require('node:crypto');
             const raw = process.env.ISSUE_NUMBER;
             if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('Invalid issue number');
             const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: Number(raw) });
@@ -55,6 +62,21 @@ jobs:
             fs.mkdirSync(output);
             fs.mkdirSync(path.join(process.env.RUNNER_TEMP, 'plan-neutral'));
             fs.writeFileSync(path.join(output, 'requirement.md'), `${issue.title}\n\n${issue.body}`);
+            const identity = {
+              schemaVersion: 1,
+              requirement: {
+                issueNumber: issue.number,
+                digestAlgorithm: 'sha256',
+                digestEncoding: 'UTF-8 JSON.stringify([title, body])',
+                digest: createHash('sha256').update(JSON.stringify([issue.title, issue.body]), 'utf8').digest('hex'),
+              },
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+              targetSha: commit.sha,
+              workflow: { runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, sha: context.sha },
+              artifactName: `plan-issue-${issue.number}-${process.env.GITHUB_RUN_ID}-attempt-${process.env.GITHUB_RUN_ATTEMPT}`,
+            };
+            fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify(identity, null, 2));
+            core.setOutput('identity', JSON.stringify(identity));
             core.setOutput('sha', commit.sha);
 
       - name: Target checkout at frozen SHA
@@ -96,10 +118,76 @@ jobs:
           PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
 
       - name: Store PLAN only
+        id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: plan-issue-${{ inputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: ${{ fromJSON(steps.input.outputs.identity).artifactName }}
           path: |
             ${{ runner.temp }}/ai-plan/PLAN.json
             ${{ runner.temp }}/ai-plan/PLAN.md
+            ${{ runner.temp }}/ai-plan/identity.json
           if-no-files-found: error
+
+  provenance:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Bind uploaded PLAN to frozen provenance
+        id: provenance
+        uses: actions/github-script@v7
+        env:
+          PLAN_IDENTITY: ${{ needs.plan.outputs.identity }}
+          PLAN_ARTIFACT_ID: ${{ needs.plan.outputs.artifact_id }}
+          PLAN_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
+          PLAN_ARTIFACT_URL: ${{ needs.plan.outputs.artifact_url }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const identity = JSON.parse(process.env.PLAN_IDENTITY);
+            const id = process.env.PLAN_ARTIFACT_ID;
+            const digest = process.env.PLAN_ARTIFACT_DIGEST;
+            if (!/^[1-9]\d*$/.test(id) || !/^[a-f0-9]{64}$/.test(digest)) throw new Error('Missing exact uploaded PLAN identity');
+            const provenance = {
+              ...identity,
+              kind: 'untrusted-plan-provenance',
+              artifact: { name: identity.artifactName, id, digestAlgorithm: 'sha256', digest, url: process.env.PLAN_ARTIFACT_URL },
+            };
+            const file = path.join(process.env.RUNNER_TEMP, 'PLAN-provenance.json');
+            fs.writeFileSync(file, JSON.stringify(provenance, null, 2));
+            core.setOutput('path', file);
+
+      - name: Store trusted provenance
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ fromJSON(needs.plan.outputs.identity).artifactName }}-provenance
+          path: ${{ steps.provenance.outputs.path }}
+          if-no-files-found: error
+
+      - name: Leave human-readable PLAN pointer on requirement Issue
+        uses: actions/github-script@v7
+        env:
+          PLAN_IDENTITY: ${{ needs.plan.outputs.identity }}
+          PLAN_ARTIFACT_ID: ${{ needs.plan.outputs.artifact_id }}
+          PLAN_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
+          PLAN_ARTIFACT_URL: ${{ needs.plan.outputs.artifact_url }}
+          PROVENANCE_URL: ${{ steps.upload.outputs.artifact-url }}
+        with:
+          script: |
+            const identity = JSON.parse(process.env.PLAN_IDENTITY);
+            const body = [
+              '## PLAN (AI 제안 — 구현 승인 아님)',
+              `PLAN: [${identity.artifactName}](${process.env.PLAN_ARTIFACT_URL})`,
+              `Provenance: [PLAN-provenance.json](${process.env.PROVENANCE_URL})`,
+              `Repository: ${identity.repository}`,
+              `Frozen target SHA: \`${identity.targetSha}\``,
+              `Requirement title/body SHA-256: \`${identity.requirement.digest}\``,
+              `Workflow run: ${identity.workflow.runId} / attempt: ${identity.workflow.runAttempt}`,
+              `PLAN artifact ID: ${process.env.PLAN_ARTIFACT_ID}`,
+              `PLAN artifact SHA-256: \`${process.env.PLAN_ARTIFACT_DIGEST}\``,
+              '이 pointer는 확인용입니다. 이후 승인에서는 requirement digest 및 exact artifact identity를 다시 대조해야 합니다.',
+            ].join('\n\n');
+            await github.rest.issues.createComment({ ...context.repo, issue_number: identity.requirement.issueNumber, body });
