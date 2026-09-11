@@ -31,6 +31,11 @@ test("새 AUTHORIZE artifact가 있는 경우에만 Codex와 candidate 생성 �
   assert.match(workflow, /uses: openai\/codex-action@v1/);
 });
 
+test("Untrusted IMPLEMENT job은 silent stall을 10분 hard timeout으로 제한한다", () => {
+  const implementSection = workflow.split("\n  record:\n")[0] ?? "";
+  assert.match(implementSection, /\n    timeout-minutes: 10\n/);
+});
+
 test("untrusted job은 Git patch를 만들지 않고 mode 보존 tar snapshot만 남긴다", () => {
   assert.doesNotMatch(workflow, /git add -N \./);
   const implementSection = workflow.split("\n  record:\n")[0] ?? "";
