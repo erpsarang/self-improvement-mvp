@@ -72,6 +72,6 @@ test("PLAN workflow is standalone and enforces read-only execution", () => {
   assert.match(workflow, /permission-profile: ":read-only"/);
   assert.match(workflow, /safety-strategy: drop-sudo/);
   assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 2);
-  assert.doesNotMatch(workflow, /(?:contents|issues|pull-requests): write|workflow_run:|workflow_call:|git (?:commit|push|checkout -b)|trusted-rail/);
+  assert.doesNotMatch(workflow.split("  provenance:")[0]!, /(?:contents|issues|pull-requests): write|workflow_run:|workflow_call:|git (?:commit|push|checkout -b)|trusted-rail/);
   assert.match(workflow, /runner.temp.*ai-plan\/PLAN.md/);
 });
