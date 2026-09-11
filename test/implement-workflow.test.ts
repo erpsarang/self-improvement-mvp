@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workflow = await readFile(".github/workflows/implement.yml", "utf8");
+const implementHandler = await readFile("src/self-improvement/implement-handler.ts", "utf8");
 
 test("AUTHORIZE rerun이 이전 artifact를 재사용하면 IMPLEMENT를 no-op 처리한다", () => {
   assert.match(workflow, /const prior = matches\.filter\(\(\{ attempt \}\) => attempt < run\.run_attempt\);/);
@@ -31,9 +32,19 @@ test("새 AUTHORIZE artifact가 있는 경우에만 Codex와 candidate 생성 �
   assert.match(workflow, /uses: openai\/codex-action@v1/);
 });
 
-test("Untrusted IMPLEMENT job은 silent stall을 10분 hard timeout으로 제한한다", () => {
+test("Untrusted IMPLEMENT는 worker 5분, job 전체 7분 Resource Boundary를 가진다", () => {
   const implementSection = workflow.split("\n  record:\n")[0] ?? "";
-  assert.match(implementSection, /\n    timeout-minutes: 10\n/);
+  assert.match(implementSection, /\n    timeout-minutes: 7\n/);
+  assert.match(
+    implementSection,
+    /- name: Untrusted Codex IMPLEMENT\n        if:[\s\S]*?timeout-minutes: 5[\s\S]*?uses: openai\/codex-action@v1[\s\S]*?permission-profile: ":workspace"[\s\S]*?effort: medium/,
+  );
+});
+
+test("IMPLEMENT prompt는 open-ended agent loop를 억제하는 bounded policy를 포함한다", () => {
+  assert.match(implementHandler, /요구사항 구현에 필요한 범위만 수정하고 광범위한 리팩터링이나 불필요한 저장소 전역 탐색을 하지 마세요/);
+  assert.match(implementHandler, /테스트 실패를 무한 반복하지 마세요/);
+  assert.match(implementHandler, /제한 시간 안에 안전하게 완료하기 어렵다면 작업 범위를 억지로 확장하지 말고 종료하세요/);
 });
 
 test("untrusted job은 Git patch를 만들지 않고 mode 보존 tar snapshot만 남긴다", () => {
