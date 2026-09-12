@@ -56,10 +56,10 @@ test("PLAN identity 또는 scope가 바뀌면 contract digest가 달라진다", 
   assert.notEqual(original.contractDigest, changedContextBudget.contractDigest);
 });
 
-test("contract 위변조는 digest 검증에서 fail-closed 한다", () => {
+test("contract 위변조는 canonical/digest 검증에서 fail-closed 한다", () => {
   const contract = createImplementContract(identity, scope);
   const forged = { ...contract, baseSha: "e".repeat(40) };
-  assert.throws(() => verifyImplementContract(forged), /digest mismatch/);
+  assert.throws(() => verifyImplementContract(forged), /digest|canonical shape/);
 });
 
 test("unsafe path와 resource budget 오류를 거부한다", () => {
