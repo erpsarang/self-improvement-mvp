@@ -186,7 +186,9 @@ export function createFixedCandidateChangeSet(
 ): CandidateChangeSet {
   verifyBoundedFixRequest(request, contract, contextPack, candidate, validation);
   const fixed = createCandidateChangeSet(contract, contextPack, proposal);
-  if (fixed.candidateDigest === candidate.candidateDigest) throw new Error("bounded FIX produced unchanged candidate");
+  if (JSON.stringify(fixed.changes) === JSON.stringify(candidate.changes)) {
+    throw new Error("bounded FIX produced unchanged candidate content");
+  }
   return fixed;
 }
 
