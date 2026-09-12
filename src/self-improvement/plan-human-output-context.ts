@@ -15,11 +15,7 @@ import {
 const HUMAN_OUTPUT_SURFACE_MAX_FILES = 2;
 const HUMAN_OUTPUT_SURFACE_MAX_BYTES = 6_000;
 const decoder = new TextDecoder("utf-8", { fatal: true });
-const OUTPUT_MARKERS = [
-  "github.rest.issues.createcomment",
-  "github.rest.issues.create(",
-  "github.rest.pulls.create(",
-] as const;
+const OUTPUT_CALL = /github\.rest\.(?:issues\.(?:createComment|create)|pulls\.create)\s*\(/i;
 
 function needsHumanOutputSurface(requirement: string): boolean {
   const lower = requirement.toLowerCase();
@@ -111,19 +107,83 @@ function trimUtf8(text: string, maxBytes: number): string {
   return text.slice(0, low);
 }
 
-function surfaceExcerpt(text: string): { content: string; startOffset: number } {
+function maskSourceStringsAndComments(text: string): string {
+  const chars = text.split("");
+  const masked = [...chars];
+  let state: "code" | "single" | "double" | "template" | "line" | "block" = "code";
+  const hide = (index: number) => {
+    if (chars[index] !== "\n" && chars[index] !== "\r") masked[index] = " ";
+  };
+
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index]!;
+    const next = chars[index + 1];
+    if (state === "code") {
+      if (char === "/" && next === "/") {
+        hide(index);
+        hide(index + 1);
+        index += 1;
+        state = "line";
+      } else if (char === "/" && next === "*") {
+        hide(index);
+        hide(index + 1);
+        index += 1;
+        state = "block";
+      } else if (char === "'") {
+        hide(index);
+        state = "single";
+      } else if (char === "\"") {
+        hide(index);
+        state = "double";
+      } else if (char === "`") {
+        hide(index);
+        state = "template";
+      }
+      continue;
+    }
+
+    if (state === "line") {
+      if (char === "\n" || char === "\r") state = "code";
+      else hide(index);
+      continue;
+    }
+
+    if (state === "block") {
+      hide(index);
+      if (char === "*" && next === "/") {
+        hide(index + 1);
+        index += 1;
+        state = "code";
+      }
+      continue;
+    }
+
+    hide(index);
+    if (char === "\\") {
+      if (index + 1 < chars.length) {
+        hide(index + 1);
+        index += 1;
+      }
+      continue;
+    }
+    if ((state === "single" && char === "'") || (state === "double" && char === "\"") || (state === "template" && char === "`")) {
+      state = "code";
+    }
+  }
+
+  return masked.join("");
+}
+
+function directOutputCallIndex(path: string, text: string): number {
+  const searchable = path.toLowerCase().startsWith(".github/workflows/") ? text : maskSourceStringsAndComments(text);
+  return searchable.search(OUTPUT_CALL);
+}
+
+function surfaceExcerpt(text: string, focus: number): { content: string; startOffset: number } {
   if (Buffer.byteLength(text, "utf8") <= HUMAN_OUTPUT_SURFACE_MAX_BYTES) return { content: text, startOffset: 0 };
-  const lower = text.toLowerCase();
-  const markerIndexes = OUTPUT_MARKERS.map((marker) => lower.indexOf(marker)).filter((index) => index >= 0);
-  const focus = markerIndexes.length > 0 ? Math.min(...markerIndexes) : 0;
   const estimatedChars = Math.min(text.length, HUMAN_OUTPUT_SURFACE_MAX_BYTES);
   const startOffset = Math.max(0, focus - Math.floor(estimatedChars / 2));
   return { content: trimUtf8(text.slice(startOffset), HUMAN_OUTPUT_SURFACE_MAX_BYTES), startOffset };
-}
-
-function isDirectOutputSurface(text: string): boolean {
-  const lower = text.toLowerCase();
-  return OUTPUT_MARKERS.some((marker) => lower.includes(marker));
 }
 
 function payload(repository: string, sha: string, files: readonly PlanContextFile[]): PlanContextPackPayload {
@@ -151,8 +211,10 @@ function surfaceCandidates(requirement: string, target: string): PlanContextFile
   return walkRuntimeSurfaceFiles(target)
     .map((path) => {
       const text = decodeText(join(target, path));
-      if (text === null || !isDirectOutputSurface(text)) return null;
-      const excerpt = surfaceExcerpt(text);
+      if (text === null) return null;
+      const callIndex = directOutputCallIndex(path, text);
+      if (callIndex < 0) return null;
+      const excerpt = surfaceExcerpt(text, callIndex);
       const byteLength = Buffer.byteLength(excerpt.content, "utf8");
       if (byteLength < 1 || byteLength > PLAN_CONTEXT_MAX_FILE_BYTES) return null;
       return {
