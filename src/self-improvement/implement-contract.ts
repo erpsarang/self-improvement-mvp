@@ -33,6 +33,7 @@ export interface ImplementScope {
   readonly forbiddenChanges: readonly string[];
   readonly validationCommands: readonly string[];
   readonly maxFilesChanged: number;
+  readonly maxContextBytes: number;
   readonly maxPatchBytes?: number;
 }
 
@@ -50,6 +51,7 @@ export interface ImplementContractPayload {
     readonly forbiddenChanges: readonly string[];
     readonly validationCommands: readonly string[];
     readonly maxFilesChanged: number;
+    readonly maxContextBytes: number;
     readonly maxPatchBytes?: number;
   };
 }
@@ -128,6 +130,7 @@ export function createImplementContract(identity: ApprovedPlanIdentity, scope: I
   const validationCommands = normalizeNonemptyList("validationCommands", scope.validationCommands);
   assertPositiveInteger("maxFilesChanged", scope.maxFilesChanged);
   if (scope.maxFilesChanged > allowedPaths.length) throw new Error("maxFilesChanged cannot exceed allowedPaths length");
+  assertPositiveInteger("maxContextBytes", scope.maxContextBytes);
   if (scope.maxPatchBytes !== undefined) assertPositiveInteger("maxPatchBytes", scope.maxPatchBytes);
 
   const payload: ImplementContractPayload = {
@@ -149,6 +152,7 @@ export function createImplementContract(identity: ApprovedPlanIdentity, scope: I
       forbiddenChanges,
       validationCommands,
       maxFilesChanged: scope.maxFilesChanged,
+      maxContextBytes: scope.maxContextBytes,
       ...(scope.maxPatchBytes === undefined ? {} : { maxPatchBytes: scope.maxPatchBytes }),
     },
   };
@@ -161,8 +165,17 @@ export function verifyImplementContract(contract: ImplementContract): void {
   if (contract.schemaVersion !== 1 || contract.kind !== "trusted-implement-contract" || contract.digestAlgorithm !== "sha256") {
     throw new Error("unsupported IMPLEMENT contract schema");
   }
-  const { digestAlgorithm: _algorithm, contractDigest, ...payload } = contract;
-  assertDigest("contractDigest", contractDigest);
-  const actual = createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
-  if (actual !== contractDigest) throw new Error("IMPLEMENT contract digest mismatch");
+  assertDigest("contractDigest", contract.contractDigest);
+
+  const regenerated = createImplementContract({
+    requirement: contract.requirement,
+    repository: contract.repository,
+    targetSha: contract.baseSha,
+    plan: contract.approvedPlan,
+    approval: contract.approval,
+  }, contract.scope);
+
+  if (JSON.stringify(regenerated) !== JSON.stringify(contract)) {
+    throw new Error("IMPLEMENT contract digest or canonical shape mismatch");
+  }
 }
