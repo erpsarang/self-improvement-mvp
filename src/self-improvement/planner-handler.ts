@@ -11,6 +11,7 @@ import {
   type PlanContextPack,
   type PlanImplementationScope,
 } from "./planner.js";
+import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -31,7 +32,8 @@ if (command === "prepare") {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("Invalid target SHA");
 
   const before = snapshot(target);
-  const context = selectPlanContext(requirement, target, repository, sha);
+  const selectedContext = selectPlanContext(requirement, target, repository, sha);
+  const context = augmentPlanContextWithHumanOutputSurfaces(requirement, target, selectedContext);
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,
