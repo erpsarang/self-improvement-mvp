@@ -165,8 +165,17 @@ export function verifyImplementContract(contract: ImplementContract): void {
   if (contract.schemaVersion !== 1 || contract.kind !== "trusted-implement-contract" || contract.digestAlgorithm !== "sha256") {
     throw new Error("unsupported IMPLEMENT contract schema");
   }
-  const { digestAlgorithm: _algorithm, contractDigest, ...payload } = contract;
-  assertDigest("contractDigest", contractDigest);
-  const actual = createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
-  if (actual !== contractDigest) throw new Error("IMPLEMENT contract digest mismatch");
+  assertDigest("contractDigest", contract.contractDigest);
+
+  const regenerated = createImplementContract({
+    requirement: contract.requirement,
+    repository: contract.repository,
+    targetSha: contract.baseSha,
+    plan: contract.approvedPlan,
+    approval: contract.approval,
+  }, contract.scope);
+
+  if (JSON.stringify(regenerated) !== JSON.stringify(contract)) {
+    throw new Error("IMPLEMENT contract digest or canonical shape mismatch");
+  }
 }
