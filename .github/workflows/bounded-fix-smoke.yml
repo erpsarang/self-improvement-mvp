@@ -1,0 +1,128 @@
+name: Bounded FIX Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Framework checkout for trusted preparation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control-prep
+
+      - name: Initial target checkout at exact SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: target-fail
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install trusted preparation dependencies
+        working-directory: control-prep
+        run: npm ci --ignore-scripts
+
+      - name: Install initial target dependencies
+        working-directory: target-fail
+        run: npm ci --ignore-scripts
+
+      - name: Build Contract, Context Pack, and intentionally broken candidate
+        working-directory: control-prep
+        run: node --import tsx src/self-improvement/bounded-fix-smoke-handler.ts prepare
+        env:
+          SMOKE_REPOSITORY: ${{ github.repository }}
+          SMOKE_SHA: ${{ github.sha }}
+          SMOKE_RUN_ID: ${{ github.run_id }}
+          SMOKE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SMOKE_ACTOR_ID: ${{ github.actor_id }}
+          SMOKE_TARGET_ROOT: ${{ github.workspace }}/target-fail
+          SMOKE_OUTPUT: ${{ runner.temp }}/bounded-fix-smoke
+
+      - name: Deterministic CI must fail and produce bounded FIX request
+        working-directory: control-prep
+        run: node --import tsx src/self-improvement/bounded-fix-smoke-handler.ts fail
+        env:
+          BOUNDED_FIX_SMOKE: "1"
+          SMOKE_SHA: ${{ github.sha }}
+          SMOKE_TARGET_ROOT: ${{ github.workspace }}/target-fail
+          SMOKE_OUTPUT: ${{ runner.temp }}/bounded-fix-smoke
+
+      - name: Remove repository checkouts before AI FIX
+        shell: bash
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/control-prep" "$GITHUB_WORKSPACE/target-fail"
+          mkdir -p "$RUNNER_TEMP/fix-worker-neutral"
+          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
+
+      - name: Untrusted bounded FIX Codex
+        timeout-minutes: 2
+        uses: openai/codex-action@v1
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/fix-worker-neutral
+          codex-home: ${{ runner.temp }}/fix-worker-codex-home
+          prompt-file: ${{ runner.temp }}/bounded-fix-smoke/fix-prompt.md
+          output-schema-file: ${{ runner.temp }}/bounded-fix-smoke/fix-schema.json
+          output-file: ${{ runner.temp }}/bounded-fix-smoke/raw-fix-proposal.json
+          effort: low
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: Framework checkout for trusted FIX validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control-validate
+
+      - name: Fresh target checkout at exact SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: target-retry
+
+      - name: Install trusted validation dependencies
+        working-directory: control-validate
+        run: npm ci --ignore-scripts
+
+      - name: Install fresh target dependencies
+        working-directory: target-retry
+        run: npm ci --ignore-scripts
+
+      - name: Validate FIX candidate and deterministic CI PASS
+        working-directory: control-validate
+        run: node --import tsx src/self-improvement/bounded-fix-smoke-handler.ts validate-fix
+        env:
+          BOUNDED_FIX_SMOKE: "1"
+          SMOKE_SHA: ${{ github.sha }}
+          SMOKE_TARGET_ROOT: ${{ github.workspace }}/target-retry
+          SMOKE_OUTPUT: ${{ runner.temp }}/bounded-fix-smoke
+
+      - name: Store bounded FIX smoke evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-fix-smoke-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/bounded-fix-smoke/broken-candidate.json
+            ${{ runner.temp }}/bounded-fix-smoke/validation-fail.json
+            ${{ runner.temp }}/bounded-fix-smoke/fix-request.json
+            ${{ runner.temp }}/bounded-fix-smoke/fixed-candidate.json
+            ${{ runner.temp }}/bounded-fix-smoke/validation-pass.json
+            ${{ runner.temp }}/bounded-fix-smoke/smoke-metadata.json
+          if-no-files-found: error
