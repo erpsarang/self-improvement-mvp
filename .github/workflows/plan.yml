@@ -19,7 +19,7 @@ jobs:
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
       artifact_url: ${{ steps.upload.outputs.artifact-url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     permissions:
       contents: read
       issues: read
@@ -86,7 +86,7 @@ jobs:
           persist-credentials: false
           path: plan-target
 
-      - name: Prepare PLAN input outside target
+      - name: Prepare bounded PLAN Context Pack
         working-directory: planner-control
         run: node --import tsx src/self-improvement/planner-handler.ts prepare
         env:
@@ -96,7 +96,14 @@ jobs:
           PLAN_REPOSITORY: ${{ github.repository }}
           PLAN_SHA: ${{ steps.input.outputs.sha }}
 
-      - name: Read-only AI Planner
+      - name: Remove repository checkouts before AI
+        run: |
+          rm -rf planner-control plan-target
+          test ! -e planner-control
+          test ! -e plan-target
+
+      - name: Read-only bounded AI Planner
+        timeout-minutes: 3
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.CODEX_API_KEY }}
@@ -107,14 +114,32 @@ jobs:
           prompt-file: ${{ runner.temp }}/ai-plan/prompt.md
           output-schema-file: ${{ runner.temp }}/ai-plan/schema.json
           output-file: ${{ runner.temp }}/ai-plan/raw-plan.json
-          effort: high
+          effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
-      - name: Check unchanged target and create PLAN artifact
-        working-directory: planner-control
+      - name: Fresh Framework checkout for trusted validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: planner-control-validation
+
+      - name: Fresh Target checkout at frozen SHA for validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.input.outputs.sha }}
+          persist-credentials: false
+          path: plan-target-validation
+
+      - name: Install Framework dependencies for validation
+        working-directory: planner-control-validation
+        run: npm ci --ignore-scripts
+
+      - name: Validate bounded PLAN against fresh exact SHA
+        working-directory: planner-control-validation
         run: node --import tsx src/self-improvement/planner-handler.ts artifact
         env:
-          PLAN_TARGET: ${{ github.workspace }}/plan-target
+          PLAN_TARGET: ${{ github.workspace }}/plan-target-validation
           PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
 
       - name: Store PLAN only
@@ -125,6 +150,7 @@ jobs:
           path: |
             ${{ runner.temp }}/ai-plan/PLAN.json
             ${{ runner.temp }}/ai-plan/PLAN.md
+            ${{ runner.temp }}/ai-plan/PLAN-context.json
             ${{ runner.temp }}/ai-plan/identity.json
           if-no-files-found: error
 
@@ -188,6 +214,6 @@ jobs:
               `Workflow run: ${identity.workflow.runId} / attempt: ${identity.workflow.runAttempt}`,
               `PLAN artifact ID: ${process.env.PLAN_ARTIFACT_ID}`,
               `PLAN artifact SHA-256: \`${process.env.PLAN_ARTIFACT_DIGEST}\``,
-              '이 pointer는 확인용입니다. 이후 승인에서는 requirement digest 및 exact artifact identity를 다시 대조해야 합니다.',
+              '이 PLAN은 제한된 Context Pack만 보고 생성되었습니다. pointer는 확인용이며 승인 시 exact provenance를 다시 검증합니다.',
             ].join('\n\n');
             await github.rest.issues.createComment({ ...context.repo, issue_number: identity.requirement.issueNumber, body });
