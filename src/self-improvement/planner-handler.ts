@@ -37,7 +37,11 @@ if (command === "prepare") {
     sha,
     files: before,
     contextDigest: context.contextDigest,
-    contextPaths: context.files.map((entry) => entry.path),
+    contextEvidence: context.files.map((entry) => ({
+      evidenceId: entry.evidenceId,
+      path: entry.path,
+      contentDigest: entry.contentDigest,
+    })),
   }, null, 2));
   writeFileSync(file("PLAN-context.json"), JSON.stringify(context, null, 2));
   writeFileSync(file("prompt.md"), createPlanPrompt(requirement, context));
@@ -49,8 +53,13 @@ if (command === "prepare") {
   if (context.repository !== input.repository || context.sha !== input.sha || context.contextDigest !== input.contextDigest) {
     throw new Error("PLAN context identity mismatch");
   }
-  if (JSON.stringify(context.files.map((entry) => entry.path)) !== JSON.stringify(input.contextPaths)) {
-    throw new Error("PLAN context path identity mismatch");
+  const contextEvidence = context.files.map((entry) => ({
+    evidenceId: entry.evidenceId,
+    path: entry.path,
+    contentDigest: entry.contentDigest,
+  }));
+  if (JSON.stringify(contextEvidence) !== JSON.stringify(input.contextEvidence)) {
+    throw new Error("PLAN context evidence identity mismatch");
   }
   if (JSON.stringify(snapshot(target)) !== JSON.stringify(input.files)) throw new Error("Target repository changed during planning");
 
@@ -63,15 +72,18 @@ if (command === "prepare") {
     context: {
       digestAlgorithm: "sha256",
       digest: context.contextDigest,
-      files: context.files.map((entry) => entry.path),
+      evidence: contextEvidence,
       totalBytes: context.totalBytes,
     },
     plan,
   }, null, 2));
 
   const sections = [["구현 접근", "approach"], ["변경 후보", "changeCandidates"], ["완료조건", "acceptanceCriteria"], ["테스트 전략", "testStrategy"], ["확인할 사항", "questions"]];
-  const contextLines = context.files.map((entry) => `- ${entry.path} (${entry.byteLength} bytes)`).join("\n");
-  writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${(plan.analysis as Array<{path: string; quote: string; finding: string}>).map(e => `- ${e.path}: ${e.finding}\n\n${e.quote.split("\n").map(line => `> ${line}`).join("\n")}`).join("\n\n")}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
+  const contextLines = context.files.map((entry) => `- ${entry.evidenceId} → ${entry.path} (${entry.byteLength} bytes)`).join("\n");
+  const analysisLines = (plan.analysis as Array<{ evidenceId: string; path: string; contentDigest: string; finding: string }>)
+    .map((entry) => `- [${entry.evidenceId}] ${entry.path}: ${entry.finding}`)
+    .join("\n");
+  writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${analysisLines}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
 } else {
   throw new Error("Expected prepare or artifact");
 }
