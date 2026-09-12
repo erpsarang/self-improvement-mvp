@@ -1,0 +1,97 @@
+name: Single-pass Worker Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Framework checkout for input preparation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control-prep
+
+      - name: Target checkout at exact SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install trusted preparation dependencies
+        working-directory: control-prep
+        run: npm ci --ignore-scripts
+
+      - name: Build bounded Contract and Context Pack
+        working-directory: control-prep
+        run: node --import tsx src/self-improvement/single-pass-smoke-handler.ts prepare
+        env:
+          SMOKE_REPOSITORY: ${{ github.repository }}
+          SMOKE_SHA: ${{ github.sha }}
+          SMOKE_RUN_ID: ${{ github.run_id }}
+          SMOKE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SMOKE_ACTOR_ID: ${{ github.actor_id }}
+          SMOKE_TARGET_ROOT: ${{ github.workspace }}/target
+          SMOKE_OUTPUT: ${{ runner.temp }}/single-pass-smoke
+
+      - name: Remove repository checkouts before AI
+        shell: bash
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/control-prep" "$GITHUB_WORKSPACE/target"
+          mkdir -p "$RUNNER_TEMP/worker-neutral"
+          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
+
+      - name: Untrusted single-pass Codex
+        timeout-minutes: 2
+        uses: openai/codex-action@v1
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/worker-neutral
+          codex-home: ${{ runner.temp }}/worker-codex-home
+          prompt-file: ${{ runner.temp }}/single-pass-smoke/prompt.md
+          output-schema-file: ${{ runner.temp }}/single-pass-smoke/schema.json
+          output-file: ${{ runner.temp }}/single-pass-smoke/raw-proposal.json
+          effort: low
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: Framework checkout for trusted validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control-validate
+
+      - name: Install trusted validation dependencies
+        working-directory: control-validate
+        run: npm ci --ignore-scripts
+
+      - name: Trusted candidate validation
+        working-directory: control-validate
+        run: node --import tsx src/self-improvement/single-pass-smoke-handler.ts validate
+        env:
+          SMOKE_OUTPUT: ${{ runner.temp }}/single-pass-smoke
+
+      - name: Store validated smoke candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-pass-smoke-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/single-pass-smoke/candidate.json
+            ${{ runner.temp }}/single-pass-smoke/smoke-metadata.json
+          if-no-files-found: error
