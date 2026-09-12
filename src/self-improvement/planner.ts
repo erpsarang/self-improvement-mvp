@@ -193,6 +193,16 @@ export function verifyPlanContextPack(pack: PlanContextPack): void {
   if (expected !== pack.contextDigest) throw new Error("PLAN context digest mismatch");
 }
 
+function fileRolePriority(path: string): number {
+  const lower = path.toLowerCase();
+  const testLike = lower.startsWith("test/") || /\.(test|spec)\.[^/]+$/.test(lower);
+  if (lower.startsWith("src/") && !testLike) return 0;
+  if (lower.startsWith(".github/workflows/")) return 1;
+  if (testLike) return 2;
+  if (lower.startsWith("docs/") || lower.endsWith(".md")) return 3;
+  return 4;
+}
+
 function diverseRankedCandidates<T extends { path: string; text: string; score: number }>(
   candidates: readonly T[],
   maxFiles: number,
@@ -206,25 +216,26 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
   };
 
   const uncovered = new Set(anchors);
-  const maxAnchorFiles = Math.min(4, maxFiles);
+  const maxAnchorFiles = Math.min(5, maxFiles);
   while (uncovered.size > 0 && selected.length < maxAnchorFiles) {
     const rankedByCoverage = fallback
       .filter((candidate) => !selected.some((entry) => entry.path === candidate.path))
       .map((candidate) => {
         const haystack = `${candidate.path}\n${candidate.text}`.toLowerCase();
         const covered = [...uncovered].filter((anchor) => haystack.includes(anchor));
-        return { candidate, covered };
+        return { candidate, covered, role: fileRolePriority(candidate.path) };
       })
       .filter((entry) => entry.covered.length > 0)
-      .sort((a, b) => b.covered.length - a.covered.length || b.candidate.score - a.candidate.score || a.candidate.path.localeCompare(b.candidate.path));
+      .sort((a, b) => a.role - b.role || b.covered.length - a.covered.length || b.candidate.score - a.candidate.score || a.candidate.path.localeCompare(b.candidate.path));
     const best = rankedByCoverage[0];
     if (!best) break;
     add(best.candidate);
     for (const anchor of best.covered) uncovered.delete(anchor);
   }
 
-  add(fallback.find((entry) => entry.path.startsWith("src/")));
-  add(fallback.find((entry) => entry.path.startsWith("test/")));
+  add(fallback.find((entry) => fileRolePriority(entry.path) === 0));
+  add(fallback.find((entry) => fileRolePriority(entry.path) === 1));
+  add(fallback.find((entry) => fileRolePriority(entry.path) === 2));
   add(fallback.find((entry) => entry.path === "package.json"));
   for (const candidate of fallback) add(candidate);
   return selected;

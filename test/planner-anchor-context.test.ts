@@ -61,3 +61,63 @@ test("uppercase technical anchors are recognized even without backticks", () => 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("definition-bearing runtime sources outrank test and docs mentions of the same anchors", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-anchor-role-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "test"));
+    mkdirSync(join(root, "docs"));
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+
+    writeFileSync(join(root, "src", "orchestrator.ts"), "export type State = 'MERGE_READY' | 'STOPPED';\n");
+    writeFileSync(join(root, "src", "plan-authorization.ts"), "export const state = 'PLAN_AUTHORIZE';\n");
+    writeFileSync(join(root, "test", "state.test.ts"), "MERGE_READY STOPPED PLAN_AUTHORIZE\n".repeat(50));
+    writeFileSync(join(root, "docs", "state.md"), "MERGE_READY STOPPED PLAN_AUTHORIZE\n".repeat(50));
+    writeFileSync(join(root, ".github", "workflows", "status.yml"), "name: WORKFLOW_ONLY\n");
+    writeFileSync(join(root, "test", "workflow.test.ts"), "WORKFLOW_ONLY\n".repeat(50));
+    writeFileSync(join(root, "docs", "workflow.md"), "WORKFLOW_ONLY\n".repeat(50));
+
+    const pack = selectPlanContext(
+      "`MERGE_READY`, `STOPPED`, `PLAN_AUTHORIZE`, `WORKFLOW_ONLY` 상태를 표시한다.",
+      root,
+      "example/framework",
+      "c".repeat(40),
+      { maxFiles: 3, maxBytes: 12_000, maxFileBytes: 4_000 },
+    );
+
+    const paths = pack.files.map((file) => file.path);
+    assert.deepEqual(paths, [
+      "src/orchestrator.ts",
+      "src/plan-authorization.ts",
+      ".github/workflows/status.yml",
+    ]);
+    assert.ok(!paths.some((path) => path.startsWith("test/")));
+    assert.ok(!paths.some((path) => path.startsWith("docs/")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workflow-only anchor outranks test and docs when no runtime source defines it", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-anchor-workflow-"));
+  try {
+    mkdirSync(join(root, "test"));
+    mkdirSync(join(root, "docs"));
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflows", "authorize.yml"), "name: PLAN_AUTHORIZE_WORKFLOW\n");
+    writeFileSync(join(root, "test", "authorize.test.ts"), "PLAN_AUTHORIZE_WORKFLOW\n".repeat(30));
+    writeFileSync(join(root, "docs", "authorize.md"), "PLAN_AUTHORIZE_WORKFLOW\n".repeat(30));
+
+    const pack = selectPlanContext(
+      "`PLAN_AUTHORIZE_WORKFLOW` 동작을 설명한다.",
+      root,
+      "example/framework",
+      "d".repeat(40),
+      { maxFiles: 1, maxBytes: 4_000, maxFileBytes: 4_000 },
+    );
+    assert.equal(pack.files[0]?.path, ".github/workflows/authorize.yml");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
