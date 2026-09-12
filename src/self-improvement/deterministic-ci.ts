@@ -155,19 +155,19 @@ export function applyCandidateToExactBase(
 
   const root = assertTargetRoot(targetRoot);
   const contextByPath = new Map(contextPack.files.map((file) => [file.path, file] as const));
-  const appliedPaths: string[] = [];
 
-  for (const change of candidate.changes) {
+  const prepared = candidate.changes.map((change) => {
     const context = contextByPath.get(change.path);
     if (!context) throw new Error(`candidate path missing from Context Pack: ${change.path}`);
-    const absolute = verifyLiveFile(root, context);
+    return { change, absolute: verifyLiveFile(root, context) };
+  });
 
+  for (const { change, absolute } of prepared) {
     if (change.operation === "create") mkdirSync(dirname(absolute), { recursive: true });
     writeFileSync(absolute, change.content, "utf8");
-    appliedPaths.push(change.path);
   }
 
-  return [...appliedPaths].sort((a, b) => a.localeCompare(b));
+  return prepared.map(({ change }) => change.path).sort((a, b) => a.localeCompare(b));
 }
 
 function truncateLog(value: string): string {
