@@ -63,7 +63,7 @@ test("business requirement produces bounded PLAN artifacts with trusted evidence
     assert.doesNotThrow(() => verifyPlanContextPack(context));
     assert.ok(context.files.length <= PLAN_CONTEXT_MAX_FILES);
     assert.ok(context.totalBytes <= PLAN_CONTEXT_MAX_BYTES);
-    assert.deepEqual(context.files.map((file, index) => file.evidenceId), context.files.map((_, index) => `E${index + 1}`));
+    assert.deepEqual(context.files.map((file) => file.evidenceId), context.files.map((_, index) => `E${index + 1}`));
 
     // Stub only the external AI response; trusted finalize resolves IDs to exact path/digest.
     writeFileSync(join(f.output, "raw-plan.json"), JSON.stringify(planFor(context)));
@@ -106,8 +106,8 @@ test("deterministic Context Pack binds PLAN analysis to evidence IDs only", () =
     assert.throws(() => validatePlan({ ...minimal, analysis: [{ evidenceId: "E999", finding: "근거" }] }, f.target, first), /outside bounded PLAN context/);
     assert.throws(() => validatePlan({ ...minimal, analysis: [minimal.analysis[0], minimal.analysis[0]] }, f.target, first), /Duplicate PLAN evidence ID/);
 
-    const tampered = structuredClone(first);
-    tampered.files[0]!.evidenceId = "E2";
+    const tampered = JSON.parse(JSON.stringify(first)) as any;
+    tampered.files[0].evidenceId = "E2";
     assert.throws(() => verifyPlanContextPack(tampered), /evidence identity/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
