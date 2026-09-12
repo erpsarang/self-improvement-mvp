@@ -9,6 +9,7 @@ import {
   validatePlan,
   verifyPlanContextPack,
   type PlanContextPack,
+  type PlanImplementationScope,
 } from "./planner.js";
 
 function env(name: string): string {
@@ -83,7 +84,17 @@ if (command === "prepare") {
   const analysisLines = (plan.analysis as Array<{ evidenceId: string; path: string; contentDigest: string; finding: string }>)
     .map((entry) => `- [${entry.evidenceId}] ${entry.path}: ${entry.finding}`)
     .join("\n");
-  writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${analysisLines}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
+  const scope = plan.implementationScope as PlanImplementationScope;
+  const scopeLines = scope.ready
+    ? [
+        "- 준비 상태: **IMPLEMENT 가능**",
+        `- 허용 경로: ${scope.allowedPaths.map((path) => `\`${path}\``).join(", ")}`,
+        `- 필수 변경: ${scope.requiredChanges.join(" / ")}`,
+        `- 금지 변경: ${scope.forbiddenChanges.length > 0 ? scope.forbiddenChanges.join(" / ") : "없음"}`,
+        `- 검증 명령: ${scope.validationCommands.map((command) => `\`${command}\``).join(", ")}`,
+      ].join("\n")
+    : "- 준비 상태: **IMPLEMENT 보류**\n- 이유: PLAN의 blocking question 또는 exact scope 미확정. 이 PLAN은 자동 IMPLEMENT authority로 승격할 수 없습니다.";
+  writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${analysisLines}\n\n## IMPLEMENT 실행 범위\n\n${scopeLines}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
 } else {
   throw new Error("Expected prepare or artifact");
 }
