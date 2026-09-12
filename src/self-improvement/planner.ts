@@ -98,6 +98,13 @@ function requirementTerms(requirement: string): string[] {
   return [...new Set(terms)].sort((a, b) => a.localeCompare(b));
 }
 
+function requirementAnchors(requirement: string): string[] {
+  const anchors: string[] = [];
+  for (const match of requirement.matchAll(/`([A-Za-z][A-Za-z0-9_.-]{1,79})`/g)) anchors.push(match[1]!.toLowerCase());
+  for (const match of requirement.matchAll(/\b([A-Z][A-Z0-9_]{2,79})\b/g)) anchors.push(match[1]!.toLowerCase());
+  return [...new Set(anchors)].sort((a, b) => a.localeCompare(b));
+}
+
 function occurrences(text: string, term: string): number {
   let count = 0;
   let from = 0;
@@ -186,7 +193,11 @@ export function verifyPlanContextPack(pack: PlanContextPack): void {
   if (expected !== pack.contextDigest) throw new Error("PLAN context digest mismatch");
 }
 
-function diverseRankedCandidates<T extends { path: string; score: number }>(candidates: readonly T[], maxFiles: number): T[] {
+function diverseRankedCandidates<T extends { path: string; text: string; score: number }>(
+  candidates: readonly T[],
+  maxFiles: number,
+  anchors: readonly string[],
+): T[] {
   const positive = candidates.filter((candidate) => candidate.score > 0);
   const fallback = positive.length > 0 ? positive : [...candidates];
   const selected: T[] = [];
@@ -194,7 +205,26 @@ function diverseRankedCandidates<T extends { path: string; score: number }>(cand
     if (candidate && !selected.some((entry) => entry.path === candidate.path) && selected.length < maxFiles) selected.push(candidate);
   };
 
-  for (const candidate of fallback.filter((entry) => entry.path.startsWith("src/") || entry.path.startsWith("test/")).slice(0, 3)) add(candidate);
+  const uncovered = new Set(anchors);
+  const maxAnchorFiles = Math.min(4, maxFiles);
+  while (uncovered.size > 0 && selected.length < maxAnchorFiles) {
+    const rankedByCoverage = fallback
+      .filter((candidate) => !selected.some((entry) => entry.path === candidate.path))
+      .map((candidate) => {
+        const haystack = `${candidate.path}\n${candidate.text}`.toLowerCase();
+        const covered = [...uncovered].filter((anchor) => haystack.includes(anchor));
+        return { candidate, covered };
+      })
+      .filter((entry) => entry.covered.length > 0)
+      .sort((a, b) => b.covered.length - a.covered.length || b.candidate.score - a.candidate.score || a.candidate.path.localeCompare(b.candidate.path));
+    const best = rankedByCoverage[0];
+    if (!best) break;
+    add(best.candidate);
+    for (const anchor of best.covered) uncovered.delete(anchor);
+  }
+
+  add(fallback.find((entry) => entry.path.startsWith("src/")));
+  add(fallback.find((entry) => entry.path.startsWith("test/")));
   add(fallback.find((entry) => entry.path === "package.json"));
   for (const candidate of fallback) add(candidate);
   return selected;
@@ -217,13 +247,14 @@ export function selectPlanContext(
   }
 
   const terms = requirementTerms(requirement);
+  const anchors = requirementAnchors(requirement);
   const candidates = repositoryPaths(target).map((path) => {
     const text = decodeText(join(target, path));
     return text === null ? null : { path, text, score: scoreContext(path, text, terms) };
   }).filter((value): value is { path: string; text: string; score: number } => value !== null);
 
   candidates.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  const ranked = diverseRankedCandidates(candidates, maxFiles);
+  const ranked = diverseRankedCandidates(candidates, maxFiles, anchors);
 
   const files: PlanContextFile[] = [];
   let totalBytes = 0;
@@ -367,7 +398,8 @@ ready=false이면 allowedPaths/requiredChanges/forbiddenChanges/validationComman
 사용자 요구(JSON 문자열): ${JSON.stringify(requirement)}
 
 Trusted Context Pack(JSON):
-${JSON.stringify(context)}\n`;
+${JSON.stringify(context)}\
+`;
 }
 
 export function validatePlan(value: unknown, target: string, context: PlanContextPack): Record<string, unknown> {
