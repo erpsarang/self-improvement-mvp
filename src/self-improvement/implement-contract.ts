@@ -33,6 +33,7 @@ export interface ImplementScope {
   readonly forbiddenChanges: readonly string[];
   readonly validationCommands: readonly string[];
   readonly maxFilesChanged: number;
+  readonly maxContextBytes: number;
   readonly maxPatchBytes?: number;
 }
 
@@ -50,6 +51,7 @@ export interface ImplementContractPayload {
     readonly forbiddenChanges: readonly string[];
     readonly validationCommands: readonly string[];
     readonly maxFilesChanged: number;
+    readonly maxContextBytes: number;
     readonly maxPatchBytes?: number;
   };
 }
@@ -128,6 +130,7 @@ export function createImplementContract(identity: ApprovedPlanIdentity, scope: I
   const validationCommands = normalizeNonemptyList("validationCommands", scope.validationCommands);
   assertPositiveInteger("maxFilesChanged", scope.maxFilesChanged);
   if (scope.maxFilesChanged > allowedPaths.length) throw new Error("maxFilesChanged cannot exceed allowedPaths length");
+  assertPositiveInteger("maxContextBytes", scope.maxContextBytes);
   if (scope.maxPatchBytes !== undefined) assertPositiveInteger("maxPatchBytes", scope.maxPatchBytes);
 
   const payload: ImplementContractPayload = {
@@ -149,6 +152,7 @@ export function createImplementContract(identity: ApprovedPlanIdentity, scope: I
       forbiddenChanges,
       validationCommands,
       maxFilesChanged: scope.maxFilesChanged,
+      maxContextBytes: scope.maxContextBytes,
       ...(scope.maxPatchBytes === undefined ? {} : { maxPatchBytes: scope.maxPatchBytes }),
     },
   };
