@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { TextDecoder } from "node:util";
 
-export const PLAN_CONTEXT_MAX_FILES = 6;
-export const PLAN_CONTEXT_MAX_BYTES = 60_000;
+export const PLAN_CONTEXT_MAX_FILES = 8;
+export const PLAN_CONTEXT_MAX_BYTES = 80_000;
 export const PLAN_CONTEXT_MAX_FILE_BYTES = 20_000;
 
 export interface PlanContextFile {
@@ -31,6 +31,14 @@ export interface PlanContextPack extends PlanContextPackPayload {
   readonly contextDigest: string;
 }
 
+export interface PlanImplementationScope {
+  readonly ready: boolean;
+  readonly allowedPaths: readonly string[];
+  readonly requiredChanges: readonly string[];
+  readonly forbiddenChanges: readonly string[];
+  readonly validationCommands: readonly string[];
+}
+
 interface ContextBudget {
   readonly maxFiles?: number;
   readonly maxBytes?: number;
@@ -40,6 +48,8 @@ interface ContextBudget {
 const SHA256 = /^[0-9a-f]{64}$/;
 const GIT_SHA = /^[0-9a-f]{40,64}$/;
 const EVIDENCE_ID = /^E[1-9][0-9]*$/;
+const SAFE_PLAN_PATH = /^[A-Za-z0-9._/-]+$/;
+const TRUSTED_VALIDATION_COMMANDS = new Set(["npm test", "npm run build"]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 function repositoryPaths(target: string): string[] {
@@ -176,6 +186,20 @@ export function verifyPlanContextPack(pack: PlanContextPack): void {
   if (expected !== pack.contextDigest) throw new Error("PLAN context digest mismatch");
 }
 
+function diverseRankedCandidates<T extends { path: string; score: number }>(candidates: readonly T[], maxFiles: number): T[] {
+  const positive = candidates.filter((candidate) => candidate.score > 0);
+  const fallback = positive.length > 0 ? positive : [...candidates];
+  const selected: T[] = [];
+  const add = (candidate: T | undefined) => {
+    if (candidate && !selected.some((entry) => entry.path === candidate.path) && selected.length < maxFiles) selected.push(candidate);
+  };
+
+  for (const candidate of fallback.filter((entry) => entry.path.startsWith("src/") || entry.path.startsWith("test/")).slice(0, 3)) add(candidate);
+  add(fallback.find((entry) => entry.path === "package.json"));
+  for (const candidate of fallback) add(candidate);
+  return selected;
+}
+
 export function selectPlanContext(
   requirement: string,
   target: string,
@@ -199,13 +223,7 @@ export function selectPlanContext(
   }).filter((value): value is { path: string; text: string; score: number } => value !== null);
 
   candidates.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  let ranked = candidates.filter((candidate) => candidate.score > 0);
-  if (ranked.length === 0) {
-    ranked = [...candidates].sort((a, b) => {
-      const priority = (path: string) => path.startsWith("src/") ? 0 : path.startsWith("test/") ? 1 : path === "README.md" ? 2 : path === "package.json" ? 3 : 4;
-      return priority(a.path) - priority(b.path) || a.path.localeCompare(b.path);
-    });
-  }
+  const ranked = diverseRankedCandidates(candidates, maxFiles);
 
   const files: PlanContextFile[] = [];
   let totalBytes = 0;
@@ -246,9 +264,11 @@ export function selectPlanContext(
 
 const boundedString = { type: "string", minLength: 1, maxLength: 1600 };
 const strings = { type: "array", minItems: 1, maxItems: 8, items: boundedString };
+const optionalStrings = { type: "array", maxItems: 8, items: boundedString };
+const pathStrings = { type: "array", maxItems: 8, items: { type: "string", minLength: 1, maxLength: 500 } };
 export const PLAN_SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["summary", "analysis", "approach", "changeCandidates", "acceptanceCriteria", "testStrategy", "questions"],
+  required: ["summary", "analysis", "approach", "changeCandidates", "acceptanceCriteria", "testStrategy", "questions", "implementationScope"],
   properties: {
     summary: { type: "string", minLength: 1, maxLength: 1600 },
     analysis: { type: "array", minItems: 1, maxItems: PLAN_CONTEXT_MAX_FILES, items: {
@@ -261,8 +281,70 @@ export const PLAN_SCHEMA = {
     } },
     approach: strings, changeCandidates: strings, acceptanceCriteria: strings, testStrategy: strings,
     questions: { type: "array", maxItems: 6, items: { type: "string", maxLength: 1200 } },
+    implementationScope: {
+      type: "object", additionalProperties: false,
+      required: ["ready", "allowedPaths", "requiredChanges", "forbiddenChanges", "validationCommands"],
+      properties: {
+        ready: { type: "boolean" },
+        allowedPaths: pathStrings,
+        requiredChanges: optionalStrings,
+        forbiddenChanges: optionalStrings,
+        validationCommands: { type: "array", maxItems: 2, items: { type: "string", enum: ["npm test", "npm run build"] } },
+      },
+    },
   },
 };
+
+function assertSafePlanPath(path: string): void {
+  if (!path.trim() || !SAFE_PLAN_PATH.test(path) || isAbsolute(path) || path.includes("\\") || path.includes("*") || path.includes("?") || path.includes("[") || path.endsWith("/") || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(`Unsafe implementation scope path: ${path}`);
+  }
+}
+
+function validateImplementationScope(value: unknown, target: string, context: PlanContextPack, questions: readonly string[]): PlanImplementationScope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Missing implementationScope");
+  const scope = value as Record<string, unknown>;
+  const expectedKeys = ["allowedPaths", "forbiddenChanges", "ready", "requiredChanges", "validationCommands"];
+  if (JSON.stringify(Object.keys(scope).sort()) !== JSON.stringify(expectedKeys)) throw new Error("Invalid implementationScope fields");
+  if (typeof scope.ready !== "boolean") throw new Error("Invalid implementationScope.ready");
+  const arrays = ["allowedPaths", "requiredChanges", "forbiddenChanges", "validationCommands"] as const;
+  for (const key of arrays) {
+    if (!Array.isArray(scope[key]) || !scope[key].every((item) => typeof item === "string" && item.trim().length > 0)) {
+      throw new Error(`Invalid implementationScope.${key}`);
+    }
+  }
+  const allowedPaths = scope.allowedPaths as string[];
+  const requiredChanges = scope.requiredChanges as string[];
+  const forbiddenChanges = scope.forbiddenChanges as string[];
+  const validationCommands = scope.validationCommands as string[];
+  if (allowedPaths.length > 8 || requiredChanges.length > 8 || forbiddenChanges.length > 8 || validationCommands.length > 2) throw new Error("implementationScope exceeds budget");
+  if (new Set(allowedPaths).size !== allowedPaths.length) throw new Error("Duplicate implementation scope path");
+  const contextPaths = new Set(context.files.map((file) => file.path));
+  for (const path of allowedPaths) {
+    assertSafePlanPath(path);
+    if (existsSync(join(target, path)) && !contextPaths.has(path)) {
+      throw new Error(`Existing implementation scope path is outside bounded PLAN context: ${path}`);
+    }
+  }
+  for (const command of validationCommands) {
+    if (!TRUSTED_VALIDATION_COMMANDS.has(command)) throw new Error(`Untrusted validation command: ${command}`);
+  }
+  if (scope.ready) {
+    if (questions.length > 0) throw new Error("implementationScope.ready requires no blocking questions");
+    if (allowedPaths.length === 0 || requiredChanges.length === 0 || validationCommands.length === 0) {
+      throw new Error("implementationScope.ready requires exact paths, required changes and validation commands");
+    }
+  } else if (allowedPaths.length > 0 || requiredChanges.length > 0 || forbiddenChanges.length > 0 || validationCommands.length > 0) {
+    throw new Error("implementationScope must be empty when ready=false");
+  }
+  return {
+    ready: scope.ready,
+    allowedPaths: [...allowedPaths],
+    requiredChanges: [...requiredChanges],
+    forbiddenChanges: [...forbiddenChanges],
+    validationCommands: [...validationCommands],
+  };
+}
 
 export function createPlanPrompt(requirement: string, context: PlanContextPack): string {
   if (!requirement.trim()) throw new Error("User requirement is empty");
@@ -274,6 +356,11 @@ analysis에는 Context Pack이 발급한 evidenceId만 사용하세요. path나 
 각 finding은 선택한 evidenceId의 content로 직접 뒷받침되는 내용만 작성하세요. 문맥에 없는 사실은 questions에 남기세요.
 approach: 구현 접근, changeCandidates: 변경 후보 경로와 이유, acceptanceCriteria: 관찰 가능한 완료조건,
 testStrategy: 기존 문맥에서 확인 가능한 테스트와 추가할 테스트 및 실행 방법, questions: Context Pack만으로 확정할 수 없는 사항을 작성하세요.
+implementationScope는 IMPLEMENT에 넘길 machine-actionable 제안입니다. exact path만 사용하고 wildcard/placeholder를 쓰지 마세요.
+기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 path여야 합니다. 필요한 신규 파일은 exact safe path로 제안할 수 있습니다.
+validationCommands는 'npm test', 'npm run build' 중 필요한 것만 사용하세요. budget 값은 AI가 정하지 않습니다.
+구현 범위와 검증 방법을 확정할 수 있고 blocking questions가 하나도 없을 때만 implementationScope.ready=true로 하세요.
+ready=false이면 allowedPaths/requiredChanges/forbiddenChanges/validationCommands를 모두 빈 배열로 반환하세요.
 이미 구현 또는 테스트했다고 주장하지 마세요. 파일 수정, 테스트/빌드/설치 실행, commit, push, branch/PR 생성, 후속 단계 실행은 금지합니다.
 최종 응답만 주어진 JSON schema로 반환하세요. PLAN은 제안이며 구현 승인이 아닙니다.
 
@@ -321,5 +408,6 @@ export function validatePlan(value: unknown, target: string, context: PlanContex
     });
   }
 
-  return { ...plan, analysis: normalizedAnalysis };
+  const implementationScope = validateImplementationScope(plan.implementationScope, target, context, plan.questions as string[]);
+  return { ...plan, analysis: normalizedAnalysis, implementationScope };
 }
