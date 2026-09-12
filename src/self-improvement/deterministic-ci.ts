@@ -232,7 +232,7 @@ export function runDeterministicValidation(
     if (!passed) break;
   }
 
-  const status = commands.length === plan.length && commands.every(({ status: commandStatus }) => commandStatus === "PASS") ? "PASS" : "FAIL";
+  const status: "PASS" | "FAIL" = commands.length === plan.length && commands.every(({ status: commandStatus }) => commandStatus === "PASS") ? "PASS" : "FAIL";
   const payload = {
     schemaVersion: 1 as const,
     kind: "deterministic-validation-result" as const,
