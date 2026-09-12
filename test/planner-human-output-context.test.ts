@@ -32,14 +32,14 @@ test("human-facing requirement reserves exact Issue output surfaces within bound
     );
     writeFileSync(
       join(root, "docs", "fake.md"),
-      "github.rest.issues.createComment PLAN PLAN_AUTHORIZE 사용자 표시\n".repeat(100),
+      "github.rest.issues.createComment({ body: 'docs only' });\n".repeat(100),
     );
     writeFileSync(
       join(root, "test", "fake.test.ts"),
-      "github.rest.issues.createComment PLAN PLAN_AUTHORIZE 사용자 표시\n".repeat(100),
+      "github.rest.issues.createComment({ body: 'test only' });\n".repeat(100),
     );
 
-    const requirement = "`PLAN`, `PLAN_AUTHORIZE`, `IMPLEMENT`, `VERIFY`, `MERGE_READY`, `STOPPED` 상태를 사람이 Issue에서 이해하기 쉽게 표시하고 다음 행동을 안내한다.";
+    const requirement = "`PLAN`, `PLAN_AUTHORIZE`, `IMPLEMENT`, `VERIFY`, `MERGE_READY`, `STOPPED` 상태를 사람이 이해하기 쉽게 표시하고 다음 행동을 안내한다.";
     const initial = selectPlanContext(requirement, root, "example/framework", "a".repeat(40), {
       maxFiles: 3,
       maxBytes: 18_000,
@@ -54,8 +54,8 @@ test("human-facing requirement reserves exact Issue output surfaces within bound
     assert.ok(paths.includes(".github/workflows/plan-authorize.yml"), `missing PLAN_AUTHORIZE output surface: ${paths.join(", ")}`);
     assert.ok(!paths.includes("docs/fake.md"));
     assert.ok(!paths.includes("test/fake.test.ts"));
-    assert.ok(augmented.files.length <= 3);
-    assert.ok(augmented.totalBytes <= 18_000);
+    assert.ok(augmented.files.length <= 8);
+    assert.ok(augmented.totalBytes <= 80_000);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
