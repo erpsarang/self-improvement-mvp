@@ -29,6 +29,7 @@ function fixture() {
 }
 
 function planFor(context: PlanContextPack) {
+  const allowedPath = context.files[0]!.path;
   return {
     summary: "고객 이름으로 주문 검색",
     analysis: context.files.slice(0, Math.min(2, context.files.length)).map((file, index) => ({
@@ -36,14 +37,21 @@ function planFor(context: PlanContextPack) {
       finding: index === 0 ? "주문 검색 동작을 변경할 후보입니다." : "관련 테스트 또는 문서를 함께 확인해야 합니다.",
     })),
     approach: ["고객 이름 필터 추가"],
-    changeCandidates: ["주문 조회 로직과 관련 테스트를 제한된 문맥 안에서 수정"],
+    changeCandidates: [`${allowedPath} 변경`],
     acceptanceCriteria: ["김민수 검색 시 해당 고객 주문만 표시"],
     testStrategy: ["빈 검색과 고객 일치 테스트 추가"],
     questions: [],
+    implementationScope: {
+      ready: true,
+      allowedPaths: [allowedPath],
+      requiredChanges: ["고객 이름 필터를 추가한다"],
+      forbiddenChanges: ["승인 또는 병합 경계를 변경하지 않는다"],
+      validationCommands: ["npm test"],
+    },
   };
 }
 
-test("business requirement produces bounded PLAN artifacts with trusted evidence IDs", () => {
+test("business requirement produces bounded PLAN artifacts with trusted evidence IDs and exact implementation scope", () => {
   const f = fixture();
   try {
     const before = snapshot(f.target);
@@ -58,6 +66,7 @@ test("business requirement produces bounded PLAN artifacts with trusted evidence
     assert.match(prompt, /고객 이름/);
     assert.match(prompt, /bounded PLAN/);
     assert.match(prompt, /evidenceId/);
+    assert.match(prompt, /implementationScope/);
     assert.match(prompt, /path나 원문 quote를 직접 작성하지 마세요/);
     const context = JSON.parse(readFileSync(join(f.output, "PLAN-context.json"), "utf8")) as PlanContextPack;
     assert.doesNotThrow(() => verifyPlanContextPack(context));
@@ -65,7 +74,6 @@ test("business requirement produces bounded PLAN artifacts with trusted evidence
     assert.ok(context.totalBytes <= PLAN_CONTEXT_MAX_BYTES);
     assert.deepEqual(context.files.map((file) => file.evidenceId), context.files.map((_, index) => `E${index + 1}`));
 
-    // Stub only the external AI response; trusted finalize resolves IDs to exact path/digest.
     writeFileSync(join(f.output, "raw-plan.json"), JSON.stringify(planFor(context)));
     const result = run("artifact");
     assert.equal(result.status, 0, result.stderr);
@@ -73,7 +81,11 @@ test("business requirement produces bounded PLAN artifacts with trusted evidence
     assert.equal(planArtifact.plan.analysis[0].evidenceId, context.files[0]!.evidenceId);
     assert.equal(planArtifact.plan.analysis[0].path, context.files[0]!.path);
     assert.equal(planArtifact.plan.analysis[0].contentDigest, context.files[0]!.contentDigest);
-    assert.match(readFileSync(join(f.output, "PLAN.md"), "utf8"), /\[E1\]/);
+    assert.equal(planArtifact.plan.implementationScope.ready, true);
+    assert.deepEqual(planArtifact.plan.implementationScope.allowedPaths, [context.files[0]!.path]);
+    const markdown = readFileSync(join(f.output, "PLAN.md"), "utf8");
+    assert.match(markdown, /\[E1\]/);
+    assert.match(markdown, /IMPLEMENT 가능/);
     assert.deepEqual(snapshot(f.target), before);
     writeFileSync(join(f.target, "orders.ts"), "modified");
     assert.notEqual(run("artifact").status, 0);
@@ -94,11 +106,7 @@ test("deterministic Context Pack binds PLAN analysis to evidence IDs only", () =
     assert.doesNotThrow(() => verifyPlanContextPack(first));
     assert.match(createPlanPrompt(requirement, first), /Trusted Context Pack/);
 
-    const minimal = {
-      summary: "설계",
-      analysis: [{ evidenceId: first.files[0]!.evidenceId, finding: "근거" }],
-      approach: ["접근"], changeCandidates: ["후보"], acceptanceCriteria: ["완료"], testStrategy: ["테스트"], questions: [],
-    };
+    const minimal = planFor(first);
     const normalized = validatePlan(minimal, f.target, first);
     const analysis = normalized.analysis as Array<{ evidenceId: string; path: string; contentDigest: string; finding: string }>;
     assert.equal(analysis[0]!.path, first.files[0]!.path);
@@ -112,16 +120,68 @@ test("deterministic Context Pack binds PLAN analysis to evidence IDs only", () =
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("implementation scope is fail-closed and cannot authorize unseen existing paths", () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.target, "hidden.ts"), "export const hidden = true;\n");
+    const context = selectPlanContext("orders 주문", f.target, "example/orders", "c".repeat(40), { maxFiles: 1 });
+    const valid = planFor(context);
+
+    assert.throws(() => validatePlan({
+      ...valid,
+      implementationScope: { ...valid.implementationScope, allowedPaths: ["hidden.ts"] },
+    }, f.target, context), /outside bounded PLAN context/);
+    assert.throws(() => validatePlan({
+      ...valid,
+      implementationScope: { ...valid.implementationScope, allowedPaths: ["../escape.ts"] },
+    }, f.target, context), /Unsafe implementation scope path/);
+    assert.throws(() => validatePlan({
+      ...valid,
+      implementationScope: { ...valid.implementationScope, validationCommands: ["npm exec dangerous"] },
+    }, f.target, context), /Untrusted validation command/);
+    assert.throws(() => validatePlan({ ...valid, questions: ["확인 필요"] }, f.target, context), /requires no blocking questions/);
+
+    const paused = {
+      ...valid,
+      questions: ["정확한 출력 지점을 확인해야 합니다."],
+      implementationScope: { ready: false, allowedPaths: [], requiredChanges: [], forbiddenChanges: [], validationCommands: [] },
+    };
+    const normalizedPaused = validatePlan(paused, f.target, context);
+    assert.equal((normalizedPaused.implementationScope as { ready: boolean }).ready, false);
+    assert.throws(() => validatePlan({
+      ...paused,
+      implementationScope: { ...paused.implementationScope, allowedPaths: ["new.ts"] },
+    }, f.target, context), /must be empty when ready=false/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Context Pack deterministically reserves relevant source/test context before documentation", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.target, "src"));
+    mkdirSync(join(f.target, "test"));
+    mkdirSync(join(f.target, "docs"));
+    writeFileSync(join(f.target, "src", "state.ts"), "export const MERGE_READY = 'MERGE_READY';\n");
+    writeFileSync(join(f.target, "test", "state.test.ts"), "// MERGE_READY state test\n");
+    writeFileSync(join(f.target, "docs", "states.md"), "MERGE_READY ".repeat(100));
+    writeFileSync(join(f.target, "package.json"), '{"scripts":{"test":"node --test"}}\n');
+    const context = selectPlanContext("MERGE_READY 상태를 표시한다", f.target, "example/orders", "d".repeat(40), { maxFiles: 4, maxBytes: 20_000 });
+    const paths = context.files.map((file) => file.path);
+    assert.ok(paths.some((path) => path.startsWith("src/") || path.startsWith("test/")));
+    assert.ok(paths.includes("package.json"));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("rejects free-form quote/path evidence, missing strategies, empty requirements and target output paths", () => {
   const f = fixture();
   try {
-    const context = selectPlanContext("orders 주문", f.target, "example/orders", "c".repeat(40));
+    const context = selectPlanContext("orders 주문", f.target, "example/orders", "e".repeat(40));
     const valid = planFor(context);
     const evidenceId = context.files[0]!.evidenceId;
     assert.throws(() => validatePlan({ ...valid, analysis: [{ evidenceId, finding: "근거", quote: "invented" }] }, f.target, context), /Invalid analysis evidence fields/);
     assert.throws(() => validatePlan({ ...valid, analysis: [{ path: context.files[0]!.path, quote: "invented", finding: "x" }] }, f.target, context), /Invalid analysis evidence fields/);
     assert.throws(() => validatePlan({ ...valid, testStrategy: [] }, f.target, context));
-    assert.throws(() => selectPlanContext("  ", f.target, "example/orders", "d".repeat(40)));
+    assert.throws(() => selectPlanContext("  ", f.target, "example/orders", "f".repeat(40)));
     assert.throws(() => assertOutsideTarget(f.target, f.target));
     mkdirSync(join(f.target, "nested"));
     assert.throws(() => assertOutsideTarget(f.target, join(f.target, "nested")));
@@ -134,6 +194,7 @@ test("rejects free-form quote/path evidence, missing strategies, empty requireme
     assert.match(schemaText, /evidenceId/);
     assert.doesNotMatch(schemaText, /quote/);
     assert.doesNotMatch(schemaText, /"path"/);
+    assert.match(JSON.stringify(PLAN_SCHEMA.properties.implementationScope), /allowedPaths/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
