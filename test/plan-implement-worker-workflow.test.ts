@@ -32,7 +32,7 @@ test("Worker 직전에 checkout/source를 제거하고 neutral directory에서 C
   assert.match(workflow, /permission-profile: ":read-only"/);
   assert.match(workflow, /GH_TOKEN: ""/);
   assert.match(workflow, /GITHUB_TOKEN: ""/);
-  assert.match(workflow, /timeout-minutes: 2/);
+  assert.match(workflow, /timeout-minutes: 4/);
   assert.match(workflow, /effort: low/);
 });
 
