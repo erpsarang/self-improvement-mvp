@@ -1,0 +1,188 @@
+name: Trusted PLAN Candidate Bridge
+
+on:
+  workflow_run:
+    workflows: ["PLAN Bounded IMPLEMENT Worker"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  bridge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_run' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: bounded Worker source와 candidate artifact exact 선택
+        id: candidate_artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (
+              run.name !== 'PLAN Bounded IMPLEMENT Worker' ||
+              run.path !== '.github/workflows/plan-implement-worker.yml' ||
+              run.event !== 'workflow_run' ||
+              run.conclusion !== 'success' ||
+              run.head_branch !== context.payload.repository.default_branch
+            ) {
+              core.setFailed(`unexpected bounded Worker source: ${run.name} ${run.path} ${run.event} ${run.conclusion}`);
+              return;
+            }
+            const pattern = new RegExp(
+              `^bounded-worker-candidate-issue-\\d+-plan-\\d+-approval-\\d+-handoff-\\d+-attempt-\\d+-worker-${run.id}-attempt-${run.run_attempt}$`,
+            );
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const matches = data.artifacts.filter((artifact) => !artifact.expired && pattern.test(artifact.name));
+            if (matches.length !== 1) {
+              core.setFailed(`expected exactly one bounded Worker candidate artifact; found=${matches.length}`);
+              return;
+            }
+            const artifact = matches[0];
+            core.setOutput('name', artifact.name);
+            core.setOutput('id', String(artifact.id));
+            core.setOutput('digest', artifact.digest ?? '');
+
+      - name: Trusted bridge control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: bridge-control
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bridge-control/package-lock.json
+
+      - name: Trusted bridge dependencies 설치
+        working-directory: bridge-control
+        run: npm ci --ignore-scripts
+
+      - name: bounded Worker candidate artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.candidate_artifact.outputs.name }}
+          path: ${{ runner.temp }}/plan-bridge-candidate
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: candidate provenance 검증 및 Handoff exact identity 준비
+        id: prepare
+        working-directory: bridge-control
+        run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_WORKER_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_WORKER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
+          SOURCE_CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.id }}
+          SOURCE_CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_artifact.outputs.digest }}
+          SOURCE_CANDIDATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-candidate
+          BRIDGE_RUN_ID: ${{ github.run_id }}
+          BRIDGE_RUN_ATTEMPT: ${{ github.run_attempt }}
+
+      - name: exact Handoff artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.handoff_artifact_name }}
+          path: ${{ runner.temp }}/plan-bridge-handoff
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.prepare.outputs.handoff_run_id }}
+
+      - name: exact base SHA checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.prepare.outputs.base_sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: validation-target
+
+      - name: exact base checkout SHA 확인
+        id: base
+        working-directory: validation-target
+        shell: bash
+        env:
+          EXPECTED_BASE_SHA: ${{ steps.prepare.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_BASE_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_BASE_SHA" != "$EXPECTED_BASE_SHA" ]; then
+            echo "exact base checkout SHA mismatch" >&2
+            exit 1
+          fi
+          echo "sha=${ACTUAL_BASE_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: validation target dependencies 설치
+        working-directory: validation-target
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: npm ci --ignore-scripts
+
+      - name: candidate exact-base 적용 및 deterministic CI
+        working-directory: bridge-control
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_WORKER_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_WORKER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
+          SOURCE_CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.id }}
+          SOURCE_CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_artifact.outputs.digest }}
+          SOURCE_CANDIDATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-candidate
+          HANDOFF_DIRECTORY: ${{ runner.temp }}/plan-bridge-handoff
+          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target
+          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          STATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-state
+        run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts validate
+
+      - name: canonical patch와 bridge provenance 생성
+        working-directory: bridge-control
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_WORKER_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_WORKER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
+          SOURCE_CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.id }}
+          SOURCE_CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_artifact.outputs.digest }}
+          SOURCE_CANDIDATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-candidate
+          HANDOFF_DIRECTORY: ${{ runner.temp }}/plan-bridge-handoff
+          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target
+          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          STATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-state
+          BRIDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/plan-bridge-output
+          BRIDGE_RUN_ID: ${{ github.run_id }}
+          BRIDGE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          BRIDGE_TRUSTED_CODE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts finalize
+
+      - name: canonical PLAN bridge artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.bridge_artifact_name }}
+          path: |
+            ${{ runner.temp }}/plan-bridge-output/candidate.patch
+            ${{ runner.temp }}/plan-bridge-output/plan-bridge.json
+          if-no-files-found: error
