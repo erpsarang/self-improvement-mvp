@@ -66,6 +66,9 @@ jobs:
               `Artifact ID: ${process.env.ARTIFACT_ID}`,
               `Artifact SHA-256: ${process.env.ARTIFACT_DIGEST}`,
               '이 단계에서는 IMPLEMENT를 시작하지 않습니다.',
+              '### HumanStatus: PLAN_AUTHORIZE',
+              '**현재 상황:** 해당 PLAN에 대한 정확한 사람 승인 검증이 완료되었습니다. 구현 시작을 뜻하지 않습니다.',
+              '**다음 행동:** 승인된 PLAN과 구현 범위를 확인하고 별도의 구현 시작 절차를 진행하세요.',
             ].join('\n\n');
             await github.rest.issues.createComment({
               ...context.repo,
