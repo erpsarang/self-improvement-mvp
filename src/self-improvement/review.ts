@@ -397,7 +397,7 @@ export function validateVerifiedCandidateForReview(
   input: FlexibleReviewValidationInput,
 ): LegacyValidatedReview | PlanValidatedReview;
 export function validateVerifiedCandidateForReview(
-  input: FlexibleReviewValidationInput,
+  input: any,
 ): LegacyValidatedReview | PlanValidatedReview {
   const verify = validateVerifyProvenanceForReview(input);
   const planAuthority = planAuthorityFromVerify(verify);
