@@ -49,7 +49,6 @@ const validatedVerify = validateVerifyProvenanceForReview({
   repository,
 });
 const sourcePlanBridge = validatedVerify.sourcePublish.sourceSeal.sourcePlanBridge;
-const isPlanAuthority = sourcePlanBridge !== undefined;
 
 if (command === "source") {
   writeOutput("issue_number", validatedVerify.issueNumber);
@@ -80,31 +79,43 @@ if (command === "source") {
   process.exit(0);
 }
 
-const authority = isPlanAuthority
-  ? {
-      planAuthorization: parseJson(requiredEnv("PLAN_AUTHORIZE_JSON")),
-      planAuthorizationArtifactName: requiredEnv("PLAN_AUTHORIZE_ARTIFACT_NAME"),
-    }
-  : {
-      authorization: parseJson(requiredEnv("AUTHORIZE_JSON")),
-      authorizationArtifactName: requiredEnv("AUTHORIZE_ARTIFACT_NAME"),
-    };
+const reviewContext = sourcePlanBridge
+  ? (() => {
+      const planAuthorization = parseJson(requiredEnv("PLAN_AUTHORIZE_JSON"));
+      const planAuthorizationArtifactName = requiredEnv("PLAN_AUTHORIZE_ARTIFACT_NAME");
+      const validated = validateVerifiedCandidateForReview({
+        verify,
+        verifyArtifactName,
+        planAuthorization,
+        planAuthorizationArtifactName,
+        repository,
+      });
+      return {
+        authorityKind: "PLAN_AUTHORIZE" as const,
+        planAuthorization,
+        planAuthorizationArtifactName,
+        validated,
+      };
+    })()
+  : (() => {
+      const authorization = parseJson(requiredEnv("AUTHORIZE_JSON"));
+      const authorizationArtifactName = requiredEnv("AUTHORIZE_ARTIFACT_NAME");
+      const validated = validateVerifiedCandidateForReview({
+        verify,
+        verifyArtifactName,
+        authorization,
+        authorizationArtifactName,
+        repository,
+      });
+      return {
+        authorityKind: "AUTHORIZE" as const,
+        authorization,
+        authorizationArtifactName,
+        validated,
+      };
+    })();
 
-const validated = isPlanAuthority
-  ? validateVerifiedCandidateForReview({
-      verify,
-      verifyArtifactName,
-      planAuthorization: authority.planAuthorization,
-      planAuthorizationArtifactName: authority.planAuthorizationArtifactName,
-      repository,
-    })
-  : validateVerifiedCandidateForReview({
-      verify,
-      verifyArtifactName,
-      authorization: authority.authorization,
-      authorizationArtifactName: authority.authorizationArtifactName,
-      repository,
-    });
+const validated = reviewContext.validated;
 
 if (command === "prepare") {
   const runtimeDir = requiredEnv("REVIEW_RUNTIME_DIR");
@@ -125,9 +136,9 @@ if (command === "prepare") {
     verifiedHeadSha: validated.verify.verifiedHeadSha,
     requirements: validated.requirements,
     sourceVerifyArtifactName: verifyArtifactName,
-    ...(validated.authorityKind === "PLAN_AUTHORIZE"
-      ? { sourcePlanAuthorizeArtifactName: authority.planAuthorizationArtifactName }
-      : { sourceAuthorizationArtifactName: authority.authorizationArtifactName }),
+    ...(reviewContext.authorityKind === "PLAN_AUTHORIZE"
+      ? { sourcePlanAuthorizeArtifactName: reviewContext.planAuthorizationArtifactName }
+      : { sourceAuthorizationArtifactName: reviewContext.authorizationArtifactName }),
   });
 
   writeFileSync(`${runtimeDir}/review-input.json`, `${JSON.stringify(reviewInput, null, 2)}\n`, "utf8");
@@ -143,11 +154,11 @@ if (command === "prepare") {
   writeOutput("issue_number", validated.verify.issueNumber);
   writeOutput("verified_head_sha", validated.verify.verifiedHeadSha);
   writeOutput("verify_artifact_name", verifyArtifactName);
-  writeOutput("authority_kind", validated.authorityKind);
-  if (validated.authorityKind === "PLAN_AUTHORIZE") {
-    writeOutput("plan_authorize_artifact_name", authority.planAuthorizationArtifactName);
+  writeOutput("authority_kind", reviewContext.authorityKind);
+  if (reviewContext.authorityKind === "PLAN_AUTHORIZE") {
+    writeOutput("plan_authorize_artifact_name", reviewContext.planAuthorizationArtifactName);
   } else {
-    writeOutput("authorization_artifact_name", authority.authorizationArtifactName);
+    writeOutput("authorization_artifact_name", reviewContext.authorizationArtifactName);
   }
   writeOutput(
     "review_input_artifact_name",
@@ -163,12 +174,12 @@ const reviewRun = {
   runAttempt: positiveIntegerEnv("REVIEW_RUN_ATTEMPT"),
   trustedCodeSha: requiredEnv("REVIEW_TRUSTED_CODE_SHA").toLowerCase(),
 };
-const provenance = validated.authorityKind === "PLAN_AUTHORIZE"
+const provenance = reviewContext.authorityKind === "PLAN_AUTHORIZE"
   ? createSemanticReviewProvenance({
-      verify: validated.verify,
+      verify: reviewContext.validated.verify,
       verifyArtifactName,
-      planAuthorization: authority.planAuthorization,
-      planAuthorizationArtifactName: authority.planAuthorizationArtifactName,
+      planAuthorization: reviewContext.planAuthorization,
+      planAuthorizationArtifactName: reviewContext.planAuthorizationArtifactName,
       repository,
       reviewerOutput,
       rawReviewerOutput,
@@ -177,10 +188,10 @@ const provenance = validated.authorityKind === "PLAN_AUTHORIZE"
       reviewRun,
     })
   : createSemanticReviewProvenance({
-      verify: validated.verify,
+      verify: reviewContext.validated.verify,
       verifyArtifactName,
-      authorization: authority.authorization,
-      authorizationArtifactName: authority.authorizationArtifactName,
+      authorization: reviewContext.authorization,
+      authorizationArtifactName: reviewContext.authorizationArtifactName,
       repository,
       reviewerOutput,
       rawReviewerOutput,
