@@ -4,6 +4,9 @@ import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "utf8");
 
+const KNOWN_GOOD_CODEX_ACTION =
+  "openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56";
+
 test("production Worker는 Trusted PLAN IMPLEMENT Handoff 성공 run만 입력으로 받는다", () => {
   assert.match(workflow, /workflows: \["Trusted PLAN IMPLEMENT Handoff"\]/);
   assert.match(workflow, /types: \[completed\]/);
@@ -26,7 +29,8 @@ test("Worker 직전에 checkout/source를 제거하고 neutral directory에서 C
   const worker = workflow.indexOf("Untrusted bounded IMPLEMENT Worker");
   const validationCheckout = workflow.indexOf("Trusted validation checkout");
   assert.ok(prepare >= 0 && cleanup > prepare && worker > cleanup && validationCheckout > worker);
-  assert.equal((workflow.match(/openai\/codex-action@v1/g) ?? []).length, 1);
+  assert.equal(workflow.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
+  assert.doesNotMatch(workflow, /openai\/codex-action@v1(?:\s|$)/);
   assert.match(workflow, /rm -rf .*control-prep.*plan-worker-source/);
   assert.match(workflow, /working-directory: \$\{\{ runner\.temp \}\}\/worker-neutral/);
   assert.match(workflow, /permission-profile: ":read-only"/);
