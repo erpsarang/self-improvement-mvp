@@ -1,0 +1,203 @@
+name: PLAN Bounded IMPLEMENT Worker
+
+on:
+  workflow_run:
+    workflows: ["Trusted PLAN IMPLEMENT Handoff"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  worker:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      github.event.workflow_run.event == 'workflow_run'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Trusted handoff artifact exact 선택
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (run.name !== 'Trusted PLAN IMPLEMENT Handoff' || run.path !== '.github/workflows/plan-implement-handoff.yml') {
+              core.setFailed(`unexpected source handoff workflow: ${run.name} ${run.path}`);
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const pattern = /^plan-implement-handoff-issue-\d+-plan-\d+-attempt-\d+-approval-\d+$/;
+            const matches = data.artifacts.filter((artifact) => !artifact.expired && pattern.test(artifact.name));
+
+            if (matches.length === 1) {
+              const artifact = matches[0];
+              core.setOutput('should_run', 'true');
+              core.setOutput('name', artifact.name);
+              core.setOutput('id', String(artifact.id));
+              core.setOutput('digest', artifact.digest ?? '');
+              return;
+            }
+
+            if (matches.length === 0) {
+              const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const handoffJobs = jobsData.jobs.filter((job) => job.name === 'handoff');
+              if (handoffJobs.length === 1 && handoffJobs[0].conclusion === 'skipped') {
+                core.info('source handoff job was skipped; Worker is a no-op');
+                core.setOutput('should_run', 'false');
+                return;
+              }
+            }
+
+            core.setFailed(`expected exactly one trusted handoff artifact; found=${matches.length}`);
+
+      - name: Trusted preparation checkout
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: control-prep
+
+      - name: Node 설정
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: control-prep/package-lock.json
+
+      - name: Trusted preparation dependencies 설치
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control-prep
+        run: npm ci --ignore-scripts
+
+      - name: Trusted handoff artifact 다운로드
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.name }}
+          path: ${{ runner.temp }}/plan-worker-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Trusted Worker input 검증 및 준비
+        if: steps.source.outputs.should_run == 'true'
+        id: prepare
+        working-directory: control-prep
+        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source
+          WORKER_INPUT_DIRECTORY: ${{ runner.temp }}/plan-worker-input
+
+      - name: Worker 실행 전 repository와 trusted source 제거
+        if: steps.source.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$GITHUB_WORKSPACE/control-prep" "$RUNNER_TEMP/plan-worker-source"
+          mkdir -p "$RUNNER_TEMP/worker-neutral" "$RUNNER_TEMP/worker-output"
+          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
+          test -f "$RUNNER_TEMP/plan-worker-input/prompt.md"
+          test -f "$RUNNER_TEMP/plan-worker-input/schema.json"
+
+      - name: Untrusted bounded IMPLEMENT Worker
+        if: steps.source.outputs.should_run == 'true'
+        timeout-minutes: 2
+        uses: openai/codex-action@v1
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/worker-neutral
+          codex-home: ${{ runner.temp }}/worker-codex-home
+          prompt-file: ${{ runner.temp }}/plan-worker-input/prompt.md
+          output-schema-file: ${{ runner.temp }}/plan-worker-input/schema.json
+          output-file: ${{ runner.temp }}/worker-output/raw-proposal.json
+          effort: low
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: Worker input 제거
+        if: steps.source.outputs.should_run == 'true'
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home"
+
+      - name: Trusted validation checkout
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: control-validate
+
+      - name: Trusted validation dependencies 설치
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control-validate
+        run: npm ci --ignore-scripts
+
+      - name: Trusted handoff artifact 재다운로드
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.name }}
+          path: ${{ runner.temp }}/plan-worker-source-validate
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Trusted candidate 검증
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control-validate
+        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate
+          RAW_PROPOSAL_PATH: ${{ runner.temp }}/worker-output/raw-proposal.json
+          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate
+
+      - name: Validated candidate artifact 저장
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.candidate_artifact_name }}
+          path: |
+            ${{ runner.temp }}/validated-candidate/candidate.json
+            ${{ runner.temp }}/validated-candidate/candidate-provenance.json
+          if-no-files-found: error
