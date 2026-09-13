@@ -5,6 +5,15 @@ import {
   type AuthorizationProvenance,
 } from "./authorization.js";
 import {
+  requirementDigest,
+  type PlanAuthorizeArtifact,
+} from "./plan-authorization.js";
+import {
+  verifyPlanAuthorizeArtifact,
+  type PlanAuthorizeArtifactMetadata,
+} from "./plan-implement-handoff.js";
+import type { FrozenPlanRequirement } from "./plan-candidate-bridge.js";
+import {
   isReviewDecision,
   type ReviewDecision,
 } from "./review-decision.js";
@@ -28,10 +37,6 @@ export interface SemanticReviewFinding {
   readonly recommendation: string;
 }
 
-/**
- * Provider-neutral contract emitted by an untrusted semantic reviewer.
- * Trusted code validates this shape and its decision consistency before recording provenance.
- */
 export interface SemanticReviewerOutput {
   readonly decision: ReviewDecision;
   readonly summary: string;
@@ -44,14 +49,29 @@ export interface ReviewRunIdentity {
   readonly trustedCodeSha: string;
 }
 
+export interface ReviewRequirements {
+  readonly title: string;
+  readonly body: string | null;
+  readonly digest: string;
+}
+
+export interface PlanReviewAuthority {
+  readonly type: "PLAN_AUTHORIZE";
+  readonly artifact: PlanAuthorizeArtifactMetadata;
+  readonly authorization: PlanAuthorizeArtifact;
+  readonly requirement: FrozenPlanRequirement;
+  readonly bridgeDigest: string;
+}
+
 export interface ReviewProvenance {
   readonly type: "REVIEW";
   readonly repository: string;
   readonly issueNumber: number;
   readonly sourceVerifyArtifactName: string;
   readonly sourceVerify: VerifyProvenance;
-  readonly sourceAuthorizationArtifactName: string;
-  readonly requirements: AuthorizationProvenance["requirements"];
+  readonly sourceAuthorizationArtifactName?: string;
+  readonly sourcePlanAuthorize?: PlanReviewAuthority;
+  readonly requirements: ReviewRequirements;
   readonly reviewWorkflow: {
     readonly workflowPath: typeof TRUSTED_RAIL_WORKFLOW_PATH;
     readonly runId: number;
@@ -125,6 +145,10 @@ function validSha(value: unknown): value is string {
 
 function validDigest(value: unknown): value is string {
   return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function validRequirementDigest(value: unknown): value is string {
+  return typeof value === "string" && /^(?:sha256:)?[0-9a-f]{64}$/.test(value);
 }
 
 function nonEmptyString(value: unknown, maxLength: number): value is string {
@@ -257,6 +281,7 @@ function validateAuthorizationForReview(input: {
   }
 
   const compact = input.verify.sourcePublish.sourceSeal.sourceAuthorization;
+  if (!compact) throw new Error("VERIFY chain에 legacy AUTHORIZE binding이 없습니다");
   if (
     authorization.repository !== input.verify.repository ||
     authorization.issueNumber !== input.verify.issueNumber ||
@@ -279,23 +304,102 @@ function validateAuthorizationForReview(input: {
   return authorization;
 }
 
+function planAuthorityFromVerify(verify: VerifyProvenance): PlanReviewAuthority | null {
+  const seal = verify.sourcePublish.sourceSeal;
+  if (seal.sourcePlanBridge) {
+    const bridge = seal.sourcePlanBridge.bridge;
+    return {
+      type: "PLAN_AUTHORIZE",
+      artifact: { ...bridge.sourcePlanAuthorize.artifact },
+      authorization: bridge.sourcePlanAuthorize.authorization,
+      requirement: { ...bridge.requirement },
+      bridgeDigest: bridge.bridgeDigest,
+    };
+  }
+  if (seal.sourcePlanAuthorize) {
+    return seal.sourcePlanAuthorize;
+  }
+  return null;
+}
+
+function validatePlanAuthorizationForReview(input: {
+  readonly planAuthorization: unknown;
+  readonly planAuthorizationArtifactName: string;
+  readonly verify: VerifyProvenance;
+}): PlanReviewAuthority {
+  const authority = planAuthorityFromVerify(input.verify);
+  if (!authority) throw new Error("VERIFY chain에 PLAN_AUTHORIZE authority가 없습니다");
+  const authorization = verifyPlanAuthorizeArtifact(input.planAuthorization);
+  if (input.planAuthorizationArtifactName !== authority.artifact.name) {
+    throw new Error("PLAN_AUTHORIZE artifact identity가 VERIFY chain과 일치하지 않습니다");
+  }
+  if (JSON.stringify(authorization) !== JSON.stringify(authority.authorization)) {
+    throw new Error("PLAN_AUTHORIZE provenance가 VERIFY chain authority와 일치하지 않습니다");
+  }
+  if (
+    authorization.repository !== input.verify.repository ||
+    authorization.requirement.issueNumber !== input.verify.issueNumber ||
+    authorization.requirement.digest !== authority.requirement.digest ||
+    requirementDigest(authority.requirement.title, authority.requirement.body) !== authority.requirement.digest ||
+    !validRequirementDigest(authority.requirement.digest)
+  ) {
+    throw new Error("PLAN_AUTHORIZE requirement authority가 VERIFY chain과 일치하지 않습니다");
+  }
+  return authority;
+}
+
 export function validateVerifiedCandidateForReview(input: {
   readonly verify: unknown;
   readonly verifyArtifactName: string;
-  readonly authorization: unknown;
-  readonly authorizationArtifactName: string;
+  readonly authorization?: unknown;
+  readonly authorizationArtifactName?: string;
+  readonly planAuthorization?: unknown;
+  readonly planAuthorizationArtifactName?: string;
   readonly repository: string;
 }): {
   readonly verify: VerifyProvenance;
-  readonly authorization: AuthorizationProvenance;
+  readonly authorityKind: "AUTHORIZE" | "PLAN_AUTHORIZE";
+  readonly authorization?: AuthorizationProvenance;
+  readonly sourcePlanAuthorize?: PlanReviewAuthority;
+  readonly requirements: ReviewRequirements;
 } {
   const verify = validateVerifyProvenanceForReview(input);
+  const planAuthority = planAuthorityFromVerify(verify);
+  if (planAuthority) {
+    if (input.planAuthorization === undefined || !input.planAuthorizationArtifactName) {
+      throw new Error("PLAN_AUTHORIZE provenance 입력이 필요합니다");
+    }
+    const sourcePlanAuthorize = validatePlanAuthorizationForReview({
+      planAuthorization: input.planAuthorization,
+      planAuthorizationArtifactName: input.planAuthorizationArtifactName,
+      verify,
+    });
+    return Object.freeze({
+      verify,
+      authorityKind: "PLAN_AUTHORIZE" as const,
+      sourcePlanAuthorize,
+      requirements: Object.freeze({
+        title: sourcePlanAuthorize.requirement.title,
+        body: sourcePlanAuthorize.requirement.body,
+        digest: sourcePlanAuthorize.requirement.digest,
+      }),
+    });
+  }
+
+  if (input.authorization === undefined || !input.authorizationArtifactName) {
+    throw new Error("legacy AUTHORIZE provenance 입력이 필요합니다");
+  }
   const authorization = validateAuthorizationForReview({
     authorization: input.authorization,
     authorizationArtifactName: input.authorizationArtifactName,
     verify,
   });
-  return Object.freeze({ verify, authorization });
+  return Object.freeze({
+    verify,
+    authorityKind: "AUTHORIZE" as const,
+    authorization,
+    requirements: Object.freeze({ ...authorization.requirements }),
+  });
 }
 
 export function validateSemanticReviewerOutput(value: unknown): SemanticReviewerOutput {
@@ -391,8 +495,10 @@ function sha256Bytes(value: string | Buffer): string {
 export function createSemanticReviewProvenance(input: {
   readonly verify: unknown;
   readonly verifyArtifactName: string;
-  readonly authorization: unknown;
-  readonly authorizationArtifactName: string;
+  readonly authorization?: unknown;
+  readonly authorizationArtifactName?: string;
+  readonly planAuthorization?: unknown;
+  readonly planAuthorizationArtifactName?: string;
   readonly repository: string;
   readonly reviewerOutput: unknown;
   readonly rawReviewerOutput: string | Buffer;
@@ -400,7 +506,8 @@ export function createSemanticReviewProvenance(input: {
   readonly reviewerProvider: string;
   readonly reviewRun: ReviewRunIdentity;
 }): ReviewProvenance {
-  const { verify, authorization } = validateVerifiedCandidateForReview(input);
+  const validated = validateVerifiedCandidateForReview(input);
+  const verify = validated.verify;
   const reviewerOutput = validateSemanticReviewerOutput(input.reviewerOutput);
 
   if (
@@ -442,8 +549,10 @@ export function createSemanticReviewProvenance(input: {
     issueNumber: verify.issueNumber,
     sourceVerifyArtifactName: input.verifyArtifactName,
     sourceVerify: verify,
-    sourceAuthorizationArtifactName: input.authorizationArtifactName,
-    requirements: Object.freeze({ ...authorization.requirements }),
+    ...(validated.authorityKind === "AUTHORIZE"
+      ? { sourceAuthorizationArtifactName: input.authorizationArtifactName }
+      : { sourcePlanAuthorize: validated.sourcePlanAuthorize }),
+    requirements: Object.freeze({ ...validated.requirements }),
     reviewWorkflow: {
       workflowPath: TRUSTED_RAIL_WORKFLOW_PATH,
       runId: input.reviewRun.runId,
@@ -452,7 +561,7 @@ export function createSemanticReviewProvenance(input: {
     },
     reviewedBranch: verify.verifiedBranch,
     reviewedHeadSha: verify.verifiedHeadSha,
-    requirementsDigest: authorization.requirements.digest,
+    requirementsDigest: validated.requirements.digest,
     reviewer: {
       provider: input.reviewerProvider,
       runId: input.reviewRun.runId,
@@ -471,7 +580,7 @@ export function createSemanticReviewPrompt(input: {
   readonly issueNumber: number;
   readonly baseSha: string;
   readonly verifiedHeadSha: string;
-  readonly requirements: AuthorizationProvenance["requirements"];
+  readonly requirements: ReviewRequirements;
 }): string {
   const body = input.requirements.body ?? "(본문 없음)";
   return `당신은 AI Development Framework의 독립 Semantic Reviewer입니다.\n\n` +
