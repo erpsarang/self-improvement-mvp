@@ -219,12 +219,42 @@ export function validateApprovedPlanDocument(value: unknown): ApprovedPlanDocume
   };
 }
 
+function extractCanonicalPlanDocument(
+  value: unknown,
+  authorization: PlanAuthorizeArtifact,
+): ApprovedPlanDocument {
+  if (!record(value)) throw new Error("approved PLAN artifact must be an object");
+  const expectedKeys = ["context", "kind", "plan", "repository", "requirement", "sha"];
+  if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys)) {
+    throw new Error("approved PLAN artifact wrapper shape is invalid");
+  }
+  if (value.kind !== "untrusted-plan") throw new Error("approved PLAN artifact kind is invalid");
+  if (value.repository !== authorization.repository) throw new Error("approved PLAN artifact repository mismatch");
+  if (value.sha !== authorization.targetSha) throw new Error("approved PLAN artifact SHA mismatch");
+  if (typeof value.requirement !== "string" || !value.requirement.trim()) {
+    throw new Error("approved PLAN artifact requirement is invalid");
+  }
+  if (!record(value.context)) throw new Error("approved PLAN artifact context is invalid");
+  const contextKeys = ["digest", "digestAlgorithm", "evidence", "totalBytes"];
+  if (JSON.stringify(Object.keys(value.context).sort()) !== JSON.stringify(contextKeys)) {
+    throw new Error("approved PLAN artifact context shape is invalid");
+  }
+  if (value.context.digestAlgorithm !== "sha256") throw new Error("approved PLAN artifact context digest algorithm is invalid");
+  assertDigest("approved PLAN artifact context digest", value.context.digest);
+  if (!Array.isArray(value.context.evidence)) throw new Error("approved PLAN artifact context evidence is invalid");
+  if (typeof value.context.totalBytes !== "number" || !Number.isSafeInteger(value.context.totalBytes) || value.context.totalBytes < 0) {
+    throw new Error("approved PLAN artifact context totalBytes is invalid");
+  }
+  if (!record(value.plan)) throw new Error("approved PLAN artifact plan is invalid");
+  return validateApprovedPlanDocument(value.plan);
+}
+
 export function createPlanImplementContract(
   authorization: PlanAuthorizeArtifact,
   planValue: unknown,
 ): ImplementContract {
   const trustedAuthorization = verifyPlanAuthorizeArtifact(authorization);
-  const plan = validateApprovedPlanDocument(planValue);
+  const plan = extractCanonicalPlanDocument(planValue, trustedAuthorization);
   const scope = plan.implementationScope;
   return createImplementContract(toApprovedPlanIdentity(trustedAuthorization), {
     allowedPaths: scope.allowedPaths,
