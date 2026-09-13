@@ -162,7 +162,8 @@ jobs:
           HANDOFF_OUTPUT: ${{ runner.temp }}/plan-implement-handoff
         run: |
           set -euo pipefail
-          export OBSERVED_BASE_SHA="$(git -C "$TARGET_ROOT" rev-parse HEAD)"
+          OBSERVED_BASE_SHA="$(git -C "$TARGET_ROOT" rev-parse HEAD)"
+          export OBSERVED_BASE_SHA
           node --import tsx src/self-improvement/plan-implement-handoff-handler.ts context
 
       - name: Trusted ImplementContract / Context Pack artifact 저장
