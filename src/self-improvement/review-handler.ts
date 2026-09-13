@@ -43,39 +43,68 @@ const verifyJsonPath = requiredEnv("VERIFY_JSON");
 const verifyArtifactName = requiredEnv("VERIFY_ARTIFACT_NAME");
 const repository = requiredEnv("REVIEW_REPOSITORY");
 const verify: unknown = parseJson(verifyJsonPath);
+const validatedVerify = validateVerifyProvenanceForReview({
+  verify,
+  verifyArtifactName,
+  repository,
+});
+const sourcePlanBridge = validatedVerify.sourcePublish.sourceSeal.sourcePlanBridge;
+const isPlanAuthority = sourcePlanBridge !== undefined;
 
 if (command === "source") {
-  const validatedVerify = validateVerifyProvenanceForReview({
-    verify,
-    verifyArtifactName,
-    repository,
-  });
-  const sourceAuthorization =
-    validatedVerify.sourcePublish.sourceSeal.sourceAuthorization;
-  const authorizationArtifactName =
-    `authorize-approval-${sourceAuthorization.approvalCommentId}-attempt-${sourceAuthorization.runAttempt}`;
-
   writeOutput("issue_number", validatedVerify.issueNumber);
   writeOutput("verified_branch", validatedVerify.verifiedBranch);
   writeOutput("verified_head_sha", validatedVerify.verifiedHeadSha);
   writeOutput("base_sha", validatedVerify.sourcePublish.baseSha);
-  writeOutput("authorization_run_id", sourceAuthorization.runId);
-  writeOutput("authorization_run_attempt", sourceAuthorization.runAttempt);
-  writeOutput("authorization_artifact_name", authorizationArtifactName);
-  writeOutput("requirements_digest", sourceAuthorization.requirementsDigest);
+
+  if (sourcePlanBridge) {
+    const sourcePlanAuthorize = sourcePlanBridge.bridge.sourcePlanAuthorize;
+    writeOutput("authority_kind", "PLAN_AUTHORIZE");
+    writeOutput("plan_authorize_run_id", sourcePlanAuthorize.authorization.authorization.runId);
+    writeOutput("plan_authorize_run_attempt", sourcePlanAuthorize.authorization.authorization.runAttempt);
+    writeOutput("plan_authorize_artifact_name", sourcePlanAuthorize.artifact.name);
+    writeOutput("requirements_digest", sourcePlanBridge.bridge.requirement.digest);
+  } else {
+    const sourceAuthorization = validatedVerify.sourcePublish.sourceSeal.sourceAuthorization;
+    if (!sourceAuthorization) {
+      throw new Error("VERIFY chain에 AUTHORIZE 또는 PLAN_AUTHORIZE authority가 없습니다");
+    }
+    const authorizationArtifactName =
+      `authorize-approval-${sourceAuthorization.approvalCommentId}-attempt-${sourceAuthorization.runAttempt}`;
+    writeOutput("authority_kind", "AUTHORIZE");
+    writeOutput("authorization_run_id", sourceAuthorization.runId);
+    writeOutput("authorization_run_attempt", sourceAuthorization.runAttempt);
+    writeOutput("authorization_artifact_name", authorizationArtifactName);
+    writeOutput("requirements_digest", sourceAuthorization.requirementsDigest);
+  }
   process.exit(0);
 }
 
-const authorizationJsonPath = requiredEnv("AUTHORIZE_JSON");
-const authorizationArtifactName = requiredEnv("AUTHORIZE_ARTIFACT_NAME");
-const authorization: unknown = parseJson(authorizationJsonPath);
-const validated = validateVerifiedCandidateForReview({
-  verify,
-  verifyArtifactName,
-  authorization,
-  authorizationArtifactName,
-  repository,
-});
+const authority = isPlanAuthority
+  ? {
+      planAuthorization: parseJson(requiredEnv("PLAN_AUTHORIZE_JSON")),
+      planAuthorizationArtifactName: requiredEnv("PLAN_AUTHORIZE_ARTIFACT_NAME"),
+    }
+  : {
+      authorization: parseJson(requiredEnv("AUTHORIZE_JSON")),
+      authorizationArtifactName: requiredEnv("AUTHORIZE_ARTIFACT_NAME"),
+    };
+
+const validated = isPlanAuthority
+  ? validateVerifiedCandidateForReview({
+      verify,
+      verifyArtifactName,
+      planAuthorization: authority.planAuthorization,
+      planAuthorizationArtifactName: authority.planAuthorizationArtifactName,
+      repository,
+    })
+  : validateVerifiedCandidateForReview({
+      verify,
+      verifyArtifactName,
+      authorization: authority.authorization,
+      authorizationArtifactName: authority.authorizationArtifactName,
+      repository,
+    });
 
 if (command === "prepare") {
   const runtimeDir = requiredEnv("REVIEW_RUNTIME_DIR");
@@ -86,7 +115,7 @@ if (command === "prepare") {
     issueNumber: validated.verify.issueNumber,
     baseSha: validated.verify.sourcePublish.baseSha,
     verifiedHeadSha: validated.verify.verifiedHeadSha,
-    requirements: validated.authorization.requirements,
+    requirements: validated.requirements,
   });
   const reviewInput = Object.freeze({
     repository,
@@ -94,9 +123,11 @@ if (command === "prepare") {
     baseSha: validated.verify.sourcePublish.baseSha,
     verifiedBranch: validated.verify.verifiedBranch,
     verifiedHeadSha: validated.verify.verifiedHeadSha,
-    requirements: validated.authorization.requirements,
+    requirements: validated.requirements,
     sourceVerifyArtifactName: verifyArtifactName,
-    sourceAuthorizationArtifactName: authorizationArtifactName,
+    ...(validated.authorityKind === "PLAN_AUTHORIZE"
+      ? { sourcePlanAuthorizeArtifactName: authority.planAuthorizationArtifactName }
+      : { sourceAuthorizationArtifactName: authority.authorizationArtifactName }),
   });
 
   writeFileSync(`${runtimeDir}/review-input.json`, `${JSON.stringify(reviewInput, null, 2)}\n`, "utf8");
@@ -112,7 +143,12 @@ if (command === "prepare") {
   writeOutput("issue_number", validated.verify.issueNumber);
   writeOutput("verified_head_sha", validated.verify.verifiedHeadSha);
   writeOutput("verify_artifact_name", verifyArtifactName);
-  writeOutput("authorization_artifact_name", authorizationArtifactName);
+  writeOutput("authority_kind", validated.authorityKind);
+  if (validated.authorityKind === "PLAN_AUTHORIZE") {
+    writeOutput("plan_authorize_artifact_name", authority.planAuthorizationArtifactName);
+  } else {
+    writeOutput("authorization_artifact_name", authority.authorizationArtifactName);
+  }
   writeOutput(
     "review_input_artifact_name",
     `review-input-issue-${validated.verify.issueNumber}-${runId}-attempt-${runAttempt}`,
@@ -122,22 +158,36 @@ if (command === "prepare") {
 
 const rawReviewerOutput = readFileSync(requiredEnv("REVIEWER_OUTPUT_JSON"));
 const reviewerOutput: unknown = JSON.parse(rawReviewerOutput.toString("utf8"));
-const provenance = createSemanticReviewProvenance({
-  verify: validated.verify,
-  verifyArtifactName,
-  authorization: validated.authorization,
-  authorizationArtifactName,
-  repository,
-  reviewerOutput,
-  rawReviewerOutput,
-  reviewerOutputArtifactName: requiredEnv("REVIEWER_OUTPUT_ARTIFACT_NAME"),
-  reviewerProvider: requiredEnv("REVIEWER_PROVIDER"),
-  reviewRun: {
-    runId: positiveIntegerEnv("REVIEW_RUN_ID"),
-    runAttempt: positiveIntegerEnv("REVIEW_RUN_ATTEMPT"),
-    trustedCodeSha: requiredEnv("REVIEW_TRUSTED_CODE_SHA").toLowerCase(),
-  },
-});
+const reviewRun = {
+  runId: positiveIntegerEnv("REVIEW_RUN_ID"),
+  runAttempt: positiveIntegerEnv("REVIEW_RUN_ATTEMPT"),
+  trustedCodeSha: requiredEnv("REVIEW_TRUSTED_CODE_SHA").toLowerCase(),
+};
+const provenance = validated.authorityKind === "PLAN_AUTHORIZE"
+  ? createSemanticReviewProvenance({
+      verify: validated.verify,
+      verifyArtifactName,
+      planAuthorization: authority.planAuthorization,
+      planAuthorizationArtifactName: authority.planAuthorizationArtifactName,
+      repository,
+      reviewerOutput,
+      rawReviewerOutput,
+      reviewerOutputArtifactName: requiredEnv("REVIEWER_OUTPUT_ARTIFACT_NAME"),
+      reviewerProvider: requiredEnv("REVIEWER_PROVIDER"),
+      reviewRun,
+    })
+  : createSemanticReviewProvenance({
+      verify: validated.verify,
+      verifyArtifactName,
+      authorization: authority.authorization,
+      authorizationArtifactName: authority.authorizationArtifactName,
+      repository,
+      reviewerOutput,
+      rawReviewerOutput,
+      reviewerOutputArtifactName: requiredEnv("REVIEWER_OUTPUT_ARTIFACT_NAME"),
+      reviewerProvider: requiredEnv("REVIEWER_PROVIDER"),
+      reviewRun,
+    });
 
 writeFileSync(
   requiredEnv("REVIEW_JSON"),
