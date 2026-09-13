@@ -83,7 +83,7 @@ const readyPlan = {
 };
 
 function canonicalPlanArtifact(
-  plan: typeof readyPlan = readyPlan,
+  plan: Record<string, unknown> = readyPlan,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
