@@ -16,6 +16,19 @@ const HUMAN_OUTPUT_SURFACE_MAX_FILES = 2;
 const HUMAN_OUTPUT_SURFACE_MAX_BYTES = 6_000;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const OUTPUT_CALL = /github\.rest\.(?:issues\.(?:createComment|create)|pulls\.create)\s*\(/i;
+const LIFECYCLE_WORKFLOW_BY_ANCHOR = new Map<string, string>([
+  ["PLAN", ".github/workflows/plan.yml"],
+  ["PLAN_AUTHORIZE", ".github/workflows/plan-authorize.yml"],
+  ["IMPLEMENT", ".github/workflows/implement.yml"],
+  ["VERIFY", ".github/workflows/trusted-rail.yml"],
+  ["MERGE_READY", ".github/workflows/orchestrator.yml"],
+  ["STOPPED", ".github/workflows/orchestrator.yml"],
+]);
+const LIFECYCLE_SUPPORT_FILES = [
+  { path: "src/self-improvement/state.ts", focus: "WORKFLOW_STATES" },
+  { path: "src/self-improvement/implement-contract.ts", focus: "ImplementContract" },
+  { path: "package.json", focus: "scripts" },
+] as const;
 
 function needsHumanOutputSurface(requirement: string): boolean {
   const lower = requirement.toLowerCase();
@@ -68,6 +81,13 @@ function decodeText(path: string): string | null {
 function requirementTerms(requirement: string): string[] {
   const terms = requirement.toLowerCase().match(/[a-z0-9_.-]{2,}|[가-힣]{2,}/g) ?? [];
   return [...new Set(terms)].sort((a, b) => a.localeCompare(b));
+}
+
+function requestedLifecycleAnchors(requirement: string): string[] {
+  const tokens = new Set<string>();
+  for (const match of requirement.matchAll(/`([A-Z][A-Z0-9_]{2,79})`/g)) tokens.add(match[1]!);
+  for (const match of requirement.matchAll(/\b([A-Z][A-Z0-9_]{2,79})\b/g)) tokens.add(match[1]!);
+  return [...LIFECYCLE_WORKFLOW_BY_ANCHOR.keys()].filter((anchor) => tokens.has(anchor));
 }
 
 function occurrences(text: string, term: string): number {
@@ -186,6 +206,32 @@ function surfaceExcerpt(text: string, focus: number): { content: string; startOf
   return { content: trimUtf8(text.slice(startOffset), HUMAN_OUTPUT_SURFACE_MAX_BYTES), startOffset };
 }
 
+function contextFile(target: string, path: string, focusTerms: readonly string[]): PlanContextFile | null {
+  const absolute = join(target, path);
+  if (!existsSync(absolute)) return null;
+  const stat = lstatSync(absolute);
+  if (stat.isSymbolicLink()) throw new Error(`Human-output context refuses symlink: ${absolute}`);
+  if (!stat.isFile()) return null;
+  const text = decodeText(absolute);
+  if (text === null) return null;
+
+  const outputCall = directOutputCallIndex(path, text);
+  const indexes = focusTerms.map((term) => text.indexOf(term)).filter((index) => index >= 0);
+  const focus = outputCall >= 0 ? outputCall : indexes.length > 0 ? Math.min(...indexes) : 0;
+  const excerpt = surfaceExcerpt(text, focus);
+  const byteLength = Buffer.byteLength(excerpt.content, "utf8");
+  if (byteLength < 1 || byteLength > PLAN_CONTEXT_MAX_FILE_BYTES) return null;
+  return {
+    evidenceId: "E1",
+    path,
+    startOffset: excerpt.startOffset,
+    byteLength,
+    digestAlgorithm: "sha256",
+    contentDigest: createHash("sha256").update(excerpt.content, "utf8").digest("hex"),
+    content: excerpt.content,
+  };
+}
+
 function payload(repository: string, sha: string, files: readonly PlanContextFile[]): PlanContextPackPayload {
   return {
     schemaVersion: 1,
@@ -237,6 +283,44 @@ function surfaceCandidates(requirement: string, target: string): PlanContextFile
     .map((entry) => entry.file);
 }
 
+function lifecycleCandidates(requirement: string, target: string): PlanContextFile[] {
+  const anchors = requestedLifecycleAnchors(requirement);
+  if (anchors.length === 0) return [];
+
+  const workflowFocus = new Map<string, string[]>();
+  for (const anchor of anchors) {
+    const path = LIFECYCLE_WORKFLOW_BY_ANCHOR.get(anchor)!;
+    const current = workflowFocus.get(path) ?? [];
+    current.push(anchor);
+    workflowFocus.set(path, current);
+  }
+
+  const result: PlanContextFile[] = [];
+  for (const [path, focusTerms] of workflowFocus) {
+    const file = contextFile(target, path, focusTerms);
+    if (file) result.push(file);
+  }
+  for (const support of LIFECYCLE_SUPPORT_FILES) {
+    const file = contextFile(target, support.path, [support.focus, ...anchors]);
+    if (file) result.push(file);
+  }
+  return result;
+}
+
+function uniqueCandidates(groups: readonly PlanContextFile[][]): PlanContextFile[] {
+  const result: PlanContextFile[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const file of group) {
+      if (seen.has(file.path)) continue;
+      seen.add(file.path);
+      result.push(file);
+      if (result.length >= PLAN_CONTEXT_MAX_FILES) return result;
+    }
+  }
+  return result;
+}
+
 export function augmentPlanContextWithHumanOutputSurfaces(
   requirement: string,
   target: string,
@@ -245,22 +329,24 @@ export function augmentPlanContextWithHumanOutputSurfaces(
   verifyPlanContextPack(context);
   if (!needsHumanOutputSurface(requirement)) return context;
 
-  const candidates = surfaceCandidates(requirement, target);
+  const candidates = uniqueCandidates([
+    lifecycleCandidates(requirement, target),
+    surfaceCandidates(requirement, target),
+  ]);
   if (candidates.length === 0) return context;
 
-  const files = [...context.files];
-  const protectedPaths = new Set(context.files.slice(0, Math.min(5, context.files.length)).map((file) => file.path));
   const candidatePaths = new Set(candidates.map((file) => file.path));
+  const candidateByPath = new Map(candidates.map((file) => [file.path, file] as const));
+  const files = context.files.map((file) => candidateByPath.get(file.path) ?? file);
+  const totalBytes = () => files.reduce((sum, file) => sum + file.byteLength, 0);
 
   for (const candidate of candidates) {
     if (files.some((file) => file.path === candidate.path)) continue;
 
-    const canEvict = (file: PlanContextFile): boolean => !protectedPaths.has(file.path) && !candidatePaths.has(file.path);
-    const totalBytes = () => files.reduce((sum, file) => sum + file.byteLength, 0);
     while (files.length >= PLAN_CONTEXT_MAX_FILES || totalBytes() + candidate.byteLength > PLAN_CONTEXT_MAX_BYTES) {
       let removeIndex = -1;
       for (let index = files.length - 1; index >= 0; index -= 1) {
-        if (canEvict(files[index]!)) {
+        if (!candidatePaths.has(files[index]!.path)) {
           removeIndex = index;
           break;
         }

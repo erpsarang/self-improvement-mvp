@@ -66,6 +66,70 @@ test("human-facing requirement reserves exact Issue output surfaces within bound
   }
 });
 
+test("named lifecycle anchors reserve workflows even before human-output callsites exist", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-lifecycle-output-"));
+  try {
+    mkdirSync(join(root, "src", "self-improvement"), { recursive: true });
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+
+    writeFileSync(
+      join(root, "src", "self-improvement", "state.ts"),
+      "export const WORKFLOW_STATES = ['PLAN', 'PLAN_AUTHORIZE', 'IMPLEMENT', 'VERIFY', 'MERGE_READY', 'STOPPED'];\n",
+    );
+    writeFileSync(
+      join(root, "src", "self-improvement", "implement-contract.ts"),
+      "export interface ImplementContract { allowedPaths: readonly string[]; validationCommands: readonly string[]; }\n",
+    );
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test", build: "tsc --noEmit" } }, null, 2),
+    );
+
+    const workflows: Record<string, string> = {
+      "plan.yml": "name: Read-only AI PLAN\nrun: produce bounded PLAN artifact\n",
+      "plan-authorize.yml": "name: PLAN_AUTHORIZE\nrun: validate exact human PLAN approval\n",
+      "implement.yml": "name: IMPLEMENT\nrun: consume trusted implementation contract\n",
+      "trusted-rail.yml": "name: VERIFY\nrun: verify exact published SHA\n",
+      "orchestrator.yml": "name: Orchestrator\nrun: choose MERGE_READY or STOPPED without auto merge\n",
+    };
+    for (const [name, content] of Object.entries(workflows)) {
+      writeFileSync(join(root, ".github", "workflows", name), content);
+    }
+    writeFileSync(
+      join(root, ".github", "workflows", "noisy.yml"),
+      "name: unrelated\nrun: PLAN PLAN_AUTHORIZE IMPLEMENT VERIFY MERGE_READY STOPPED\n",
+    );
+
+    const requirement = "`PLAN`, `PLAN_AUTHORIZE`, `IMPLEMENT`, `VERIFY`, `MERGE_READY`, `STOPPED` 상태를 사람이 이해하기 쉬운 한국어로 표시한다.";
+    const initial = selectPlanContext(requirement, root, "example/framework", "d".repeat(40), {
+      maxFiles: 2,
+      maxBytes: 12_000,
+      maxFileBytes: 4_000,
+    });
+    const augmented = augmentPlanContextWithHumanOutputSurfaces(requirement, root, initial);
+
+    assert.doesNotThrow(() => verifyPlanContextPack(augmented));
+    const paths = new Set(augmented.files.map((file) => file.path));
+    for (const required of [
+      ".github/workflows/plan.yml",
+      ".github/workflows/plan-authorize.yml",
+      ".github/workflows/implement.yml",
+      ".github/workflows/trusted-rail.yml",
+      ".github/workflows/orchestrator.yml",
+      "src/self-improvement/state.ts",
+      "src/self-improvement/implement-contract.ts",
+      "package.json",
+    ]) {
+      assert.ok(paths.has(required), `missing lifecycle context: ${required}; got=${[...paths].join(", ")}`);
+    }
+    assert.ok(!paths.has(".github/workflows/noisy.yml"), `unmapped noisy workflow must be evicted: ${[...paths].join(", ")}`);
+    assert.equal(augmented.files.length, 8);
+    assert.ok(augmented.totalBytes <= 80_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runtime source must contain an executable API callsite, not only a string or comment mention", () => {
   const root = mkdtempSync(join(tmpdir(), "planner-human-output-source-call-"));
   try {
