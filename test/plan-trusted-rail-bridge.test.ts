@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import {
+  sealSourceRunIdentity,
+  type SealProvenance,
+} from "../src/self-improvement/seal.js";
 
 const planBridgeWorkflow = readFileSync(".github/workflows/plan-candidate-bridge.yml", "utf8");
 const trustedRail = readFileSync(".github/workflows/trusted-rail.yml", "utf8");
@@ -36,6 +40,32 @@ test("Semantic REVIEW recognizes exact PLAN_AUTHORIZE provenance", () => {
   assert.match(semanticReview, /plan-authorize\.json/);
   assert.match(reviewHandler, /PLAN_AUTHORIZE/);
   assert.match(review, /sourcePlanAuthorize/);
+});
+
+test("PLAN LOCAL_FIX SEAL은 PLAN authority와 FIX candidate source를 함께 보존한다", () => {
+  assert.match(seal, /hasPlanBridge && !hasFix/);
+  assert.match(seal, /const hasPlanAuthority = hasPlanBridge/);
+
+  const planDigest = `sha256:${"a".repeat(64)}`;
+  const fixDigest = `sha256:${"b".repeat(64)}`;
+  const identity = sealSourceRunIdentity({
+    sourcePlanBridge: {
+      runId: 101,
+      runAttempt: 1,
+      bridge: { candidatePatchDigest: planDigest },
+    },
+    sourceFix: {
+      runId: 202,
+      runAttempt: 2,
+      candidatePatchDigest: fixDigest,
+    },
+  } as unknown as SealProvenance);
+
+  assert.deepEqual(identity, {
+    runId: 202,
+    runAttempt: 2,
+    candidatePatchDigest: fixDigest,
+  });
 });
 
 test("Human-only merge boundary remains and auto merge is not introduced", () => {
