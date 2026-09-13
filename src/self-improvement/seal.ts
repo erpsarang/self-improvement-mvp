@@ -487,11 +487,14 @@ export function validateSealProvenance(value: unknown): SealProvenance {
   const hasPlanBridge = record(value.sourcePlanBridge);
   const hasImplement = record(value.sourceImplement);
   const hasFix = record(value.sourceFix);
-  if ([hasPlanBridge, hasImplement, hasFix].filter(Boolean).length !== 1) {
-    throw new Error("SEAL provenance에는 PLAN_BRIDGE, IMPLEMENT 또는 FIX source 하나만 있어야 합니다");
+  if (
+    (hasImplement && (hasPlanBridge || hasFix)) ||
+    (!hasPlanBridge && !hasImplement && !hasFix)
+  ) {
+    throw new Error("SEAL provenance source 조합이 올바르지 않습니다");
   }
 
-  if (hasPlanBridge) {
+  if (hasPlanBridge && !hasFix) {
     if (value.sourceAuthorization !== undefined) {
       throw new Error("PLAN bridge SEAL은 legacy authorization을 포함할 수 없습니다");
     }
@@ -539,11 +542,39 @@ export function validateSealProvenance(value: unknown): SealProvenance {
     }
   } else {
     const source = value.sourceFix as Record<string, unknown>;
-    const hasLegacyAuthority = validAuthorizationBinding(value.sourceAuthorization);
-    const hasPlanAuthority = record(value.sourcePlanBridge);
+    const sourceAuthorization = value.sourceAuthorization;
+    const hasLegacyAuthority = validAuthorizationBinding(sourceAuthorization);
+    const hasPlanAuthority = hasPlanBridge;
     if (hasLegacyAuthority === hasPlanAuthority) {
       throw new Error("SEAL FIX authority가 올바르지 않습니다");
     }
+
+    let planBridge: PlanCandidateBridgeProvenance | undefined;
+    if (hasPlanAuthority) {
+      const planSource = value.sourcePlanBridge as Record<string, unknown>;
+      if (
+        planSource.workflowPath !== PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH ||
+        !positiveInteger(planSource.runId) ||
+        !positiveInteger(planSource.runAttempt) ||
+        !validSha(planSource.controlPlaneSha) ||
+        typeof planSource.candidateArtifactName !== "string" ||
+        !record(planSource.bridge)
+      ) {
+        throw new Error("SEAL PLAN FIX authority source가 올바르지 않습니다");
+      }
+      planBridge = verifyPlanCandidateBridgeProvenance(planSource.bridge);
+      validatePlanBridgeArtifactName(planSource.candidateArtifactName, planBridge);
+      if (
+        planBridge.repository !== value.repository ||
+        planBridge.issueNumber !== value.issueNumber ||
+        planBridge.bridgeWorkflow.runId !== planSource.runId ||
+        planBridge.bridgeWorkflow.runAttempt !== planSource.runAttempt ||
+        planBridge.bridgeWorkflow.trustedCodeSha !== planSource.controlPlaneSha
+      ) {
+        throw new Error("SEAL PLAN FIX authority chain이 올바르지 않습니다");
+      }
+    }
+
     if (
       source.workflowPath !== FIX_WORKFLOW_PATH ||
       !positiveInteger(source.runId) ||
@@ -563,6 +594,10 @@ export function validateSealProvenance(value: unknown): SealProvenance {
     const sourceRequest = source.sourceRequest as Record<string, unknown>;
     if (
       sourceReview.reviewedHeadSha !== value.baseSha ||
+      (hasLegacyAuthority &&
+        sourceReview.requirementsDigest !== sourceAuthorization.requirementsDigest) ||
+      (planBridge !== undefined &&
+        sourceReview.requirementsDigest !== planBridge.requirement.digest) ||
       sourceRequest.artifactName !==
         `fix-request-${sourceReview.runId}-fix-${source.fixAttempt}-${sourceRequest.runId}-attempt-${sourceRequest.runAttempt}`
     ) {
@@ -578,6 +613,13 @@ export function sealSourceRunIdentity(seal: SealProvenance): {
   readonly runAttempt: number;
   readonly candidatePatchDigest: string;
 } {
+  if (seal.sourceFix) {
+    return {
+      runId: seal.sourceFix.runId,
+      runAttempt: seal.sourceFix.runAttempt,
+      candidatePatchDigest: seal.sourceFix.candidatePatchDigest,
+    };
+  }
   if (seal.sourcePlanBridge) {
     return {
       runId: seal.sourcePlanBridge.runId,
@@ -590,13 +632,6 @@ export function sealSourceRunIdentity(seal: SealProvenance): {
       runId: seal.sourceImplement.runId,
       runAttempt: seal.sourceImplement.runAttempt,
       candidatePatchDigest: seal.sourceImplement.candidatePatchDigest,
-    };
-  }
-  if (seal.sourceFix) {
-    return {
-      runId: seal.sourceFix.runId,
-      runAttempt: seal.sourceFix.runAttempt,
-      candidatePatchDigest: seal.sourceFix.candidatePatchDigest,
     };
   }
   throw new Error("SEAL source가 없습니다");
