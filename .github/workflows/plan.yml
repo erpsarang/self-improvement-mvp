@@ -215,5 +215,8 @@ jobs:
               `PLAN artifact ID: ${process.env.PLAN_ARTIFACT_ID}`,
               `PLAN artifact SHA-256: \`${process.env.PLAN_ARTIFACT_DIGEST}\``,
               '이 PLAN은 제한된 Context Pack만 보고 생성되었습니다. pointer는 확인용이며 승인 시 exact provenance를 다시 검증합니다.',
+              '### HumanStatus: PLAN',
+              '**현재 상황:** AI가 계획을 제안했습니다. 아직 구현 승인이 아닙니다.',
+              '**다음 행동:** 계획을 검토하고 구현 범위가 준비된 경우에만 승인 여부를 결정하세요.',
             ].join('\n\n');
             await github.rest.issues.createComment({ ...context.repo, issue_number: identity.requirement.issueNumber, body });
