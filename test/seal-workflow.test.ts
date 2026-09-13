@@ -18,15 +18,21 @@ test("Trusted Rail은 initial IMPLEMENT workflow_run과 explicit FIX dispatch �
   assert.match(sealSection, /run\.path !== '\.github\/workflows\/fix-worker\.yml'|run\.path !==/);
 });
 
-test("explicit FIX source는 완료 success와 exact workflow/run/artifact identity를 검증한다", () => {
-  assert.match(sealSection, /sourceRun|run\.status/);
+test("explicit candidate source는 kind별 exact workflow/event/run/artifact identity를 검증한다", () => {
+  assert.match(sealSection, /sourceKind = process\.env\.EXPLICIT_SOURCE_KIND \|\| 'FIX'/);
+  assert.match(sealSection, /\['FIX', 'PLAN_BRIDGE'\]\.includes\(sourceKind\)/);
   assert.match(sealSection, /run\.status !== 'completed'/);
   assert.match(sealSection, /run\.conclusion !== 'success'/);
-  assert.match(sealSection, /run\.path !== '\.github\/workflows\/fix-worker\.yml'/);
-  assert.match(sealSection, /run\.event !== 'workflow_dispatch'/);
+  assert.match(sealSection, /const expectedPath = sourceKind === 'PLAN_BRIDGE'/);
+  assert.match(sealSection, /'\.github\/workflows\/plan-candidate-bridge\.yml'/);
+  assert.match(sealSection, /'\.github\/workflows\/fix-worker\.yml'/);
+  assert.match(sealSection, /run\.path !== expectedPath/);
+  assert.match(sealSection, /const expectedEvent = sourceKind === 'PLAN_BRIDGE'/);
+  assert.match(sealSection, /run\.event !== expectedEvent/);
   assert.match(sealSection, /run\.run_attempt !== runAttempt/);
-  assert.match(sealSection, /expected exactly one explicit FIX candidate artifact/);
+  assert.match(sealSection, /expected exactly one explicit \$\{sourceKind\} candidate artifact/);
   assert.match(sealSection, /implement-candidate-/);
+  assert.match(sealSection, /plan-bridge-candidate-issue-/);
 });
 
 test("Trusted Rail 전체 권한은 비어 있고 SEAL job은 read-only 권한을 가진다", () => {
