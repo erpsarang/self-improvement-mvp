@@ -117,8 +117,12 @@ test("Trusted Rail explicit entry는 FIX Worker completion과 exact candidate id
   assert.match(railSeal, /context\.eventName === 'workflow_dispatch'/);
   assert.match(railSeal, /run\.status !== 'completed'/);
   assert.match(railSeal, /run\.conclusion !== 'success'/);
-  assert.match(railSeal, /run\.path !== '\.github\/workflows\/fix-worker\.yml'/);
-  assert.match(railSeal, /run\.event !== 'workflow_dispatch'/);
-  assert.match(railSeal, /expected exactly one explicit FIX candidate artifact/);
+  assert.match(railSeal, /const expectedPath = sourceKind === 'PLAN_BRIDGE'/);
+  assert.match(railSeal, /: '\.github\/workflows\/fix-worker\.yml';/);
+  assert.match(railSeal, /run\.path !== expectedPath/);
+  assert.match(railSeal, /const expectedEvent = sourceKind === 'PLAN_BRIDGE'/);
+  assert.match(railSeal, /: 'workflow_dispatch';/);
+  assert.match(railSeal, /run\.event !== expectedEvent/);
+  assert.match(railSeal, /expected exactly one explicit \$\{sourceKind\} candidate artifact/);
   assert.match(railSeal, /SOURCE_RUN_ID: \$\{\{ steps\.candidate_artifact\.outputs\.source_run_id \}\}/);
 });

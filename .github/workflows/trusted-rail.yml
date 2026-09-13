@@ -6,16 +6,21 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
+      source_candidate_kind:
+        description: explicit candidate kind (FIX or PLAN_BRIDGE)
+        required: false
+        default: FIX
+        type: string
       source_candidate_run_id:
-        description: explicit FIX Worker run ID
+        description: explicit candidate source run ID
         required: true
         type: string
       source_candidate_run_attempt:
-        description: explicit FIX Worker run attempt
+        description: explicit candidate source run attempt
         required: true
         type: string
       source_candidate_artifact_name:
-        description: exact FIX candidate artifact name
+        description: exact candidate artifact name
         required: true
         type: string
 
@@ -37,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.candidate_artifact.outputs.should_run }}
+      source_candidate_kind: ${{ steps.candidate_artifact.outputs.source_candidate_kind }}
       source_run_id: ${{ steps.candidate_artifact.outputs.source_run_id }}
       source_run_attempt: ${{ steps.candidate_artifact.outputs.source_run_attempt }}
       source_control_plane_sha: ${{ steps.candidate_artifact.outputs.source_control_plane_sha }}
@@ -48,6 +54,7 @@ jobs:
         id: candidate_artifact
         uses: actions/github-script@v7
         env:
+          EXPLICIT_SOURCE_KIND: ${{ inputs.source_candidate_kind }}
           EXPLICIT_SOURCE_RUN_ID: ${{ inputs.source_candidate_run_id }}
           EXPLICIT_SOURCE_RUN_ATTEMPT: ${{ inputs.source_candidate_run_attempt }}
           EXPLICIT_SOURCE_ARTIFACT: ${{ inputs.source_candidate_artifact_name }}
@@ -56,21 +63,29 @@ jobs:
             const explicit = context.eventName === 'workflow_dispatch';
             let run;
             let requestedArtifact = null;
+            let sourceKind = 'IMPLEMENT';
 
             if (explicit) {
+              sourceKind = process.env.EXPLICIT_SOURCE_KIND || 'FIX';
+              if (!['FIX', 'PLAN_BRIDGE'].includes(sourceKind)) {
+                core.setFailed(`unsupported explicit candidate kind: ${sourceKind}`);
+                return;
+              }
+
               const runId = Number(process.env.EXPLICIT_SOURCE_RUN_ID);
               const runAttempt = Number(process.env.EXPLICIT_SOURCE_RUN_ATTEMPT);
               requestedArtifact = process.env.EXPLICIT_SOURCE_ARTIFACT;
               if (!Number.isSafeInteger(runId) || runId <= 0 ||
                   !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
-                core.setFailed('invalid explicit FIX source run identity');
+                core.setFailed(`invalid explicit ${sourceKind} source run identity`);
                 return;
               }
-              const expectedArtifact = new RegExp(
-                `^implement-candidate-\\d+-${runId}-attempt-${runAttempt}$`,
-              );
+
+              const expectedArtifact = sourceKind === 'PLAN_BRIDGE'
+                ? new RegExp(`^plan-bridge-candidate-issue-\\d+-worker-\\d+-attempt-\\d+-bridge-${runId}-attempt-${runAttempt}$`)
+                : new RegExp(`^implement-candidate-\\d+-${runId}-attempt-${runAttempt}$`);
               if (!expectedArtifact.test(requestedArtifact)) {
-                core.setFailed(`unexpected explicit FIX candidate artifact: ${requestedArtifact}`);
+                core.setFailed(`unexpected explicit ${sourceKind} candidate artifact: ${requestedArtifact}`);
                 return;
               }
 
@@ -85,18 +100,25 @@ jobs:
                 await new Promise((resolve) => setTimeout(resolve, 1000));
               }
 
+              const expectedPath = sourceKind === 'PLAN_BRIDGE'
+                ? '.github/workflows/plan-candidate-bridge.yml'
+                : '.github/workflows/fix-worker.yml';
+              const expectedEvent = sourceKind === 'PLAN_BRIDGE'
+                ? 'workflow_run'
+                : 'workflow_dispatch';
+
               if (
                 !run ||
                 run.status !== 'completed' ||
                 run.conclusion !== 'success' ||
-                run.path !== '.github/workflows/fix-worker.yml' ||
-                run.event !== 'workflow_dispatch' ||
+                run.path !== expectedPath ||
+                run.event !== expectedEvent ||
                 run.head_branch !== context.payload.repository.default_branch ||
                 run.head_sha !== context.sha ||
                 run.run_attempt !== runAttempt
               ) {
                 core.setFailed(
-                  `invalid explicit FIX source: status=${run?.status}, conclusion=${run?.conclusion}, path=${run?.path}, event=${run?.event}, head=${run?.head_branch}, sha=${run?.head_sha}, attempt=${run?.run_attempt}`,
+                  `invalid explicit ${sourceKind} source: status=${run?.status}, conclusion=${run?.conclusion}, path=${run?.path}, event=${run?.event}, head=${run?.head_branch}, sha=${run?.head_sha}, attempt=${run?.run_attempt}`,
                 );
                 return;
               }
@@ -115,7 +137,9 @@ jobs:
               per_page: 100,
             });
 
-            const pattern = new RegExp(`^implement-candidate-(\\d+)-${run.id}-attempt-${run.run_attempt}$`);
+            const pattern = sourceKind === 'PLAN_BRIDGE'
+              ? new RegExp(`^plan-bridge-candidate-issue-\\d+-worker-\\d+-attempt-\\d+-bridge-${run.id}-attempt-${run.run_attempt}$`)
+              : new RegExp(`^implement-candidate-(\\d+)-${run.id}-attempt-${run.run_attempt}$`);
             const matches = data.artifacts
               .filter((artifact) => !artifact.expired && pattern.test(artifact.name));
 
@@ -123,7 +147,7 @@ jobs:
               const exact = matches.filter((artifact) => artifact.name === requestedArtifact);
               if (exact.length !== 1 || matches.length !== 1) {
                 core.setFailed(
-                  `expected exactly one explicit FIX candidate artifact; exact=${exact.length}, total=${matches.length}`,
+                  `expected exactly one explicit ${sourceKind} candidate artifact; exact=${exact.length}, total=${matches.length}`,
                 );
                 return;
               }
@@ -160,6 +184,7 @@ jobs:
               return;
             }
 
+            core.setOutput('source_candidate_kind', sourceKind);
             core.setOutput('source_run_id', String(run.id));
             core.setOutput('source_run_attempt', String(run.run_attempt));
             core.setOutput('source_control_plane_sha', run.head_sha);
@@ -186,17 +211,29 @@ jobs:
       - name: candidate artifact 구조 확인
         if: steps.candidate_artifact.outputs.should_run == 'true'
         shell: bash
+        env:
+          SOURCE_CANDIDATE_KIND: ${{ steps.candidate_artifact.outputs.source_candidate_kind }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/seal"
-          mapfile -t implement_files < <(find "${RUNNER_TEMP}/candidate" -type f -name implement.json -print)
           mapfile -t patch_files < <(find "${RUNNER_TEMP}/candidate" -type f -name candidate.patch -print)
           mapfile -t all_files < <(find "${RUNNER_TEMP}/candidate" -type f -print)
-          if [ "${#implement_files[@]}" -ne 1 ] || [ "${#patch_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 2 ]; then
-            echo "candidate artifact must contain exactly candidate.patch and implement.json" >&2
-            exit 1
+
+          if [ "$SOURCE_CANDIDATE_KIND" = "PLAN_BRIDGE" ]; then
+            mapfile -t provenance_files < <(find "${RUNNER_TEMP}/candidate" -type f -name plan-bridge.json -print)
+            if [ "${#provenance_files[@]}" -ne 1 ] || [ "${#patch_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 2 ]; then
+              echo "PLAN bridge artifact must contain exactly candidate.patch and plan-bridge.json" >&2
+              exit 1
+            fi
+            cp "${provenance_files[0]}" "${RUNNER_TEMP}/seal/plan-bridge.json"
+          else
+            mapfile -t provenance_files < <(find "${RUNNER_TEMP}/candidate" -type f -name implement.json -print)
+            if [ "${#provenance_files[@]}" -ne 1 ] || [ "${#patch_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 2 ]; then
+              echo "candidate artifact must contain exactly candidate.patch and implement.json" >&2
+              exit 1
+            fi
+            cp "${provenance_files[0]}" "${RUNNER_TEMP}/seal/implement.json"
           fi
-          cp "${implement_files[0]}" "${RUNNER_TEMP}/seal/implement.json"
           cp "${patch_files[0]}" "${RUNNER_TEMP}/seal/candidate.patch"
 
       - name: Node 설정
@@ -214,7 +251,9 @@ jobs:
         if: steps.candidate_artifact.outputs.should_run == 'true'
         run: npm exec -- tsx src/self-improvement/seal-handler.ts
         env:
+          SOURCE_CANDIDATE_KIND: ${{ steps.candidate_artifact.outputs.source_candidate_kind }}
           IMPLEMENT_JSON: ${{ runner.temp }}/seal/implement.json
+          PLAN_BRIDGE_JSON: ${{ runner.temp }}/seal/plan-bridge.json
           CANDIDATE_PATCH: ${{ runner.temp }}/seal/candidate.patch
           SEALED_PATCH: ${{ runner.temp }}/seal/sealed.patch
           SEAL_JSON: ${{ runner.temp }}/seal/seal.json
@@ -596,7 +635,7 @@ jobs:
             const latestAttempt = prior[0].attempt;
             const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
             if (latest.length !== 1) {
-              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}`);
+              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}: ${latest.length}`);
               return;
             }
 
@@ -791,7 +830,7 @@ jobs:
             const latestAttempt = prior[0].attempt;
             const latest = prior.filter(({ attempt }) => attempt === latestAttempt);
             if (latest.length !== 1) {
-              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}`);
+              core.setFailed(`ambiguous prior PUBLISH artifacts for attempt ${latestAttempt}: ${latest.length}`);
               return;
             }
 

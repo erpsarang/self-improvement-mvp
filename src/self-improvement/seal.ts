@@ -5,6 +5,13 @@ import {
   FIX_WORKFLOW_PATH,
   type FixProvenance,
 } from "./fix.js";
+import {
+  PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH,
+  planCandidateBridgeArtifactName,
+  validateBridgePatch,
+  verifyPlanCandidateBridgeProvenance,
+  type PlanCandidateBridgeProvenance,
+} from "./plan-candidate-bridge.js";
 
 export const TRUSTED_RAIL_WORKFLOW_PATH = ".github/workflows/trusted-rail.yml" as const;
 
@@ -30,7 +37,15 @@ export interface SealProvenance {
   readonly repository: string;
   readonly issueNumber: number;
   readonly baseSha: string;
-  readonly sourceAuthorization: ImplementProvenance["sourceAuthorization"];
+  readonly sourceAuthorization?: ImplementProvenance["sourceAuthorization"];
+  readonly sourcePlanBridge?: {
+    readonly workflowPath: typeof PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH;
+    readonly runId: number;
+    readonly runAttempt: number;
+    readonly controlPlaneSha: string;
+    readonly candidateArtifactName: string;
+    readonly bridge: PlanCandidateBridgeProvenance;
+  };
   readonly sourceImplement?: {
     readonly workflowPath: typeof IMPLEMENT_WORKFLOW_PATH;
     readonly runId: number;
@@ -110,7 +125,8 @@ function validReviewBinding(value: unknown, issueNumber: number): boolean {
     positiveInteger(value.runAttempt) &&
     value.reviewedBranch === `ai-publish/issue-${issueNumber}` &&
     validSha(value.reviewedHeadSha) &&
-    validDigest(value.requirementsDigest) &&
+    typeof value.requirementsDigest === "string" &&
+    /^(?:sha256:)?[0-9a-f]{64}$/.test(value.requirementsDigest) &&
     validDigest(value.findingsDigest)
   );
 }
@@ -153,15 +169,19 @@ function validFixProvenance(value: unknown): value is FixProvenance {
   }
   const sourceReview = value.sourceReview as Record<string, unknown>;
   const sourceRequest = value.sourceRequest as Record<string, unknown>;
+  const sourceAuthorization = record(value.sourceAuthorization) ? value.sourceAuthorization : undefined;
+  const sourcePlanAuthorize = record(value.sourcePlanAuthorize) ? value.sourcePlanAuthorize : undefined;
+  const hasLegacyAuthority = sourceAuthorization !== undefined;
+  const hasPlanAuthority = sourcePlanAuthorize !== undefined;
   return (
     value.type === "FIX" &&
     validRepository(value.repository) &&
     positiveInteger(value.issueNumber) &&
     validSha(value.baseSha) &&
     (value.fixAttempt === 1 || value.fixAttempt === 2) &&
-    validAuthorizationBinding(value.sourceAuthorization) &&
+    hasLegacyAuthority !== hasPlanAuthority &&
+    (!hasLegacyAuthority || validAuthorizationBinding(sourceAuthorization)) &&
     value.baseSha === sourceReview.reviewedHeadSha &&
-    sourceReview.requirementsDigest === (value.sourceAuthorization as Record<string, unknown>).requirementsDigest &&
     value.fixWorkflow.workflowPath === FIX_WORKFLOW_PATH &&
     positiveInteger(value.fixWorkflow.runId) &&
     positiveInteger(value.fixWorkflow.runAttempt) &&
@@ -199,6 +219,22 @@ function validateFixArtifactName(artifactName: string, fix: FixProvenance): void
   }
 }
 
+function validatePlanBridgeArtifactName(
+  artifactName: string,
+  bridge: PlanCandidateBridgeProvenance,
+): void {
+  const expected = planCandidateBridgeArtifactName({
+    issueNumber: bridge.issueNumber,
+    workerRunId: bridge.sourceWorker.runId,
+    workerRunAttempt: bridge.sourceWorker.runAttempt,
+    bridgeRunId: bridge.bridgeWorkflow.runId,
+    bridgeRunAttempt: bridge.bridgeWorkflow.runAttempt,
+  });
+  if (artifactName !== expected) {
+    throw new Error("PLAN bridge candidate artifact identity가 provenance와 일치하지 않습니다");
+  }
+}
+
 function validatePatch(candidatePatch: string | Buffer, expectedDigest: string): void {
   const patchSize =
     typeof candidatePatch === "string"
@@ -228,6 +264,25 @@ function validateSealRun(sealRun: SealRunIdentity): void {
   if (!validSha(sealRun.trustedCodeSha)) {
     throw new Error("SEAL trusted control-plane SHA가 올바르지 않습니다");
   }
+}
+
+export function validatePlanBridgeCandidateForSeal(
+  bridgeValue: unknown,
+  candidatePatch: string | Buffer,
+  sourceRun: CandidateSourceRun,
+): PlanCandidateBridgeProvenance {
+  const bridge = verifyPlanCandidateBridgeProvenance(bridgeValue);
+  validateSourceRun(sourceRun, PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH);
+  if (bridge.repository !== sourceRun.repository) throw new Error("PLAN bridge repository가 일치하지 않습니다");
+  if (
+    bridge.bridgeWorkflow.runId !== sourceRun.id ||
+    bridge.bridgeWorkflow.runAttempt !== sourceRun.runAttempt ||
+    bridge.bridgeWorkflow.trustedCodeSha !== sourceRun.controlPlaneSha
+  ) {
+    throw new Error("PLAN bridge source run identity가 일치하지 않습니다");
+  }
+  validateBridgePatch(bridge, candidatePatch);
+  return bridge;
 }
 
 export function validateImplementCandidateForSeal(
@@ -266,6 +321,48 @@ export function validateFixCandidateForSeal(
   }
   validatePatch(candidatePatch, fix.candidatePatchDigest);
   return fix;
+}
+
+export function sealPlanBridgeCandidate(input: {
+  readonly bridge: unknown;
+  readonly candidatePatch: string | Buffer;
+  readonly sourceRun: CandidateSourceRun;
+  readonly sealRun: SealRunIdentity;
+  readonly candidateArtifactName: string;
+}): { readonly sealedPatch: Buffer; readonly provenance: SealProvenance } {
+  const bridge = validatePlanBridgeCandidateForSeal(input.bridge, input.candidatePatch, input.sourceRun);
+  validateSealRun(input.sealRun);
+  validatePlanBridgeArtifactName(input.candidateArtifactName, bridge);
+  const sealedPatch = Buffer.from(input.candidatePatch);
+  const sealedPatchDigest = sha256(sealedPatch);
+  if (sealedPatchDigest !== bridge.candidatePatchDigest) {
+    throw new Error("sealed PLAN bridge patch digest가 candidate patch digest와 일치하지 않습니다");
+  }
+
+  return Object.freeze({
+    sealedPatch,
+    provenance: Object.freeze({
+      type: "SEAL" as const,
+      repository: bridge.repository,
+      issueNumber: bridge.issueNumber,
+      baseSha: bridge.baseSha,
+      sourcePlanBridge: {
+        workflowPath: PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH,
+        runId: bridge.bridgeWorkflow.runId,
+        runAttempt: bridge.bridgeWorkflow.runAttempt,
+        controlPlaneSha: input.sourceRun.controlPlaneSha,
+        candidateArtifactName: input.candidateArtifactName,
+        bridge,
+      },
+      sealWorkflow: {
+        workflowPath: TRUSTED_RAIL_WORKFLOW_PATH,
+        runId: input.sealRun.runId,
+        runAttempt: input.sealRun.runAttempt,
+        trustedCodeSha: input.sealRun.trustedCodeSha,
+      },
+      sealedPatchDigest,
+    }),
+  });
 }
 
 export function sealImplementCandidate(input: {
@@ -339,7 +436,13 @@ export function sealFixCandidate(input: {
       repository: fix.repository,
       issueNumber: fix.issueNumber,
       baseSha: fix.baseSha,
-      sourceAuthorization: { ...fix.sourceAuthorization },
+      ...(fix.sourceAuthorization ? { sourceAuthorization: { ...fix.sourceAuthorization } } : {}),
+      ...(fix.sourcePlanAuthorize ? {
+        sourcePlanBridge: {
+          ...fix.sourcePlanAuthorize.sourcePlanBridge,
+          bridge: fix.sourcePlanAuthorize.sourcePlanBridge.bridge,
+        },
+      } : {}),
       sourceFix: {
         workflowPath: FIX_WORKFLOW_PATH,
         runId: fix.fixWorkflow.runId,
@@ -364,7 +467,7 @@ export function sealFixCandidate(input: {
 }
 
 export function validateSealProvenance(value: unknown): SealProvenance {
-  if (!record(value) || !record(value.sealWorkflow) || !validAuthorizationBinding(value.sourceAuthorization)) {
+  if (!record(value) || !record(value.sealWorkflow)) {
     throw new Error("SEAL provenance가 올바르지 않습니다");
   }
   if (
@@ -381,13 +484,48 @@ export function validateSealProvenance(value: unknown): SealProvenance {
     throw new Error("SEAL provenance가 올바르지 않습니다");
   }
 
+  const hasPlanBridge = record(value.sourcePlanBridge);
   const hasImplement = record(value.sourceImplement);
   const hasFix = record(value.sourceFix);
-  if (hasImplement === hasFix) {
-    throw new Error("SEAL provenance에는 IMPLEMENT 또는 FIX source 하나만 있어야 합니다");
+  if (
+    (hasImplement && (hasPlanBridge || hasFix)) ||
+    (!hasPlanBridge && !hasImplement && !hasFix)
+  ) {
+    throw new Error("SEAL provenance source 조합이 올바르지 않습니다");
   }
 
-  if (hasImplement) {
+  if (hasPlanBridge && !hasFix) {
+    if (value.sourceAuthorization !== undefined) {
+      throw new Error("PLAN bridge SEAL은 legacy authorization을 포함할 수 없습니다");
+    }
+    const source = value.sourcePlanBridge as Record<string, unknown>;
+    if (
+      source.workflowPath !== PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH ||
+      !positiveInteger(source.runId) ||
+      !positiveInteger(source.runAttempt) ||
+      !validSha(source.controlPlaneSha) ||
+      typeof source.candidateArtifactName !== "string" ||
+      !record(source.bridge)
+    ) {
+      throw new Error("SEAL PLAN bridge source가 올바르지 않습니다");
+    }
+    const bridge = verifyPlanCandidateBridgeProvenance(source.bridge);
+    validatePlanBridgeArtifactName(source.candidateArtifactName, bridge);
+    if (
+      bridge.repository !== value.repository ||
+      bridge.issueNumber !== value.issueNumber ||
+      bridge.baseSha !== value.baseSha ||
+      bridge.bridgeWorkflow.runId !== source.runId ||
+      bridge.bridgeWorkflow.runAttempt !== source.runAttempt ||
+      bridge.bridgeWorkflow.trustedCodeSha !== source.controlPlaneSha ||
+      bridge.candidatePatchDigest !== value.sealedPatchDigest
+    ) {
+      throw new Error("SEAL PLAN bridge provenance chain이 올바르지 않습니다");
+    }
+  } else if (hasImplement) {
+    if (!validAuthorizationBinding(value.sourceAuthorization)) {
+      throw new Error("SEAL IMPLEMENT authorization이 올바르지 않습니다");
+    }
     const source = value.sourceImplement as Record<string, unknown>;
     if (
       source.workflowPath !== IMPLEMENT_WORKFLOW_PATH ||
@@ -398,12 +536,45 @@ export function validateSealProvenance(value: unknown): SealProvenance {
       !validDigest(source.candidatePatchDigest) ||
       !validAiExecution(source.aiExecution) ||
       source.candidatePatchDigest !== value.sealedPatchDigest ||
-      value.baseSha !== (value.sourceAuthorization as Record<string, unknown>).authorizedBaseSha
+      value.baseSha !== value.sourceAuthorization.authorizedBaseSha
     ) {
       throw new Error("SEAL IMPLEMENT source가 올바르지 않습니다");
     }
   } else {
     const source = value.sourceFix as Record<string, unknown>;
+    const sourceAuthorization = value.sourceAuthorization;
+    const hasLegacyAuthority = validAuthorizationBinding(sourceAuthorization);
+    const hasPlanAuthority = hasPlanBridge;
+    if (hasLegacyAuthority === hasPlanAuthority) {
+      throw new Error("SEAL FIX authority가 올바르지 않습니다");
+    }
+
+    let planBridge: PlanCandidateBridgeProvenance | undefined;
+    if (hasPlanAuthority) {
+      const planSource = value.sourcePlanBridge as Record<string, unknown>;
+      if (
+        planSource.workflowPath !== PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH ||
+        !positiveInteger(planSource.runId) ||
+        !positiveInteger(planSource.runAttempt) ||
+        !validSha(planSource.controlPlaneSha) ||
+        typeof planSource.candidateArtifactName !== "string" ||
+        !record(planSource.bridge)
+      ) {
+        throw new Error("SEAL PLAN FIX authority source가 올바르지 않습니다");
+      }
+      planBridge = verifyPlanCandidateBridgeProvenance(planSource.bridge);
+      validatePlanBridgeArtifactName(planSource.candidateArtifactName, planBridge);
+      if (
+        planBridge.repository !== value.repository ||
+        planBridge.issueNumber !== value.issueNumber ||
+        planBridge.bridgeWorkflow.runId !== planSource.runId ||
+        planBridge.bridgeWorkflow.runAttempt !== planSource.runAttempt ||
+        planBridge.bridgeWorkflow.trustedCodeSha !== planSource.controlPlaneSha
+      ) {
+        throw new Error("SEAL PLAN FIX authority chain이 올바르지 않습니다");
+      }
+    }
+
     if (
       source.workflowPath !== FIX_WORKFLOW_PATH ||
       !positiveInteger(source.runId) ||
@@ -423,7 +594,10 @@ export function validateSealProvenance(value: unknown): SealProvenance {
     const sourceRequest = source.sourceRequest as Record<string, unknown>;
     if (
       sourceReview.reviewedHeadSha !== value.baseSha ||
-      sourceReview.requirementsDigest !== (value.sourceAuthorization as Record<string, unknown>).requirementsDigest ||
+      (hasLegacyAuthority &&
+        sourceReview.requirementsDigest !== sourceAuthorization.requirementsDigest) ||
+      (planBridge !== undefined &&
+        sourceReview.requirementsDigest !== planBridge.requirement.digest) ||
       sourceRequest.artifactName !==
         `fix-request-${sourceReview.runId}-fix-${source.fixAttempt}-${sourceRequest.runId}-attempt-${sourceRequest.runAttempt}`
     ) {
@@ -439,18 +613,25 @@ export function sealSourceRunIdentity(seal: SealProvenance): {
   readonly runAttempt: number;
   readonly candidatePatchDigest: string;
 } {
-  if (seal.sourceImplement) {
-    return {
-      runId: seal.sourceImplement.runId,
-      runAttempt: seal.sourceImplement.runAttempt,
-      candidatePatchDigest: seal.sourceImplement.candidatePatchDigest,
-    };
-  }
   if (seal.sourceFix) {
     return {
       runId: seal.sourceFix.runId,
       runAttempt: seal.sourceFix.runAttempt,
       candidatePatchDigest: seal.sourceFix.candidatePatchDigest,
+    };
+  }
+  if (seal.sourcePlanBridge) {
+    return {
+      runId: seal.sourcePlanBridge.runId,
+      runAttempt: seal.sourcePlanBridge.runAttempt,
+      candidatePatchDigest: seal.sourcePlanBridge.bridge.candidatePatchDigest,
+    };
+  }
+  if (seal.sourceImplement) {
+    return {
+      runId: seal.sourceImplement.runId,
+      runAttempt: seal.sourceImplement.runAttempt,
+      candidatePatchDigest: seal.sourceImplement.candidatePatchDigest,
     };
   }
   throw new Error("SEAL source가 없습니다");
