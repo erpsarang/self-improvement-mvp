@@ -1,0 +1,181 @@
+name: Trusted PLAN IMPLEMENT Handoff
+
+on:
+  workflow_run:
+    workflows: ["Trusted PLAN_AUTHORIZE"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  handoff:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      github.event.workflow_run.event == 'issue_comment'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: PLAN_AUTHORIZE artifact exact 선택 또는 replay no-op
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (run.path !== '.github/workflows/plan-authorize.yml') {
+              core.setFailed(`unexpected source workflow path: ${run.path}`);
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const pattern = new RegExp(
+              `^plan-authorize-issue-\\d+-plan-\\d+-attempt-\\d+-approval-\\d+-run-${run.id}-attempt-([1-9]\\d*)$`,
+            );
+            const matches = data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .map((artifact) => {
+                const match = pattern.exec(artifact.name);
+                return match ? { artifact, attempt: Number(match[1]) } : null;
+              })
+              .filter(Boolean);
+            const current = matches.filter(({ attempt }) => attempt === run.run_attempt);
+            const prior = matches.filter(({ attempt }) => attempt < run.run_attempt);
+
+            if (current.length === 1 && matches.length === 1) {
+              const artifact = current[0].artifact;
+              core.setOutput('should_run', 'true');
+              core.setOutput('name', artifact.name);
+              core.setOutput('id', String(artifact.id));
+              core.setOutput('digest', artifact.digest ?? '');
+              return;
+            }
+
+            if (current.length === 0 && prior.length === 1 && matches.length === 1) {
+              core.info(`PLAN_AUTHORIZE attempt ${run.run_attempt} reused prior artifact; handoff is a no-op`);
+              core.setOutput('should_run', 'false');
+              return;
+            }
+
+            if (matches.length === 0) {
+              const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const authorizeJobs = jobsData.jobs.filter((job) => job.name === 'authorize');
+              if (authorizeJobs.length === 1 && authorizeJobs[0].conclusion === 'skipped') {
+                core.info('PLAN_AUTHORIZE job was skipped; handoff is a no-op');
+                core.setOutput('should_run', 'false');
+                return;
+              }
+            }
+
+            core.setFailed(
+              `expected one current PLAN_AUTHORIZE artifact, one prior replay artifact, or skipped authorize job; current=${current.length}, prior=${prior.length}, total=${matches.length}`,
+            );
+
+      - name: Trusted control-plane checkout
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: control
+
+      - name: Node 설정
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: control/package-lock.json
+
+      - name: Trusted dependencies 설치
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control
+        run: npm ci --ignore-scripts
+
+      - name: PLAN_AUTHORIZE artifact 다운로드
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.name }}
+          path: ${{ runner.temp }}/plan-authorize
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: PLAN_AUTHORIZE artifact 구조 확인
+        if: steps.source.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/plan-implement-handoff"
+          mapfile -t files < <(find "${RUNNER_TEMP}/plan-authorize" -type f -name plan-authorize.json -print)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "plan-authorize.json must exist exactly once" >&2
+            exit 1
+          fi
+          cp "${files[0]}" "${RUNNER_TEMP}/plan-implement-handoff/plan-authorize.json"
+
+      - name: exact 승인 PLAN 검증 및 ImplementContract 생성
+        if: steps.source.outputs.should_run == 'true'
+        id: prepare
+        working-directory: control
+        run: node --import tsx src/self-improvement/plan-implement-handoff-handler.ts prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          PLAN_AUTHORIZE_JSON: ${{ runner.temp }}/plan-implement-handoff/plan-authorize.json
+          HANDOFF_OUTPUT: ${{ runner.temp }}/plan-implement-handoff
+
+      - name: exact approved base SHA checkout
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.prepare.outputs.base_sha }}
+          persist-credentials: false
+          path: target
+
+      - name: exact-SHA Context Pack 생성
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control
+        shell: bash
+        env:
+          TARGET_ROOT: ${{ github.workspace }}/target
+          HANDOFF_OUTPUT: ${{ runner.temp }}/plan-implement-handoff
+        run: |
+          set -euo pipefail
+          OBSERVED_BASE_SHA="$(git -C "$TARGET_ROOT" rev-parse HEAD)"
+          export OBSERVED_BASE_SHA
+          node --import tsx src/self-improvement/plan-implement-handoff-handler.ts context
+
+      - name: Trusted ImplementContract / Context Pack artifact 저장
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.artifact_name }}
+          path: |
+            ${{ runner.temp }}/plan-implement-handoff/contract.json
+            ${{ runner.temp }}/plan-implement-handoff/context.json
+            ${{ runner.temp }}/plan-implement-handoff/prompt.md
+            ${{ runner.temp }}/plan-implement-handoff/schema.json
+            ${{ runner.temp }}/plan-implement-handoff/handoff.json
+            ${{ runner.temp }}/plan-implement-handoff/source.json
+          if-no-files-found: error
