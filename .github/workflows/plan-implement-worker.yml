@@ -129,7 +129,7 @@ jobs:
 
       - name: Untrusted bounded IMPLEMENT Worker
         if: steps.source.outputs.should_run == 'true'
-        timeout-minutes: 2
+        timeout-minutes: 4
         uses: openai/codex-action@v1
         env:
           GH_TOKEN: ""
