@@ -1,5 +1,9 @@
 import { sha256 } from "./implement.js";
-import type { ReviewProvenance, SemanticReviewFinding } from "./review.js";
+import type {
+  PlanReviewAuthority,
+  ReviewProvenance,
+  SemanticReviewFinding,
+} from "./review.js";
 
 // FIX는 IMPLEMENT와 같은 trust class이지만 explicit dispatch 재진입을 위해 전용 Worker workflow를 사용한다.
 export const FIX_WORKFLOW_PATH = ".github/workflows/fix-worker.yml" as const;
@@ -41,13 +45,19 @@ export interface FixRequestProvenance {
   };
 }
 
+export interface FixPlanAuthorizeBinding extends PlanReviewAuthority {
+  readonly sourcePlanBridge: NonNullable<
+    ReviewProvenance["sourceVerify"]["sourcePublish"]["sourceSeal"]["sourcePlanBridge"]
+  >;
+}
+
 export interface FixProvenance {
   readonly type: "FIX";
   readonly repository: string;
   readonly issueNumber: number;
   readonly baseSha: string;
   readonly fixAttempt: FixAttempt;
-  readonly sourceAuthorization: {
+  readonly sourceAuthorization?: {
     readonly runId: number;
     readonly runAttempt: number;
     readonly approvalCommentId: number;
@@ -55,6 +65,7 @@ export interface FixProvenance {
     readonly requirementsDigest: string;
     readonly authorizedBaseSha: string;
   };
+  readonly sourcePlanAuthorize?: FixPlanAuthorizeBinding;
   readonly sourceReview: FixReviewBinding;
   readonly sourceRequest: {
     readonly workflowPath: typeof FIX_REQUEST_WORKFLOW_PATH;
@@ -93,6 +104,10 @@ function validSha(value: unknown): value is string {
 
 function validDigest(value: unknown): value is string {
   return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function validRequirementDigest(value: unknown): value is string {
+  return typeof value === "string" && /^(?:sha256:)?[0-9a-f]{64}$/.test(value);
 }
 
 function localBlockers(review: ReviewProvenance): readonly SemanticReviewFinding[] {
@@ -189,7 +204,7 @@ export function validateFixRequestProvenance(value: unknown): FixRequestProvenan
     !positiveInteger(value.sourceReview.runAttempt) ||
     value.sourceReview.reviewedBranch !== `ai-publish/issue-${String(value.issueNumber)}` ||
     !validSha(value.sourceReview.reviewedHeadSha) ||
-    !validDigest(value.sourceReview.requirementsDigest) ||
+    !validRequirementDigest(value.sourceReview.requirementsDigest) ||
     !validDigest(value.sourceReview.findingsDigest) ||
     value.requestWorkflow.workflowPath !== FIX_REQUEST_WORKFLOW_PATH ||
     !positiveInteger(value.requestWorkflow.runId) ||
@@ -257,9 +272,47 @@ export function createFixProvenance(input: {
       : input.candidatePatch.length;
   if (patchSize === 0) throw new Error("FIX candidate patch가 비어 있습니다");
 
-  const compactAuthorization = review.sourceVerify.sourcePublish.sourceSeal.sourceAuthorization;
-  if (compactAuthorization.requirementsDigest !== review.requirementsDigest) {
-    throw new Error("FIX source REVIEW와 authorization requirements digest가 일치하지 않습니다");
+  const sourceSeal = review.sourceVerify.sourcePublish.sourceSeal;
+  const compactAuthorization = sourceSeal.sourceAuthorization;
+  const planAuthority = review.sourcePlanAuthorize;
+  const sourcePlanBridge = sourceSeal.sourcePlanBridge;
+
+  let authorityBinding:
+    | { readonly sourceAuthorization: NonNullable<typeof compactAuthorization> }
+    | { readonly sourcePlanAuthorize: FixPlanAuthorizeBinding };
+
+  if (compactAuthorization) {
+    if (planAuthority || sourcePlanBridge) {
+      throw new Error("FIX source REVIEW에 legacy와 PLAN authority가 동시에 존재합니다");
+    }
+    if (compactAuthorization.requirementsDigest !== review.requirementsDigest) {
+      throw new Error("FIX source REVIEW와 authorization requirements digest가 일치하지 않습니다");
+    }
+    authorityBinding = {
+      sourceAuthorization: { ...compactAuthorization },
+    };
+  } else {
+    if (!planAuthority || !sourcePlanBridge) {
+      throw new Error("PLAN FIX에는 PLAN_AUTHORIZE와 sourcePlanBridge가 모두 필요합니다");
+    }
+    if (
+      planAuthority.requirement.digest !== review.requirementsDigest ||
+      sourcePlanBridge.bridge.requirement.digest !== review.requirementsDigest ||
+      planAuthority.bridgeDigest !== sourcePlanBridge.bridge.bridgeDigest
+    ) {
+      throw new Error("FIX source REVIEW와 PLAN authority requirement가 일치하지 않습니다");
+    }
+    authorityBinding = {
+      sourcePlanAuthorize: {
+        ...planAuthority,
+        artifact: { ...planAuthority.artifact },
+        requirement: { ...planAuthority.requirement },
+        sourcePlanBridge: {
+          ...sourcePlanBridge,
+          bridge: sourcePlanBridge.bridge,
+        },
+      },
+    };
   }
 
   return Object.freeze({
@@ -268,7 +321,7 @@ export function createFixProvenance(input: {
     issueNumber: review.issueNumber,
     baseSha: review.reviewedHeadSha,
     fixAttempt: request.fixAttempt,
-    sourceAuthorization: { ...compactAuthorization },
+    ...authorityBinding,
     sourceReview: { ...request.sourceReview },
     sourceRequest: {
       workflowPath: FIX_REQUEST_WORKFLOW_PATH,
