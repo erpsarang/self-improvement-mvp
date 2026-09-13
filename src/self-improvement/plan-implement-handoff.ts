@@ -1,0 +1,282 @@
+import { createHash } from "node:crypto";
+import {
+  createImplementContract,
+  validateApprovedPlanIdentity,
+  type ImplementContract,
+} from "./implement-contract.js";
+import {
+  toApprovedPlanIdentity,
+  type PlanAuthorizeArtifact,
+} from "./plan-authorization.js";
+
+export const PLAN_AUTHORIZE_WORKFLOW_PATH = ".github/workflows/plan-authorize.yml" as const;
+export const PLAN_WORKFLOW_PATH = ".github/workflows/plan.yml" as const;
+export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = 80_000;
+export const PLAN_IMPLEMENT_MAX_PATCH_BYTES = 80_000;
+export const PLAN_IMPLEMENT_MAX_FILES = 8;
+
+const SHA256 = /^[0-9a-f]{64}$/;
+const GIT_SHA = /^[0-9a-f]{40,64}$/;
+const SAFE_PATH = /^[A-Za-z0-9._/-]+$/;
+const TRUSTED_VALIDATION_COMMANDS = new Set(["npm test", "npm run build"]);
+
+export interface PlanAuthorizeSourceRun {
+  readonly id: number;
+  readonly runAttempt: number;
+  readonly repository: string;
+  readonly workflowPath: string;
+  readonly event: string;
+  readonly conclusion: string;
+  readonly headBranch: string;
+  readonly defaultBranch: string;
+  readonly headSha: string;
+  readonly currentDefaultSha: string;
+}
+
+export interface PlanImplementationScopeInput {
+  readonly ready: boolean;
+  readonly allowedPaths: readonly string[];
+  readonly requiredChanges: readonly string[];
+  readonly forbiddenChanges: readonly string[];
+  readonly validationCommands: readonly string[];
+}
+
+export interface ApprovedPlanDocument {
+  readonly questions: readonly string[];
+  readonly implementationScope: PlanImplementationScopeInput;
+}
+
+export interface PlanAuthorizeArtifactMetadata {
+  readonly name: string;
+  readonly id: number;
+  readonly digest: string;
+}
+
+export interface PlanImplementHandoffPayload {
+  readonly schemaVersion: 1;
+  readonly kind: "trusted-plan-implement-handoff";
+  readonly repository: string;
+  readonly baseSha: string;
+  readonly issueNumber: number;
+  readonly sourcePlanAuthorize: {
+    readonly runId: number;
+    readonly runAttempt: number;
+    readonly artifact: PlanAuthorizeArtifactMetadata;
+  };
+  readonly approvedPlan: {
+    readonly runId: number;
+    readonly runAttempt: number;
+    readonly artifactName: string;
+  };
+  readonly approvalCommentId: number;
+  readonly contractDigest: string;
+  readonly contextDigest: string;
+}
+
+export interface PlanImplementHandoffManifest extends PlanImplementHandoffPayload {
+  readonly digestAlgorithm: "sha256";
+  readonly handoffDigest: string;
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function positiveInteger(name: string, value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive safe integer`);
+  }
+}
+
+function assertDigest(name: string, value: unknown): asserts value is string {
+  if (typeof value !== "string" || !SHA256.test(value)) {
+    throw new Error(`${name} must be a lowercase SHA-256 digest`);
+  }
+}
+
+function assertSafePath(path: string): void {
+  if (
+    !path.trim() ||
+    !SAFE_PATH.test(path) ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    path.includes("*") ||
+    path.includes("?") ||
+    path.includes("[") ||
+    path.endsWith("/") ||
+    path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error(`unsafe approved PLAN path: ${path}`);
+  }
+}
+
+function exactArray(name: string, value: unknown, max: number, allowEmpty: boolean): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.trim().length > 0)) {
+    throw new Error(`invalid ${name}`);
+  }
+  if ((!allowEmpty && value.length === 0) || value.length > max) {
+    throw new Error(`${name} exceeds or misses its bounded size`);
+  }
+  return [...value] as string[];
+}
+
+function authorizationPayload(artifact: PlanAuthorizeArtifact): Omit<PlanAuthorizeArtifact, "digestAlgorithm" | "authorizationDigest"> {
+  return {
+    schemaVersion: 1,
+    kind: "trusted-plan-authorize",
+    requirement: { ...artifact.requirement },
+    repository: artifact.repository,
+    targetSha: artifact.targetSha,
+    plan: {
+      runId: artifact.plan.runId,
+      runAttempt: artifact.plan.runAttempt,
+      artifact: { ...artifact.plan.artifact },
+      provenanceArtifact: { ...artifact.plan.provenanceArtifact },
+    },
+    approval: { ...artifact.approval },
+    authorization: { ...artifact.authorization },
+  };
+}
+
+export function verifyPlanAuthorizeArtifact(value: unknown): PlanAuthorizeArtifact {
+  if (!record(value)) throw new Error("PLAN_AUTHORIZE artifact must be an object");
+  if (value.schemaVersion !== 1 || value.kind !== "trusted-plan-authorize" || value.digestAlgorithm !== "sha256") {
+    throw new Error("unsupported PLAN_AUTHORIZE artifact schema");
+  }
+  if (!record(value.authorization)) throw new Error("PLAN_AUTHORIZE authorization identity missing");
+  positiveInteger("authorization.runId", value.authorization.runId);
+  positiveInteger("authorization.runAttempt", value.authorization.runAttempt);
+  assertDigest("authorizationDigest", value.authorizationDigest);
+
+  const artifact = value as unknown as PlanAuthorizeArtifact;
+  validateApprovedPlanIdentity(toApprovedPlanIdentity(artifact));
+  const expected = createHash("sha256")
+    .update(JSON.stringify(authorizationPayload(artifact)), "utf8")
+    .digest("hex");
+  if (artifact.authorizationDigest !== expected) {
+    throw new Error("PLAN_AUTHORIZE artifact digest mismatch");
+  }
+  return artifact;
+}
+
+export function validatePlanAuthorizeSource(
+  artifact: PlanAuthorizeArtifact,
+  source: PlanAuthorizeSourceRun,
+): void {
+  verifyPlanAuthorizeArtifact(artifact);
+  positiveInteger("source run id", source.id);
+  positiveInteger("source run attempt", source.runAttempt);
+  if (source.repository !== artifact.repository) throw new Error("PLAN_AUTHORIZE source repository mismatch");
+  if (source.workflowPath !== PLAN_AUTHORIZE_WORKFLOW_PATH) throw new Error("unexpected PLAN_AUTHORIZE source workflow");
+  if (source.event !== "issue_comment" || source.conclusion !== "success") {
+    throw new Error("PLAN_AUTHORIZE source run is not a successful issue_comment run");
+  }
+  if (source.headBranch !== source.defaultBranch) throw new Error("PLAN_AUTHORIZE source is not on the default branch");
+  if (!GIT_SHA.test(source.headSha) || !GIT_SHA.test(source.currentDefaultSha)) throw new Error("invalid source SHA");
+  if (source.id !== artifact.authorization.runId || source.runAttempt !== artifact.authorization.runAttempt) {
+    throw new Error("PLAN_AUTHORIZE source run identity mismatch");
+  }
+  if (source.headSha !== artifact.targetSha) throw new Error("PLAN_AUTHORIZE source SHA mismatch");
+  if (source.currentDefaultSha !== artifact.targetSha) {
+    throw new Error("default branch moved after PLAN approval; re-plan required");
+  }
+}
+
+export function validateApprovedPlanDocument(value: unknown): ApprovedPlanDocument {
+  if (!record(value)) throw new Error("approved PLAN must be an object");
+  if (!Array.isArray(value.questions) || !value.questions.every((item) => typeof item === "string")) {
+    throw new Error("approved PLAN questions are invalid");
+  }
+  if (value.questions.length !== 0) throw new Error("approved PLAN still has blocking questions");
+  if (!record(value.implementationScope)) throw new Error("approved PLAN implementationScope missing");
+
+  const scope = value.implementationScope;
+  const expectedKeys = ["allowedPaths", "forbiddenChanges", "ready", "requiredChanges", "validationCommands"];
+  if (JSON.stringify(Object.keys(scope).sort()) !== JSON.stringify(expectedKeys)) {
+    throw new Error("approved PLAN implementationScope shape is invalid");
+  }
+  if (scope.ready !== true) throw new Error("approved PLAN implementationScope is not ready");
+
+  const allowedPaths = exactArray("allowedPaths", scope.allowedPaths, PLAN_IMPLEMENT_MAX_FILES, false);
+  const requiredChanges = exactArray("requiredChanges", scope.requiredChanges, 8, false);
+  const forbiddenChanges = exactArray("forbiddenChanges", scope.forbiddenChanges, 8, true);
+  const validationCommands = exactArray("validationCommands", scope.validationCommands, 2, false);
+  if (new Set(allowedPaths).size !== allowedPaths.length) throw new Error("approved PLAN allowedPaths must be unique");
+  for (const path of allowedPaths) assertSafePath(path);
+  for (const command of validationCommands) {
+    if (!TRUSTED_VALIDATION_COMMANDS.has(command)) throw new Error(`untrusted approved validation command: ${command}`);
+  }
+
+  return {
+    questions: [],
+    implementationScope: {
+      ready: true,
+      allowedPaths,
+      requiredChanges,
+      forbiddenChanges,
+      validationCommands,
+    },
+  };
+}
+
+export function createPlanImplementContract(
+  authorization: PlanAuthorizeArtifact,
+  planValue: unknown,
+): ImplementContract {
+  const trustedAuthorization = verifyPlanAuthorizeArtifact(authorization);
+  const plan = validateApprovedPlanDocument(planValue);
+  const scope = plan.implementationScope;
+  return createImplementContract(toApprovedPlanIdentity(trustedAuthorization), {
+    allowedPaths: scope.allowedPaths,
+    requiredChanges: scope.requiredChanges,
+    forbiddenChanges: scope.forbiddenChanges,
+    validationCommands: scope.validationCommands,
+    maxFilesChanged: scope.allowedPaths.length,
+    maxContextBytes: PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
+    maxPatchBytes: PLAN_IMPLEMENT_MAX_PATCH_BYTES,
+  });
+}
+
+export function planImplementHandoffArtifactName(authorization: PlanAuthorizeArtifact): string {
+  const trusted = verifyPlanAuthorizeArtifact(authorization);
+  return `plan-implement-handoff-issue-${trusted.requirement.issueNumber}-plan-${trusted.plan.runId}-attempt-${trusted.plan.runAttempt}-approval-${trusted.approval.commentId}`;
+}
+
+export function createPlanImplementHandoffManifest(input: {
+  readonly authorization: PlanAuthorizeArtifact;
+  readonly sourceArtifact: PlanAuthorizeArtifactMetadata;
+  readonly contract: ImplementContract;
+  readonly contextDigest: string;
+}): PlanImplementHandoffManifest {
+  const authorization = verifyPlanAuthorizeArtifact(input.authorization);
+  assertDigest("source PLAN_AUTHORIZE artifact digest", input.sourceArtifact.digest);
+  positiveInteger("source PLAN_AUTHORIZE artifact id", input.sourceArtifact.id);
+  if (!input.sourceArtifact.name.trim()) throw new Error("source PLAN_AUTHORIZE artifact name missing");
+  assertDigest("contextDigest", input.contextDigest);
+  if (input.contract.repository !== authorization.repository || input.contract.baseSha !== authorization.targetSha) {
+    throw new Error("IMPLEMENT contract is not bound to approved PLAN identity");
+  }
+
+  const payload: PlanImplementHandoffPayload = {
+    schemaVersion: 1,
+    kind: "trusted-plan-implement-handoff",
+    repository: authorization.repository,
+    baseSha: authorization.targetSha,
+    issueNumber: authorization.requirement.issueNumber,
+    sourcePlanAuthorize: {
+      runId: authorization.authorization.runId,
+      runAttempt: authorization.authorization.runAttempt,
+      artifact: { ...input.sourceArtifact },
+    },
+    approvedPlan: {
+      runId: authorization.plan.runId,
+      runAttempt: authorization.plan.runAttempt,
+      artifactName: authorization.plan.artifact.name,
+    },
+    approvalCommentId: authorization.approval.commentId,
+    contractDigest: input.contract.contractDigest,
+    contextDigest: input.contextDigest,
+  };
+  const handoffDigest = createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
+  return { ...payload, digestAlgorithm: "sha256", handoffDigest };
+}
