@@ -19,6 +19,8 @@ jobs:
       issues: read
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    outputs:
+      bridge_artifact_name: ${{ steps.prepare.outputs.bridge_artifact_name }}
 
     steps:
       - name: bounded Worker source와 candidate artifact exact 선택
@@ -186,3 +188,49 @@ jobs:
             ${{ runner.temp }}/plan-bridge-output/candidate.patch
             ${{ runner.temp }}/plan-bridge-output/plan-bridge.json
           if-no-files-found: error
+
+  dispatch_trusted_rail:
+    name: explicit Trusted Rail dispatch
+    needs: bridge
+    if: needs.bridge.result == 'success'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: exact PLAN bridge identity로 Trusted Rail 시작
+        uses: actions/github-script@v7
+        env:
+          CANDIDATE_ARTIFACT: ${{ needs.bridge.outputs.bridge_artifact_name }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const artifactName = process.env.CANDIDATE_ARTIFACT;
+            const currentRunId = Number(process.env.CURRENT_RUN_ID);
+            const currentRunAttempt = Number(process.env.CURRENT_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(currentRunId) || currentRunId <= 0 ||
+                !Number.isSafeInteger(currentRunAttempt) || currentRunAttempt <= 0) {
+              core.setFailed('invalid current PLAN bridge run identity');
+              return;
+            }
+            const expected = new RegExp(
+              `^plan-bridge-candidate-issue-\\d+-worker-\\d+-attempt-\\d+-bridge-${currentRunId}-attempt-${currentRunAttempt}$`,
+            );
+            if (!expected.test(artifactName)) {
+              core.setFailed(`unexpected PLAN bridge artifact identity: ${artifactName}`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'trusted-rail.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                source_candidate_kind: 'PLAN_BRIDGE',
+                source_candidate_run_id: String(currentRunId),
+                source_candidate_run_attempt: String(currentRunAttempt),
+                source_candidate_artifact_name: artifactName,
+              },
+            });
