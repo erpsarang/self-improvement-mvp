@@ -29,7 +29,9 @@ jobs:
       issue_number: ${{ steps.prepare_review.outputs.issue_number }}
       verified_head_sha: ${{ steps.prepare_review.outputs.verified_head_sha }}
       verify_artifact_name: ${{ steps.prepare_review.outputs.verify_artifact_name }}
+      authority_kind: ${{ steps.prepare_review.outputs.authority_kind }}
       authorization_artifact_name: ${{ steps.prepare_review.outputs.authorization_artifact_name }}
+      plan_authorize_artifact_name: ${{ steps.prepare_review.outputs.plan_authorize_artifact_name }}
       review_input_artifact_name: ${{ steps.prepare_review.outputs.review_input_artifact_name }}
 
     steps:
@@ -140,23 +142,37 @@ jobs:
       - name: 원본 AUTHORIZE artifact 다운로드
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          name: ${{ steps.review_source.outputs.plan_authorize_artifact_name || steps.review_source.outputs.authorization_artifact_name }}
           path: ${{ runner.temp }}/review-authorize-source
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ steps.review_source.outputs.authorization_run_id }}
+          run-id: ${{ steps.review_source.outputs.plan_authorize_run_id || steps.review_source.outputs.authorization_run_id }}
 
-      - name: AUTHORIZE artifact 구조 확인
+      - name: AUTHORIZE 또는 PLAN_AUTHORIZE artifact 구조 확인
         shell: bash
+        env:
+          AUTHORITY_KIND: ${{ steps.review_source.outputs.authority_kind }}
         run: |
           set -euo pipefail
-          mapfile -t authorize_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name authorize.json -print)
           mapfile -t all_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -print)
-          if [ "${#authorize_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
-            echo "AUTHORIZE artifact must contain exactly authorize.json" >&2
+          if [ "$AUTHORITY_KIND" = "PLAN_AUTHORIZE" ]; then
+            mapfile -t authority_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name plan-authorize.json -print)
+            if [ "${#authority_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+              echo "PLAN_AUTHORIZE artifact must contain exactly plan-authorize.json" >&2
+              exit 1
+            fi
+            cp "${authority_files[0]}" "${RUNNER_TEMP}/review/plan-authorize.json"
+          elif [ "$AUTHORITY_KIND" = "AUTHORIZE" ]; then
+            mapfile -t authority_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name authorize.json -print)
+            if [ "${#authority_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+              echo "AUTHORIZE artifact must contain exactly authorize.json" >&2
+              exit 1
+            fi
+            cp "${authority_files[0]}" "${RUNNER_TEMP}/review/authorize.json"
+          else
+            echo "unsupported REVIEW authority kind: $AUTHORITY_KIND" >&2
             exit 1
           fi
-          cp "${authorize_files[0]}" "${RUNNER_TEMP}/review/authorize.json"
 
       - name: 승인 요구사항 재검증 및 REVIEW input 생성
         id: prepare_review
@@ -166,6 +182,8 @@ jobs:
           VERIFY_ARTIFACT_NAME: ${{ steps.verify_artifact.outputs.name }}
           AUTHORIZE_JSON: ${{ runner.temp }}/review/authorize.json
           AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          PLAN_AUTHORIZE_JSON: ${{ runner.temp }}/review/plan-authorize.json
+          PLAN_AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.plan_authorize_artifact_name }}
           REVIEW_REPOSITORY: ${{ github.repository }}
           REVIEW_RUNTIME_DIR: ${{ runner.temp }}/review/input
           REVIEW_RUN_ID: ${{ github.run_id }}
@@ -395,15 +413,21 @@ jobs:
         env:
           EXPECTED_ISSUE: ${{ needs.review_prepare.outputs.issue_number }}
           EXPECTED_SHA: ${{ needs.review_prepare.outputs.verified_head_sha }}
+          EXPECTED_AUTHORITY_KIND: ${{ needs.review_prepare.outputs.authority_kind }}
           EXPECTED_AUTHORIZE: ${{ needs.review_prepare.outputs.authorization_artifact_name }}
+          EXPECTED_PLAN_AUTHORIZE: ${{ needs.review_prepare.outputs.plan_authorize_artifact_name }}
           ACTUAL_ISSUE: ${{ steps.review_source.outputs.issue_number }}
           ACTUAL_SHA: ${{ steps.review_source.outputs.verified_head_sha }}
+          ACTUAL_AUTHORITY_KIND: ${{ steps.review_source.outputs.authority_kind }}
           ACTUAL_AUTHORIZE: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          ACTUAL_PLAN_AUTHORIZE: ${{ steps.review_source.outputs.plan_authorize_artifact_name }}
         run: |
           set -euo pipefail
           if [ "$ACTUAL_ISSUE" != "$EXPECTED_ISSUE" ] || \
              [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ] || \
-             [ "$ACTUAL_AUTHORIZE" != "$EXPECTED_AUTHORIZE" ]; then
+             [ "$ACTUAL_AUTHORITY_KIND" != "$EXPECTED_AUTHORITY_KIND" ] || \
+             [ "$ACTUAL_AUTHORIZE" != "$EXPECTED_AUTHORIZE" ] || \
+             [ "$ACTUAL_PLAN_AUTHORIZE" != "$EXPECTED_PLAN_AUTHORIZE" ]; then
             echo "REVIEW source identity changed between prepare and finalize" >&2
             exit 1
           fi
@@ -411,23 +435,37 @@ jobs:
       - name: 원본 AUTHORIZE artifact 재다운로드
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          name: ${{ steps.review_source.outputs.plan_authorize_artifact_name || steps.review_source.outputs.authorization_artifact_name }}
           path: ${{ runner.temp }}/review-authorize-source
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ steps.review_source.outputs.authorization_run_id }}
+          run-id: ${{ steps.review_source.outputs.plan_authorize_run_id || steps.review_source.outputs.authorization_run_id }}
 
-      - name: AUTHORIZE artifact 구조 확인
+      - name: AUTHORIZE 또는 PLAN_AUTHORIZE artifact 구조 확인
         shell: bash
+        env:
+          AUTHORITY_KIND: ${{ steps.review_source.outputs.authority_kind }}
         run: |
           set -euo pipefail
-          mapfile -t authorize_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name authorize.json -print)
           mapfile -t all_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -print)
-          if [ "${#authorize_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
-            echo "AUTHORIZE artifact must contain exactly authorize.json" >&2
+          if [ "$AUTHORITY_KIND" = "PLAN_AUTHORIZE" ]; then
+            mapfile -t authority_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name plan-authorize.json -print)
+            if [ "${#authority_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+              echo "PLAN_AUTHORIZE artifact must contain exactly plan-authorize.json" >&2
+              exit 1
+            fi
+            cp "${authority_files[0]}" "${RUNNER_TEMP}/review/plan-authorize.json"
+          elif [ "$AUTHORITY_KIND" = "AUTHORIZE" ]; then
+            mapfile -t authority_files < <(find "${RUNNER_TEMP}/review-authorize-source" -type f -name authorize.json -print)
+            if [ "${#authority_files[@]}" -ne 1 ] || [ "${#all_files[@]}" -ne 1 ]; then
+              echo "AUTHORIZE artifact must contain exactly authorize.json" >&2
+              exit 1
+            fi
+            cp "${authority_files[0]}" "${RUNNER_TEMP}/review/authorize.json"
+          else
+            echo "unsupported REVIEW authority kind: $AUTHORITY_KIND" >&2
             exit 1
           fi
-          cp "${authorize_files[0]}" "${RUNNER_TEMP}/review/authorize.json"
 
       - name: current 또는 이전 Reviewer output artifact 선택
         id: reviewer_artifact
@@ -507,6 +545,8 @@ jobs:
           VERIFY_ARTIFACT_NAME: ${{ steps.verify_artifact.outputs.name }}
           AUTHORIZE_JSON: ${{ runner.temp }}/review/authorize.json
           AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.authorization_artifact_name }}
+          PLAN_AUTHORIZE_JSON: ${{ runner.temp }}/review/plan-authorize.json
+          PLAN_AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.plan_authorize_artifact_name }}
           REVIEW_REPOSITORY: ${{ github.repository }}
           REVIEWER_OUTPUT_JSON: ${{ runner.temp }}/review/reviewer.json
           REVIEWER_OUTPUT_ARTIFACT_NAME: ${{ steps.reviewer_artifact.outputs.name }}
