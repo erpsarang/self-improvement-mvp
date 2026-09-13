@@ -1,12 +1,13 @@
 import {
   requirementsSnapshot,
-  type ApprovedRequirements,
 } from "./authorization.js";
 import { completedFixCount, nextFixAttempt, type FixAttempt } from "./fix.js";
+import { requirementDigest } from "./plan-authorization.js";
 import {
   validateSemanticReviewerOutput,
   validateVerifyProvenanceForReview,
   type ReviewProvenance,
+  type ReviewRequirements,
 } from "./review.js";
 import { TRUSTED_RAIL_WORKFLOW_PATH } from "./seal.js";
 
@@ -81,6 +82,10 @@ function validDigest(value: unknown): value is string {
   return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
 }
 
+function validRequirementDigest(value: unknown): value is string {
+  return typeof value === "string" && /^(?:sha256:)?[0-9a-f]{64}$/.test(value);
+}
+
 function validBranch(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -96,21 +101,27 @@ function validBranch(value: unknown): value is string {
   );
 }
 
-function validateRequirements(value: unknown): ApprovedRequirements {
+function validateRequirements(value: unknown): ReviewRequirements {
   if (
     !record(value) ||
     typeof value.title !== "string" ||
     !(value.body === null || typeof value.body === "string") ||
-    !validDigest(value.digest)
+    !validRequirementDigest(value.digest)
   ) {
     throw new Error("REVIEW requirements snapshot이 올바르지 않습니다");
   }
 
-  const expected = requirementsSnapshot(value.title, value.body);
-  if (expected.digest !== value.digest) {
+  const expectedDigest = value.digest.startsWith("sha256:")
+    ? requirementsSnapshot(value.title, value.body).digest
+    : requirementDigest(value.title, value.body);
+  if (expectedDigest !== value.digest) {
     throw new Error("REVIEW requirements digest가 snapshot과 일치하지 않습니다");
   }
-  return expected;
+  return Object.freeze({
+    title: value.title,
+    body: value.body,
+    digest: value.digest,
+  });
 }
 
 function validateReviewArtifactName(
@@ -145,7 +156,6 @@ export function validateReviewForOrchestration(input: {
     !positiveInteger(value.issueNumber) ||
     typeof value.sourceVerifyArtifactName !== "string" ||
     !record(value.sourceVerify) ||
-    typeof value.sourceAuthorizationArtifactName !== "string" ||
     !record(value.requirements) ||
     !record(value.reviewWorkflow) ||
     value.reviewWorkflow.workflowPath !== TRUSTED_RAIL_WORKFLOW_PATH ||
@@ -154,7 +164,7 @@ export function validateReviewForOrchestration(input: {
     !validSha(value.reviewWorkflow.trustedCodeSha) ||
     !validBranch(value.reviewedBranch) ||
     !validSha(value.reviewedHeadSha) ||
-    !validDigest(value.requirementsDigest) ||
+    !validRequirementDigest(value.requirementsDigest) ||
     !record(value.reviewer) ||
     typeof value.reviewer.provider !== "string" ||
     value.reviewer.provider.trim().length === 0 ||
@@ -169,6 +179,12 @@ export function validateReviewForOrchestration(input: {
     throw new Error("REVIEW provenance 구조가 올바르지 않습니다");
   }
 
+  const hasLegacyAuthority = typeof value.sourceAuthorizationArtifactName === "string";
+  const hasPlanAuthority = record(value.sourcePlanAuthorize);
+  if (hasLegacyAuthority === hasPlanAuthority) {
+    throw new Error("REVIEW authority binding은 AUTHORIZE 또는 PLAN_AUTHORIZE 중 정확히 하나여야 합니다");
+  }
+
   const review = value as unknown as ReviewProvenance;
   const verify = validateVerifyProvenanceForReview({
     verify: review.sourceVerify,
@@ -176,22 +192,48 @@ export function validateReviewForOrchestration(input: {
     repository: review.repository,
   });
   const requirements = validateRequirements(review.requirements);
-  const compactAuthorization = verify.sourcePublish.sourceSeal.sourceAuthorization;
+  const seal = verify.sourcePublish.sourceSeal;
 
   if (
     review.issueNumber !== verify.issueNumber ||
     review.reviewedBranch !== verify.verifiedBranch ||
     review.reviewedHeadSha !== verify.verifiedHeadSha ||
-    review.requirementsDigest !== requirements.digest ||
-    review.requirementsDigest !== compactAuthorization.requirementsDigest
+    review.requirementsDigest !== requirements.digest
   ) {
-    throw new Error("REVIEW exact identity가 VERIFY/AUTHORIZE chain과 일치하지 않습니다");
+    throw new Error("REVIEW exact identity가 VERIFY chain과 일치하지 않습니다");
   }
 
-  const expectedAuthorizationArtifact =
-    `authorize-approval-${compactAuthorization.approvalCommentId}-attempt-${compactAuthorization.runAttempt}`;
-  if (review.sourceAuthorizationArtifactName !== expectedAuthorizationArtifact) {
-    throw new Error("REVIEW AUTHORIZE artifact binding이 올바르지 않습니다");
+  if (seal.sourcePlanBridge) {
+    if (!review.sourcePlanAuthorize || review.sourceAuthorizationArtifactName !== undefined) {
+      throw new Error("PLAN REVIEW authority binding이 올바르지 않습니다");
+    }
+    const bridge = seal.sourcePlanBridge.bridge;
+    const expectedPlanAuthority = {
+      type: "PLAN_AUTHORIZE" as const,
+      artifact: { ...bridge.sourcePlanAuthorize.artifact },
+      authorization: bridge.sourcePlanAuthorize.authorization,
+      requirement: { ...bridge.requirement },
+      bridgeDigest: bridge.bridgeDigest,
+    };
+    if (
+      review.requirementsDigest !== bridge.requirement.digest ||
+      JSON.stringify(review.sourcePlanAuthorize) !== JSON.stringify(expectedPlanAuthority)
+    ) {
+      throw new Error("REVIEW PLAN_AUTHORIZE binding이 VERIFY chain과 일치하지 않습니다");
+    }
+  } else {
+    const compactAuthorization = seal.sourceAuthorization;
+    if (!compactAuthorization || review.sourcePlanAuthorize !== undefined) {
+      throw new Error("legacy REVIEW AUTHORIZE binding이 올바르지 않습니다");
+    }
+    if (review.requirementsDigest !== compactAuthorization.requirementsDigest) {
+      throw new Error("REVIEW requirements digest가 VERIFY/AUTHORIZE chain과 일치하지 않습니다");
+    }
+    const expectedAuthorizationArtifact =
+      `authorize-approval-${compactAuthorization.approvalCommentId}-attempt-${compactAuthorization.runAttempt}`;
+    if (review.sourceAuthorizationArtifactName !== expectedAuthorizationArtifact) {
+      throw new Error("REVIEW AUTHORIZE artifact binding이 올바르지 않습니다");
+    }
   }
 
   if (
