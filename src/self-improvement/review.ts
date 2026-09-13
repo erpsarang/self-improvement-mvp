@@ -306,20 +306,15 @@ function validateAuthorizationForReview(input: {
 
 function planAuthorityFromVerify(verify: VerifyProvenance): PlanReviewAuthority | null {
   const seal = verify.sourcePublish.sourceSeal;
-  if (seal.sourcePlanBridge) {
-    const bridge = seal.sourcePlanBridge.bridge;
-    return {
-      type: "PLAN_AUTHORIZE",
-      artifact: { ...bridge.sourcePlanAuthorize.artifact },
-      authorization: bridge.sourcePlanAuthorize.authorization,
-      requirement: { ...bridge.requirement },
-      bridgeDigest: bridge.bridgeDigest,
-    };
-  }
-  if (seal.sourcePlanAuthorize) {
-    return seal.sourcePlanAuthorize;
-  }
-  return null;
+  if (!seal.sourcePlanBridge) return null;
+  const bridge = seal.sourcePlanBridge.bridge;
+  return {
+    type: "PLAN_AUTHORIZE",
+    artifact: { ...bridge.sourcePlanAuthorize.artifact },
+    authorization: bridge.sourcePlanAuthorize.authorization,
+    requirement: { ...bridge.requirement },
+    bridgeDigest: bridge.bridgeDigest,
+  };
 }
 
 function validatePlanAuthorizationForReview(input: {
@@ -348,7 +343,27 @@ function validatePlanAuthorizationForReview(input: {
   return authority;
 }
 
-export function validateVerifiedCandidateForReview(input: {
+type LegacyReviewValidationInput = {
+  readonly verify: unknown;
+  readonly verifyArtifactName: string;
+  readonly authorization: unknown;
+  readonly authorizationArtifactName: string;
+  readonly planAuthorization?: undefined;
+  readonly planAuthorizationArtifactName?: undefined;
+  readonly repository: string;
+};
+
+type PlanReviewValidationInput = {
+  readonly verify: unknown;
+  readonly verifyArtifactName: string;
+  readonly authorization?: undefined;
+  readonly authorizationArtifactName?: undefined;
+  readonly planAuthorization: unknown;
+  readonly planAuthorizationArtifactName: string;
+  readonly repository: string;
+};
+
+type FlexibleReviewValidationInput = {
   readonly verify: unknown;
   readonly verifyArtifactName: string;
   readonly authorization?: unknown;
@@ -356,13 +371,34 @@ export function validateVerifiedCandidateForReview(input: {
   readonly planAuthorization?: unknown;
   readonly planAuthorizationArtifactName?: string;
   readonly repository: string;
-}): {
+};
+
+type LegacyValidatedReview = {
   readonly verify: VerifyProvenance;
-  readonly authorityKind: "AUTHORIZE" | "PLAN_AUTHORIZE";
-  readonly authorization?: AuthorizationProvenance;
-  readonly sourcePlanAuthorize?: PlanReviewAuthority;
+  readonly authorityKind: "AUTHORIZE";
+  readonly authorization: AuthorizationProvenance;
   readonly requirements: ReviewRequirements;
-} {
+};
+
+type PlanValidatedReview = {
+  readonly verify: VerifyProvenance;
+  readonly authorityKind: "PLAN_AUTHORIZE";
+  readonly sourcePlanAuthorize: PlanReviewAuthority;
+  readonly requirements: ReviewRequirements;
+};
+
+export function validateVerifiedCandidateForReview(
+  input: LegacyReviewValidationInput,
+): LegacyValidatedReview;
+export function validateVerifiedCandidateForReview(
+  input: PlanReviewValidationInput,
+): PlanValidatedReview;
+export function validateVerifiedCandidateForReview(
+  input: FlexibleReviewValidationInput,
+): LegacyValidatedReview | PlanValidatedReview;
+export function validateVerifiedCandidateForReview(
+  input: FlexibleReviewValidationInput,
+): LegacyValidatedReview | PlanValidatedReview {
   const verify = validateVerifyProvenanceForReview(input);
   const planAuthority = planAuthorityFromVerify(verify);
   if (planAuthority) {
@@ -543,15 +579,17 @@ export function createSemanticReviewProvenance(input: {
     : input.rawReviewerOutput.length;
   if (rawSize === 0) throw new Error("Reviewer raw output이 비어 있습니다");
 
+  const authorityBinding = validated.authorityKind === "AUTHORIZE"
+    ? { sourceAuthorizationArtifactName: input.authorizationArtifactName! }
+    : { sourcePlanAuthorize: validated.sourcePlanAuthorize };
+
   return Object.freeze({
     type: "REVIEW" as const,
     repository: verify.repository,
     issueNumber: verify.issueNumber,
     sourceVerifyArtifactName: input.verifyArtifactName,
     sourceVerify: verify,
-    ...(validated.authorityKind === "AUTHORIZE"
-      ? { sourceAuthorizationArtifactName: input.authorizationArtifactName }
-      : { sourcePlanAuthorize: validated.sourcePlanAuthorize }),
+    ...authorityBinding,
     requirements: Object.freeze({ ...validated.requirements }),
     reviewWorkflow: {
       workflowPath: TRUSTED_RAIL_WORKFLOW_PATH,
