@@ -105,6 +105,16 @@ function requirementAnchors(requirement: string): string[] {
   return [...new Set(anchors)].sort((a, b) => a.localeCompare(b));
 }
 
+function requirementPathAnchors(requirement: string): string[] {
+  const anchors: string[] = [];
+  for (const match of requirement.matchAll(/`([A-Za-z0-9._/-]{3,500})`/g)) {
+    const path = match[1]!;
+    if (!path.includes("/") || isAbsolute(path) || path.includes("\\") || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) continue;
+    if (!anchors.includes(path)) anchors.push(path);
+  }
+  return anchors;
+}
+
 function occurrences(text: string, term: string): number {
   let count = 0;
   let from = 0;
@@ -242,6 +252,7 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
   candidates: readonly T[],
   maxFiles: number,
   anchors: readonly string[],
+  pathAnchors: readonly string[],
 ): T[] {
   const positive = candidates.filter((candidate) => candidate.score > 0);
   const fallback = positive.length > 0 ? positive : [...candidates];
@@ -250,7 +261,10 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
     if (candidate && !selected.some((entry) => entry.path === candidate.path) && selected.length < maxFiles) selected.push(candidate);
   };
 
-  const primaryRuntime = fallback.find((entry) => fileRolePriority(entry.path) === 0);
+  const explicitRuntime = pathAnchors
+    .map((path) => candidates.find((candidate) => candidate.path === path && fileRolePriority(candidate.path) === 0))
+    .find((candidate): candidate is T => candidate !== undefined);
+  const primaryRuntime = explicitRuntime ?? fallback.find((entry) => fileRolePriority(entry.path) === 0);
   const primaryDirectTest = primaryRuntime
     ? candidates.find((candidate) => directTestImportsSource(candidate.path, candidate.text, primaryRuntime.path))
     : undefined;
@@ -315,13 +329,14 @@ export function selectPlanContext(
 
   const terms = requirementTerms(requirement);
   const anchors = requirementAnchors(requirement);
+  const pathAnchors = requirementPathAnchors(requirement);
   const candidates = repositoryPaths(target).map((path) => {
     const text = decodeText(join(target, path));
     return text === null ? null : { path, text, score: scoreContext(path, text, terms) };
   }).filter((value): value is { path: string; text: string; score: number } => value !== null);
 
   candidates.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  const ranked = diverseRankedCandidates(candidates, maxFiles, anchors);
+  const ranked = diverseRankedCandidates(candidates, maxFiles, anchors, pathAnchors);
 
   const files: PlanContextFile[] = [];
   let totalBytes = 0;
