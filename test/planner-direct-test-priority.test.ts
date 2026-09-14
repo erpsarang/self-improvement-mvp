@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { selectPlanContext } from "../src/self-improvement/planner.js";
 
-test("PLAN Context는 여러 test-like 파일이 경쟁해도 primary runtime의 direct test를 보존한다", () => {
+test("PLAN Context는 여러 test-like 파일이 경쟁해도 명시된 runtime source의 direct test를 보존한다", () => {
   const root = mkdtempSync(join(tmpdir(), "planner-direct-test-"));
   try {
     mkdirSync(join(root, "src", "self-improvement"), { recursive: true });
@@ -46,7 +46,7 @@ test("PLAN Context는 여러 test-like 파일이 경쟁해도 primary runtime의
 
     const requirement = [
       "예외 주문 원인을 집계한다.",
-      "`analyzeOrderBatch`와 `BatchOrderAnalysisResult`의 `summary`를 확장한다.",
+      "대상은 `src/batch-order-analysis.ts`의 `analyzeOrderBatch`와 `BatchOrderAnalysisResult`다.",
       "기존 주문별 `status`와 `reasonCodes`는 바꾸지 않는다.",
       "모든 `ReasonCode`별 건수와 최다 사유를 반환하고 SHIP_READY는 제외한다.",
       "기존 테스트가 계속 통과해야 한다.",
@@ -59,7 +59,7 @@ test("PLAN Context는 여러 test-like 파일이 경쟁해도 primary runtime의
 
     assert.deepEqual(first, second);
     assert.equal(paths.length, 4);
-    assert.ok(paths.includes("src/batch-order-analysis.ts"), `missing primary runtime source: ${paths.join(", ")}`);
+    assert.ok(paths.includes("src/batch-order-analysis.ts"), `missing explicit runtime source: ${paths.join(", ")}`);
     assert.ok(paths.includes("test/batch-order-analysis.test.ts"), `missing direct test: ${paths.join(", ")}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
