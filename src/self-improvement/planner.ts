@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { TextDecoder } from "node:util";
 
 export const PLAN_CONTEXT_MAX_FILES = 8;
@@ -193,14 +193,49 @@ export function verifyPlanContextPack(pack: PlanContextPack): void {
   if (expected !== pack.contextDigest) throw new Error("PLAN context digest mismatch");
 }
 
+function isTestLike(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.startsWith("test/") || /\.(test|spec)\.[^/]+$/.test(lower);
+}
+
 function fileRolePriority(path: string): number {
   const lower = path.toLowerCase();
-  const testLike = lower.startsWith("test/") || /\.(test|spec)\.[^/]+$/.test(lower);
+  const testLike = isTestLike(path);
   if (lower.startsWith("src/") && !testLike) return 0;
   if (lower.startsWith(".github/workflows/")) return 1;
   if (testLike) return 2;
   if (lower.startsWith("docs/") || lower.endsWith(".md")) return 3;
   return 4;
+}
+
+function modulePathIdentity(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\.(?:[cm]?[jt]sx?)$/i, "");
+}
+
+function relativeImportSpecifiers(text: string): string[] {
+  const result: string[] = [];
+  const patterns = [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\bimport\s*["']([^"']+)["']/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const specifier = match[1];
+      if (specifier?.startsWith(".") && !result.includes(specifier)) result.push(specifier);
+    }
+  }
+  return result;
+}
+
+function directTestImportsSource(testPath: string, testText: string, sourcePath: string): boolean {
+  if (!isTestLike(testPath) || fileRolePriority(sourcePath) !== 0) return false;
+  const sourceIdentity = modulePathIdentity(sourcePath);
+  return relativeImportSpecifiers(testText).some((specifier) => {
+    const resolved = normalize(join(dirname(testPath), specifier)).replace(/\\/g, "/");
+    return modulePathIdentity(resolved) === sourceIdentity;
+  });
 }
 
 function diverseRankedCandidates<T extends { path: string; text: string; score: number }>(
@@ -215,8 +250,14 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
     if (candidate && !selected.some((entry) => entry.path === candidate.path) && selected.length < maxFiles) selected.push(candidate);
   };
 
+  const primaryRuntime = fallback.find((entry) => fileRolePriority(entry.path) === 0);
+  const primaryDirectTest = primaryRuntime
+    ? candidates.find((candidate) => directTestImportsSource(candidate.path, candidate.text, primaryRuntime.path))
+    : undefined;
+  const reservedSlots = primaryRuntime ? (primaryDirectTest ? Math.min(2, maxFiles) : 1) : 0;
+
   const uncovered = new Set(anchors);
-  const maxAnchorFiles = Math.min(5, maxFiles);
+  const maxAnchorFiles = Math.min(5, Math.max(0, maxFiles - reservedSlots));
   while (uncovered.size > 0 && selected.length < maxAnchorFiles) {
     const rankedByCoverage = fallback
       .filter((candidate) => !selected.some((entry) => entry.path === candidate.path))
@@ -233,7 +274,22 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
     for (const anchor of best.covered) uncovered.delete(anchor);
   }
 
-  add(fallback.find((entry) => fileRolePriority(entry.path) === 0));
+  add(primaryRuntime);
+  add(primaryDirectTest);
+
+  const runtimeSources = selected
+    .filter((entry) => fileRolePriority(entry.path) === 0)
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  let directTestsAdded = primaryDirectTest ? 1 : 0;
+  for (const source of runtimeSources) {
+    if (directTestsAdded >= 2 || selected.length >= maxFiles) break;
+    const directTest = candidates.find((candidate) => directTestImportsSource(candidate.path, candidate.text, source.path));
+    if (directTest && !selected.some((entry) => entry.path === directTest.path)) {
+      add(directTest);
+      directTestsAdded += 1;
+    }
+  }
+
   add(fallback.find((entry) => fileRolePriority(entry.path) === 1));
   add(fallback.find((entry) => fileRolePriority(entry.path) === 2));
   add(fallback.find((entry) => entry.path === "package.json"));
