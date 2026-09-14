@@ -11,6 +11,7 @@ import {
   type PlanContextPack,
   type PlanImplementationScope,
 } from "./planner.js";
+import { augmentPlanContextWithBusinessRelations } from "./plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
 import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
 
@@ -34,9 +35,10 @@ if (command === "prepare") {
 
   const before = snapshot(target);
   const selectedContext = selectPlanContext(requirement, target, repository, sha);
+  const businessContext = augmentPlanContextWithBusinessRelations(requirement, target, selectedContext);
   const context = needsHumanOutputPlanContext(requirement)
-    ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, selectedContext)
-    : selectedContext;
+    ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, businessContext)
+    : businessContext;
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,
