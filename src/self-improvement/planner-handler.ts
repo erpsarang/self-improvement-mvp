@@ -12,6 +12,7 @@ import {
   type PlanImplementationScope,
 } from "./planner.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
+import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -33,7 +34,9 @@ if (command === "prepare") {
 
   const before = snapshot(target);
   const selectedContext = selectPlanContext(requirement, target, repository, sha);
-  const context = augmentPlanContextWithHumanOutputSurfaces(requirement, target, selectedContext);
+  const context = needsHumanOutputPlanContext(requirement)
+    ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, selectedContext)
+    : selectedContext;
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,
@@ -47,7 +50,7 @@ if (command === "prepare") {
     })),
   }, null, 2));
   writeFileSync(file("PLAN-context.json"), JSON.stringify(context, null, 2));
-  writeFileSync(file("prompt.md"), createPlanPrompt(requirement, context));
+  writeFileSync(file("prompt.md"), `${createPlanPrompt(requirement, context)}\n${planImpactTestScopeGuidance()}\n`);
   writeFileSync(file("schema.json"), JSON.stringify(PLAN_SCHEMA));
 } else if (command === "artifact") {
   const input = JSON.parse(readFileSync(file("input.json"), "utf8"));
