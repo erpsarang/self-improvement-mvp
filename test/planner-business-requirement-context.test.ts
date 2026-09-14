@@ -6,7 +6,7 @@ import test from "node:test";
 import { augmentPlanContextWithBusinessRelations } from "../src/self-improvement/plan-business-context.js";
 import { selectPlanContext } from "../src/self-improvement/planner.js";
 
-test("순수 업무 요구만으로 관련 업무 test의 import를 따라 runtime source와 direct test를 함께 보존한다", () => {
+test("순수 업무 요구만으로 fixture 문자열의 가짜 import를 무시하고 실제 업무 source와 direct test를 보존한다", () => {
   const root = mkdtempSync(join(tmpdir(), "planner-business-context-"));
   try {
     mkdirSync(join(root, "src", "self-improvement"), { recursive: true });
@@ -35,11 +35,21 @@ test("순수 업무 요구만으로 관련 업무 test의 import를 따라 runti
       "const unrelated = 'PLAN context implementationScope workflow provenance'; void unrelated;\n",
     );
     writeFileSync(
+      join(root, "test", "framework-self-test.test.ts"),
+      [
+        "import { selectPlanContext } from '../src/self-improvement/planner.js';",
+        "const fixture = \"예외 주문 원인을 사유별로 집계하고 가장 많이 발생한 원인을 보여준다. 기존 주문 판정 결과는 유지한다. import { analyzeOrderBatch } from '../src/batch-order-analysis.js';\";",
+        "const repeated = \"예외 주문 원인을 사유별로 집계하고 가장 많이 발생한 원인을 보여준다. 기존 주문 판정 결과는 유지한다.\";",
+        "void fixture; void repeated; void selectPlanContext;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
       join(root, "test", "batch-order-analysis.test.ts"),
       [
         "import { analyzeOrderBatch } from '../src/batch-order-analysis.js';",
         "import { SHIP_READY } from '../src/order-analysis.js';",
-        "test('예외 주문 원인을 사유별로 집계하고 가장 많이 발생한 원인을 보여준다', () => {",
+        "test('예외 주문 집계', () => {",
         "  const result = analyzeOrderBatch();",
         "  void result; void SHIP_READY;",
         "});",
@@ -58,13 +68,17 @@ test("순수 업무 요구만으로 관련 업무 test의 import를 따라 runti
     const options = { maxFiles: 4, maxBytes: 20_000, maxFileBytes: 4_000 };
     const selectedFirst = selectPlanContext(requirement, root, "example/orders", "a".repeat(40), options);
     const selectedSecond = selectPlanContext(requirement, root, "example/orders", "a".repeat(40), options);
+    const selectedPaths = selectedFirst.files.map((file) => file.path);
     const first = augmentPlanContextWithBusinessRelations(requirement, root, selectedFirst, options);
     const second = augmentPlanContextWithBusinessRelations(requirement, root, selectedSecond, options);
     const paths = first.files.map((file) => file.path);
 
+    assert.deepEqual(selectedFirst, selectedSecond);
+    assert.ok(selectedPaths.includes("test/framework-self-test.test.ts"), `fixture competitor was not selected: ${selectedPaths.join(", ")}`);
     assert.deepEqual(first, second);
     assert.ok(paths.length >= 2 && paths.length <= 4);
     assert.deepEqual(paths.slice(0, 2), ["src/batch-order-analysis.ts", "test/batch-order-analysis.test.ts"]);
+    assert.notEqual(paths[1], "test/framework-self-test.test.ts");
     assert.ok(!requirement.includes("src/"));
     assert.ok(!requirement.includes("analyzeOrderBatch"));
   } finally {
