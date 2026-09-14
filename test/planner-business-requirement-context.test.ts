@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { augmentPlanContextWithBusinessRelations } from "../src/self-improvement/plan-business-context.js";
 import { selectPlanContext } from "../src/self-improvement/planner.js";
 
 test("순수 업무 요구만으로 관련 업무 test의 import를 따라 runtime source와 direct test를 함께 보존한다", () => {
@@ -55,14 +56,17 @@ test("순수 업무 요구만으로 관련 업무 test의 import를 따라 runti
 
     const requirement = "예외 주문 원인을 사유별로 집계하고 가장 많이 발생한 원인을 보여준다. 기존 주문 판정 결과는 유지한다.";
     const options = { maxFiles: 4, maxBytes: 20_000, maxFileBytes: 4_000 };
-    const first = selectPlanContext(requirement, root, "example/orders", "a".repeat(40), options);
-    const second = selectPlanContext(requirement, root, "example/orders", "a".repeat(40), options);
+    const selectedFirst = selectPlanContext(requirement, root, "example/orders", "a".repeat(40), options);
+    const selectedSecond = selectPlanContext(requirement, root, "example/orders", "a".repeat(40), options);
+    const first = augmentPlanContextWithBusinessRelations(requirement, root, selectedFirst, options);
+    const second = augmentPlanContextWithBusinessRelations(requirement, root, selectedSecond, options);
     const paths = first.files.map((file) => file.path);
 
     assert.deepEqual(first, second);
-    assert.equal(paths.length, 4);
-    assert.ok(paths.includes("src/batch-order-analysis.ts"), `missing business runtime source: ${paths.join(", ")}`);
-    assert.ok(paths.includes("test/batch-order-analysis.test.ts"), `missing business direct test: ${paths.join(", ")}`);
+    assert.ok(paths.length >= 2 && paths.length <= 4);
+    assert.deepEqual(paths.slice(0, 2), ["src/batch-order-analysis.ts", "test/batch-order-analysis.test.ts"]);
+    assert.ok(!requirement.includes("src/"));
+    assert.ok(!requirement.includes("analyzeOrderBatch"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
