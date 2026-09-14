@@ -17,7 +17,7 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 18
 
     steps:
       - name: Trusted handoff artifact exact 선택
@@ -116,6 +116,17 @@ jobs:
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source
           WORKER_INPUT_DIRECTORY: ${{ runner.temp }}/plan-worker-input
 
+      - name: exact approved base SHA 고정
+        if: steps.source.outputs.should_run == 'true'
+        id: base
+        shell: bash
+        env:
+          CONTRACT_JSON: ${{ runner.temp }}/plan-worker-source/contract.json
+        run: |
+          set -euo pipefail
+          BASE_SHA="$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(process.env.CONTRACT_JSON,"utf8")); if(typeof x.baseSha!=="string" || !/^[0-9a-f]{40,64}$/.test(x.baseSha)) process.exit(2); process.stdout.write(x.baseSha)')"
+          echo "sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Worker 실행 전 repository와 trusted source 제거
         if: steps.source.outputs.should_run == 'true'
         shell: bash
@@ -151,32 +162,32 @@ jobs:
         shell: bash
         run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home"
 
-      - name: Trusted validation checkout
+      - name: Trusted validation checkout 0
         if: steps.source.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
-          path: control-validate
+          path: control-validate-0
 
-      - name: Trusted validation dependencies 설치
+      - name: Trusted validation dependencies 설치 0
         if: steps.source.outputs.should_run == 'true'
-        working-directory: control-validate
+        working-directory: control-validate-0
         run: npm ci --ignore-scripts
 
-      - name: Trusted handoff artifact 재다운로드
+      - name: Trusted handoff artifact 재다운로드 0
         if: steps.source.outputs.should_run == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ steps.source.outputs.name }}
-          path: ${{ runner.temp }}/plan-worker-source-validate
+          path: ${{ runner.temp }}/plan-worker-source-validate-0
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Trusted candidate 검증
+      - name: Trusted candidate 검증 0
         if: steps.source.outputs.should_run == 'true'
-        working-directory: control-validate
+        working-directory: control-validate-0
         run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -188,16 +199,367 @@ jobs:
           SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
-          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-0
           RAW_PROPOSAL_PATH: ${{ runner.temp }}/worker-output/raw-proposal.json
-          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate
+          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-0
+
+      - name: exact base candidate CI checkout 0
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.base.outputs.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: validation-target-0
+
+      - name: exact base SHA 확인 0
+        if: steps.source.outputs.should_run == 'true'
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.base.outputs.sha }}
+        run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-0" rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: candidate CI dependencies 설치 0
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: validation-target-0
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: npm ci --ignore-scripts
+
+      - name: deterministic CI 및 repair 입력 준비 0
+        if: steps.source.outputs.should_run == 'true'
+        id: ci0
+        working-directory: control-validate-0
+        env:
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-0
+          CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-0
+          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-0
+          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-0
+          NEXT_REPAIR_ATTEMPT: "1"
+          REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-1
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+
+      - name: PASS candidate 0 선택
+        if: steps.ci0.outputs.status == 'PASS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/final-candidate"
+          cp "$RUNNER_TEMP/validated-candidate-0/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-0/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
+
+      - name: repair 1 전 repository와 trusted source 제거
+        if: steps.ci0.outputs.status == 'FAIL'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            "$GITHUB_WORKSPACE/control-validate-0" \
+            "$GITHUB_WORKSPACE/validation-target-0" \
+            "$RUNNER_TEMP/plan-worker-source-validate-0" \
+            "$RUNNER_TEMP/validated-candidate-0" \
+            "$RUNNER_TEMP/worker-output" \
+            "$RUNNER_TEMP/worker-neutral"
+          mkdir -p "$RUNNER_TEMP/worker-neutral-repair-1" "$RUNNER_TEMP/worker-output-repair-1"
+          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
+          test -f "$RUNNER_TEMP/repair-input-1/prompt.md"
+          test -f "$RUNNER_TEMP/repair-input-1/schema.json"
+
+      - name: Untrusted bounded IMPLEMENT repair 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        timeout-minutes: 4
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/worker-neutral-repair-1
+          codex-home: ${{ runner.temp }}/worker-codex-home-repair-1
+          prompt-file: ${{ runner.temp }}/repair-input-1/prompt.md
+          output-schema-file: ${{ runner.temp }}/repair-input-1/schema.json
+          output-file: ${{ runner.temp }}/worker-output-repair-1/raw-proposal.json
+          effort: low
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: repair 1 입력 제거
+        if: steps.ci0.outputs.status == 'FAIL'
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/repair-input-1" "$RUNNER_TEMP/worker-codex-home-repair-1"
+
+      - name: Trusted validation checkout 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: control-validate-1
+
+      - name: Trusted validation dependencies 설치 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        working-directory: control-validate-1
+        run: npm ci --ignore-scripts
+
+      - name: Trusted handoff artifact 재다운로드 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.name }}
+          path: ${{ runner.temp }}/plan-worker-source-validate-1
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Trusted candidate 검증 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        working-directory: control-validate-1
+        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
+          RAW_PROPOSAL_PATH: ${{ runner.temp }}/worker-output-repair-1/raw-proposal.json
+          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-1
+
+      - name: exact base candidate CI checkout 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.base.outputs.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: validation-target-1
+
+      - name: exact base SHA 확인 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.base.outputs.sha }}
+        run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-1" rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: candidate CI dependencies 설치 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        working-directory: validation-target-1
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: npm ci --ignore-scripts
+
+      - name: deterministic CI 및 repair 입력 준비 1
+        if: steps.ci0.outputs.status == 'FAIL'
+        id: ci1
+        working-directory: control-validate-1
+        env:
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
+          CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-1
+          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-1
+          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-1
+          NEXT_REPAIR_ATTEMPT: "2"
+          REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-2
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+
+      - name: PASS candidate 1 선택
+        if: steps.ci1.outputs.status == 'PASS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/final-candidate"
+          cp "$RUNNER_TEMP/validated-candidate-1/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-1/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
+
+      - name: repair 2 전 repository와 trusted source 제거
+        if: steps.ci1.outputs.status == 'FAIL'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            "$GITHUB_WORKSPACE/control-validate-1" \
+            "$GITHUB_WORKSPACE/validation-target-1" \
+            "$RUNNER_TEMP/plan-worker-source-validate-1" \
+            "$RUNNER_TEMP/validated-candidate-1" \
+            "$RUNNER_TEMP/worker-output-repair-1" \
+            "$RUNNER_TEMP/worker-neutral-repair-1"
+          mkdir -p "$RUNNER_TEMP/worker-neutral-repair-2" "$RUNNER_TEMP/worker-output-repair-2"
+          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
+          test -f "$RUNNER_TEMP/repair-input-2/prompt.md"
+          test -f "$RUNNER_TEMP/repair-input-2/schema.json"
+
+      - name: Untrusted bounded IMPLEMENT repair 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        timeout-minutes: 4
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/worker-neutral-repair-2
+          codex-home: ${{ runner.temp }}/worker-codex-home-repair-2
+          prompt-file: ${{ runner.temp }}/repair-input-2/prompt.md
+          output-schema-file: ${{ runner.temp }}/repair-input-2/schema.json
+          output-file: ${{ runner.temp }}/worker-output-repair-2/raw-proposal.json
+          effort: low
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: repair 2 입력 제거
+        if: steps.ci1.outputs.status == 'FAIL'
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/repair-input-2" "$RUNNER_TEMP/worker-codex-home-repair-2"
+
+      - name: Trusted validation checkout 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: control-validate-2
+
+      - name: Trusted validation dependencies 설치 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        working-directory: control-validate-2
+        run: npm ci --ignore-scripts
+
+      - name: Trusted handoff artifact 재다운로드 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.name }}
+          path: ${{ runner.temp }}/plan-worker-source-validate-2
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Trusted candidate 검증 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        working-directory: control-validate-2
+        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
+          RAW_PROPOSAL_PATH: ${{ runner.temp }}/worker-output-repair-2/raw-proposal.json
+          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-2
+
+      - name: exact base candidate CI checkout 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.base.outputs.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: validation-target-2
+
+      - name: exact base SHA 확인 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.base.outputs.sha }}
+        run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-2" rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: candidate CI dependencies 설치 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        working-directory: validation-target-2
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: npm ci --ignore-scripts
+
+      - name: deterministic CI 최종 검증 2
+        if: steps.ci1.outputs.status == 'FAIL'
+        id: ci2
+        working-directory: control-validate-2
+        env:
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
+          CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-2
+          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-2
+          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-2
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+
+      - name: PASS candidate 2 선택
+        if: steps.ci2.outputs.status == 'PASS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/final-candidate"
+          cp "$RUNNER_TEMP/validated-candidate-2/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-2/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
+
+      - name: deterministic CI evidence 정리
+        if: always() && steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/worker-ci-evidence"
+          for attempt in 0 1 2; do
+            if [ -f "$RUNNER_TEMP/worker-ci-${attempt}/validation.json" ]; then
+              cp "$RUNNER_TEMP/worker-ci-${attempt}/validation.json" "$RUNNER_TEMP/worker-ci-evidence/validation-${attempt}.json"
+            fi
+          done
+
+      - name: deterministic CI evidence artifact 저장
+        if: always() && steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-ci-evidence-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-ci-evidence/*.json
+          if-no-files-found: error
+
+      - name: bounded repair 소진 시 fail-closed
+        if: steps.ci0.outputs.status == 'FAIL' && steps.ci1.outputs.status == 'FAIL' && steps.ci2.outputs.status == 'FAIL'
+        shell: bash
+        run: |
+          echo "deterministic CI failed after two bounded repairs" >&2
+          exit 1
 
       - name: Validated candidate artifact 저장
-        if: steps.source.outputs.should_run == 'true'
+        if: >-
+          steps.ci0.outputs.status == 'PASS' ||
+          steps.ci1.outputs.status == 'PASS' ||
+          steps.ci2.outputs.status == 'PASS'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.prepare.outputs.candidate_artifact_name }}
           path: |
-            ${{ runner.temp }}/validated-candidate/candidate.json
-            ${{ runner.temp }}/validated-candidate/candidate-provenance.json
+            ${{ runner.temp }}/final-candidate/candidate.json
+            ${{ runner.temp }}/final-candidate/candidate-provenance.json
           if-no-files-found: error
