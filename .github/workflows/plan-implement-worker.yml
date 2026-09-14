@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 jobs:
-  worker:
+  attempt0:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
@@ -17,7 +17,15 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 10
+    outputs:
+      should_run: ${{ steps.source.outputs.should_run }}
+      source_name: ${{ steps.source.outputs.name }}
+      source_id: ${{ steps.source.outputs.id }}
+      source_digest: ${{ steps.source.outputs.digest }}
+      base_sha: ${{ steps.base.outputs.sha }}
+      candidate_artifact_name: ${{ steps.prepare.outputs.candidate_artifact_name }}
+      ci_status: ${{ steps.ci0.outputs.status }}
 
     steps:
       - name: Trusted handoff artifact exact 선택
@@ -141,7 +149,7 @@ jobs:
       - name: Untrusted bounded IMPLEMENT Worker
         if: steps.source.outputs.should_run == 'true'
         timeout-minutes: 4
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; pinned for #108 wrapper hang
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
@@ -247,34 +255,60 @@ jobs:
           NPM_TOKEN: ""
         run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
-      - name: PASS candidate 0 선택
-        if: steps.ci0.outputs.status == 'PASS'
+      - name: attempt 0 state 정리
+        if: steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/final-candidate"
-          cp "$RUNNER_TEMP/validated-candidate-0/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-0/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
+          mkdir -p "$RUNNER_TEMP/worker-state-0/candidate" "$RUNNER_TEMP/worker-state-0/evidence"
+          cp "$RUNNER_TEMP/validated-candidate-0/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-0/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
+          cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
+          if [ "${{ steps.ci0.outputs.status }}" = "FAIL" ]; then
+            mkdir -p "$RUNNER_TEMP/worker-state-0/repair-input"
+            cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md"
+            cp "$RUNNER_TEMP/repair-input-1/schema.json" "$RUNNER_TEMP/worker-state-0/repair-input/schema.json"
+          fi
 
-      - name: repair 1 전 repository와 trusted source 제거
-        if: steps.ci0.outputs.status == 'FAIL'
+      - name: attempt 0 state artifact 저장
+        if: steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-0
+          if-no-files-found: error
+
+  repair1:
+    needs: attempt0
+    if: needs.attempt0.outputs.ci_status == 'FAIL'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ci_status: ${{ steps.ci1.outputs.status }}
+
+    steps:
+      - name: attempt 0 state 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-0
+
+      - name: repair 1 untrusted input 격리
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf \
-            "$GITHUB_WORKSPACE/control-validate-0" \
-            "$GITHUB_WORKSPACE/validation-target-0" \
-            "$RUNNER_TEMP/plan-worker-source-validate-0" \
-            "$RUNNER_TEMP/validated-candidate-0" \
-            "$RUNNER_TEMP/worker-output" \
-            "$RUNNER_TEMP/worker-neutral"
-          mkdir -p "$RUNNER_TEMP/worker-neutral-repair-1" "$RUNNER_TEMP/worker-output-repair-1"
+          mkdir -p "$RUNNER_TEMP/repair-input-1" "$RUNNER_TEMP/worker-neutral-repair-1" "$RUNNER_TEMP/worker-output-repair-1"
+          cp "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md" "$RUNNER_TEMP/repair-input-1/prompt.md"
+          cp "$RUNNER_TEMP/worker-state-0/repair-input/schema.json" "$RUNNER_TEMP/repair-input-1/schema.json"
+          rm -rf "$RUNNER_TEMP/worker-state-0"
           test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
           test -f "$RUNNER_TEMP/repair-input-1/prompt.md"
           test -f "$RUNNER_TEMP/repair-input-1/schema.json"
 
       - name: Untrusted bounded IMPLEMENT repair 1
-        if: steps.ci0.outputs.status == 'FAIL'
         timeout-minutes: 4
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
         env:
@@ -292,36 +326,38 @@ jobs:
           effort: low
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
-      - name: repair 1 입력 제거
-        if: steps.ci0.outputs.status == 'FAIL'
+      - name: repair 1 input 제거
         shell: bash
         run: rm -rf "$RUNNER_TEMP/repair-input-1" "$RUNNER_TEMP/worker-codex-home-repair-1"
 
       - name: Trusted validation checkout 1
-        if: steps.ci0.outputs.status == 'FAIL'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
           path: control-validate-1
 
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: control-validate-1/package-lock.json
+
       - name: Trusted validation dependencies 설치 1
-        if: steps.ci0.outputs.status == 'FAIL'
         working-directory: control-validate-1
         run: npm ci --ignore-scripts
 
       - name: Trusted handoff artifact 재다운로드 1
-        if: steps.ci0.outputs.status == 'FAIL'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.source.outputs.name }}
+          name: ${{ needs.attempt0.outputs.source_name }}
           path: ${{ runner.temp }}/plan-worker-source-validate-1
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: Trusted candidate 검증 1
-        if: steps.ci0.outputs.status == 'FAIL'
         working-directory: control-validate-1
         run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
@@ -329,9 +365,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
-          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
-          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
+          SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
@@ -339,23 +375,20 @@ jobs:
           CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-1
 
       - name: exact base candidate CI checkout 1
-        if: steps.ci0.outputs.status == 'FAIL'
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.base.outputs.sha }}
+          ref: ${{ needs.attempt0.outputs.base_sha }}
           persist-credentials: false
           fetch-depth: 1
           path: validation-target-1
 
       - name: exact base SHA 확인 1
-        if: steps.ci0.outputs.status == 'FAIL'
         shell: bash
         env:
-          EXPECTED_SHA: ${{ steps.base.outputs.sha }}
+          EXPECTED_SHA: ${{ needs.attempt0.outputs.base_sha }}
         run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-1" rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: candidate CI dependencies 설치 1
-        if: steps.ci0.outputs.status == 'FAIL'
         working-directory: validation-target-1
         env:
           GH_TOKEN: ""
@@ -365,14 +398,13 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: deterministic CI 및 repair 입력 준비 1
-        if: steps.ci0.outputs.status == 'FAIL'
         id: ci1
         working-directory: control-validate-1
         env:
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-1
           TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-1
-          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          OBSERVED_BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
           STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-1
           NEXT_REPAIR_ATTEMPT: "2"
           REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-2
@@ -382,34 +414,60 @@ jobs:
           NPM_TOKEN: ""
         run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
-      - name: PASS candidate 1 선택
-        if: steps.ci1.outputs.status == 'PASS'
+      - name: attempt 1 state 정리
+        if: steps.ci1.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/final-candidate"
-          cp "$RUNNER_TEMP/validated-candidate-1/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-1/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
+          mkdir -p "$RUNNER_TEMP/worker-state-1/candidate" "$RUNNER_TEMP/worker-state-1/evidence"
+          cp "$RUNNER_TEMP/validated-candidate-1/candidate.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-1/candidate-provenance.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate-provenance.json"
+          cp "$RUNNER_TEMP/worker-ci-1/validation.json" "$RUNNER_TEMP/worker-state-1/evidence/validation-1.json"
+          if [ "${{ steps.ci1.outputs.status }}" = "FAIL" ]; then
+            mkdir -p "$RUNNER_TEMP/worker-state-1/repair-input"
+            cp "$RUNNER_TEMP/repair-input-2/prompt.md" "$RUNNER_TEMP/worker-state-1/repair-input/prompt.md"
+            cp "$RUNNER_TEMP/repair-input-2/schema.json" "$RUNNER_TEMP/worker-state-1/repair-input/schema.json"
+          fi
 
-      - name: repair 2 전 repository와 trusted source 제거
-        if: steps.ci1.outputs.status == 'FAIL'
+      - name: attempt 1 state artifact 저장
+        if: steps.ci1.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-state-1-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-1
+          if-no-files-found: error
+
+  repair2:
+    needs: [attempt0, repair1]
+    if: needs.repair1.outputs.ci_status == 'FAIL'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ci_status: ${{ steps.ci2.outputs.status }}
+
+    steps:
+      - name: attempt 1 state 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: bounded-worker-state-1-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-1
+
+      - name: repair 2 untrusted input 격리
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf \
-            "$GITHUB_WORKSPACE/control-validate-1" \
-            "$GITHUB_WORKSPACE/validation-target-1" \
-            "$RUNNER_TEMP/plan-worker-source-validate-1" \
-            "$RUNNER_TEMP/validated-candidate-1" \
-            "$RUNNER_TEMP/worker-output-repair-1" \
-            "$RUNNER_TEMP/worker-neutral-repair-1"
-          mkdir -p "$RUNNER_TEMP/worker-neutral-repair-2" "$RUNNER_TEMP/worker-output-repair-2"
+          mkdir -p "$RUNNER_TEMP/repair-input-2" "$RUNNER_TEMP/worker-neutral-repair-2" "$RUNNER_TEMP/worker-output-repair-2"
+          cp "$RUNNER_TEMP/worker-state-1/repair-input/prompt.md" "$RUNNER_TEMP/repair-input-2/prompt.md"
+          cp "$RUNNER_TEMP/worker-state-1/repair-input/schema.json" "$RUNNER_TEMP/repair-input-2/schema.json"
+          rm -rf "$RUNNER_TEMP/worker-state-1"
           test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
           test -f "$RUNNER_TEMP/repair-input-2/prompt.md"
           test -f "$RUNNER_TEMP/repair-input-2/schema.json"
 
       - name: Untrusted bounded IMPLEMENT repair 2
-        if: steps.ci1.outputs.status == 'FAIL'
         timeout-minutes: 4
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
         env:
@@ -427,36 +485,38 @@ jobs:
           effort: low
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
-      - name: repair 2 입력 제거
-        if: steps.ci1.outputs.status == 'FAIL'
+      - name: repair 2 input 제거
         shell: bash
         run: rm -rf "$RUNNER_TEMP/repair-input-2" "$RUNNER_TEMP/worker-codex-home-repair-2"
 
       - name: Trusted validation checkout 2
-        if: steps.ci1.outputs.status == 'FAIL'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
           path: control-validate-2
 
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: control-validate-2/package-lock.json
+
       - name: Trusted validation dependencies 설치 2
-        if: steps.ci1.outputs.status == 'FAIL'
         working-directory: control-validate-2
         run: npm ci --ignore-scripts
 
       - name: Trusted handoff artifact 재다운로드 2
-        if: steps.ci1.outputs.status == 'FAIL'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.source.outputs.name }}
+          name: ${{ needs.attempt0.outputs.source_name }}
           path: ${{ runner.temp }}/plan-worker-source-validate-2
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: Trusted candidate 검증 2
-        if: steps.ci1.outputs.status == 'FAIL'
         working-directory: control-validate-2
         run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
@@ -464,9 +524,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
-          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
-          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
+          SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
@@ -474,23 +534,20 @@ jobs:
           CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-2
 
       - name: exact base candidate CI checkout 2
-        if: steps.ci1.outputs.status == 'FAIL'
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.base.outputs.sha }}
+          ref: ${{ needs.attempt0.outputs.base_sha }}
           persist-credentials: false
           fetch-depth: 1
           path: validation-target-2
 
       - name: exact base SHA 확인 2
-        if: steps.ci1.outputs.status == 'FAIL'
         shell: bash
         env:
-          EXPECTED_SHA: ${{ steps.base.outputs.sha }}
+          EXPECTED_SHA: ${{ needs.attempt0.outputs.base_sha }}
         run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-2" rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: candidate CI dependencies 설치 2
-        if: steps.ci1.outputs.status == 'FAIL'
         working-directory: validation-target-2
         env:
           GH_TOKEN: ""
@@ -500,14 +557,13 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: deterministic CI 최종 검증 2
-        if: steps.ci1.outputs.status == 'FAIL'
         id: ci2
         working-directory: control-validate-2
         env:
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-2
           TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-2
-          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          OBSERVED_BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
           STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-2
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
@@ -515,37 +571,116 @@ jobs:
           NPM_TOKEN: ""
         run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
-      - name: PASS candidate 2 선택
-        if: steps.ci2.outputs.status == 'PASS'
+      - name: attempt 2 state 정리
+        if: steps.ci2.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/worker-state-2/candidate" "$RUNNER_TEMP/worker-state-2/evidence"
+          cp "$RUNNER_TEMP/validated-candidate-2/candidate.json" "$RUNNER_TEMP/worker-state-2/candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-2/candidate-provenance.json" "$RUNNER_TEMP/worker-state-2/candidate/candidate-provenance.json"
+          cp "$RUNNER_TEMP/worker-ci-2/validation.json" "$RUNNER_TEMP/worker-state-2/evidence/validation-2.json"
+
+      - name: attempt 2 state artifact 저장
+        if: steps.ci2.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-state-2-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-2
+          if-no-files-found: error
+
+  finalize:
+    needs: [attempt0, repair1, repair2]
+    if: always() && needs.attempt0.outputs.should_run == 'true'
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: attempt 0 state 다운로드
+        if: needs.attempt0.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-0
+
+      - name: attempt 1 state 다운로드
+        if: needs.repair1.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: bounded-worker-state-1-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-1
+
+      - name: attempt 2 state 다운로드
+        if: needs.repair2.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: bounded-worker-state-2-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-2
+
+      - name: PASS candidate 선택
+        if: >-
+          needs.attempt0.outputs.ci_status == 'PASS' ||
+          needs.repair1.outputs.ci_status == 'PASS' ||
+          needs.repair2.outputs.ci_status == 'PASS'
+        shell: bash
+        env:
+          STATUS0: ${{ needs.attempt0.outputs.ci_status }}
+          STATUS1: ${{ needs.repair1.outputs.ci_status }}
+          STATUS2: ${{ needs.repair2.outputs.ci_status }}
+        run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/final-candidate"
-          cp "$RUNNER_TEMP/validated-candidate-2/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-2/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
+          if [ "$STATUS0" = "PASS" ]; then
+            SOURCE="$RUNNER_TEMP/worker-state-0/candidate"
+          elif [ "$STATUS1" = "PASS" ]; then
+            SOURCE="$RUNNER_TEMP/worker-state-1/candidate"
+          elif [ "$STATUS2" = "PASS" ]; then
+            SOURCE="$RUNNER_TEMP/worker-state-2/candidate"
+          else
+            echo "no PASS candidate" >&2
+            exit 1
+          fi
+          cp "$SOURCE/candidate.json" "$RUNNER_TEMP/final-candidate/candidate.json"
+          cp "$SOURCE/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
 
       - name: deterministic CI evidence 정리
-        if: always() && steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        if: needs.attempt0.result == 'success'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/worker-ci-evidence"
           for attempt in 0 1 2; do
-            if [ -f "$RUNNER_TEMP/worker-ci-${attempt}/validation.json" ]; then
-              cp "$RUNNER_TEMP/worker-ci-${attempt}/validation.json" "$RUNNER_TEMP/worker-ci-evidence/validation-${attempt}.json"
+            source="$RUNNER_TEMP/worker-state-${attempt}/evidence/validation-${attempt}.json"
+            if [ -f "$source" ]; then
+              cp "$source" "$RUNNER_TEMP/worker-ci-evidence/validation-${attempt}.json"
             fi
           done
 
       - name: deterministic CI evidence artifact 저장
-        if: always() && steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        if: needs.attempt0.result == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: bounded-worker-ci-evidence-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/worker-ci-evidence/*.json
           if-no-files-found: error
 
+      - name: upstream infrastructure failure 시 fail-closed
+        if: >-
+          needs.attempt0.result == 'failure' ||
+          needs.repair1.result == 'failure' ||
+          needs.repair2.result == 'failure'
+        shell: bash
+        run: |
+          echo "bounded Worker attempt job failed before a trusted PASS candidate was produced" >&2
+          exit 1
+
       - name: bounded repair 소진 시 fail-closed
-        if: steps.ci0.outputs.status == 'FAIL' && steps.ci1.outputs.status == 'FAIL' && steps.ci2.outputs.status == 'FAIL'
+        if: >-
+          needs.attempt0.outputs.ci_status == 'FAIL' &&
+          needs.repair1.outputs.ci_status == 'FAIL' &&
+          needs.repair2.outputs.ci_status == 'FAIL'
         shell: bash
         run: |
           echo "deterministic CI failed after two bounded repairs" >&2
@@ -553,12 +688,12 @@ jobs:
 
       - name: Validated candidate artifact 저장
         if: >-
-          steps.ci0.outputs.status == 'PASS' ||
-          steps.ci1.outputs.status == 'PASS' ||
-          steps.ci2.outputs.status == 'PASS'
+          needs.attempt0.outputs.ci_status == 'PASS' ||
+          needs.repair1.outputs.ci_status == 'PASS' ||
+          needs.repair2.outputs.ci_status == 'PASS'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.prepare.outputs.candidate_artifact_name }}
+          name: ${{ needs.attempt0.outputs.candidate_artifact_name }}
           path: |
             ${{ runner.temp }}/final-candidate/candidate.json
             ${{ runner.temp }}/final-candidate/candidate-provenance.json
