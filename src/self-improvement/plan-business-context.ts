@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { TextDecoder } from "node:util";
+import * as ts from "typescript";
 import {
   PLAN_CONTEXT_MAX_BYTES,
   PLAN_CONTEXT_MAX_FILES,
@@ -28,6 +29,10 @@ function isTestLike(path: string): boolean {
 function isRuntimeSource(path: string): boolean {
   const lower = path.toLowerCase();
   return lower.startsWith("src/") && !/\.(test|spec)\.[^/]+$/.test(lower);
+}
+
+function isFrameworkSource(path: string): boolean {
+  return path.toLowerCase().startsWith("src/self-improvement/");
 }
 
 function walkFiles(target: string, root: string): string[] {
@@ -95,20 +100,40 @@ function modulePathIdentity(path: string): string {
   return path.replace(/\\/g, "/").replace(/\.(?:[cm]?[jt]sx?)$/i, "");
 }
 
-function relativeImportSpecifiers(text: string): string[] {
+function scriptKind(path: string): ts.ScriptKind {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (lower.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+// Parse syntax only. Target code is never imported or executed, and strings/comments cannot masquerade as imports.
+function relativeImportSpecifiers(path: string, text: string): string[] {
+  const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKind(path));
   const result: string[] = [];
-  const patterns = [
-    /\bfrom\s*["']([^"']+)["']/g,
-    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-    /\bimport\s*["']([^"']+)["']/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const specifier = match[1];
-      if (specifier?.startsWith(".") && !result.includes(specifier)) result.push(specifier);
+  const add = (node: ts.Expression | undefined): void => {
+    if (!node || !ts.isStringLiteralLike(node)) return;
+    const specifier = node.text;
+    if (specifier.startsWith(".") && !result.includes(specifier)) result.push(specifier);
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) add(statement.moduleSpecifier);
+    else if (ts.isImportEqualsDeclaration(statement) && ts.isExternalModuleReference(statement.moduleReference)) {
+      add(statement.moduleReference.expression);
     }
   }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.arguments.length === 1) {
+      const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const requireCall = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (dynamicImport || requireCall) add(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
   return result;
 }
 
@@ -128,7 +153,7 @@ function sourceAffinity(testPath: string, sourcePath: string): number {
 function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
   const identities = new Map(sourcePaths.map((path) => [modulePathIdentity(path), path] as const));
   const result: string[] = [];
-  for (const specifier of relativeImportSpecifiers(testText)) {
+  for (const specifier of relativeImportSpecifiers(testPath, testText)) {
     const resolved = normalize(join(dirname(testPath), specifier)).replace(/\\/g, "/");
     const source = identities.get(modulePathIdentity(resolved));
     if (source && !result.includes(source)) result.push(source);
@@ -214,17 +239,30 @@ function businessRelationCandidates(
     })
     .filter((entry): entry is { path: string; text: string; score: number } => entry !== null && entry.score > 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  const seed = tests[0];
-  if (!seed) return [];
+  if (tests.length === 0) return [];
 
   const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
-  const imported = importedRuntimeSources(seed.path, seed.text, sourcePaths);
-  const applicationImported = imported.filter((path) => !path.toLowerCase().startsWith("src/self-improvement/"));
-  const sourcePath = applicationImported[0] ?? imported[0];
-  if (!sourcePath) return [];
+  const relations = tests.flatMap((test) => importedRuntimeSources(test.path, test.text, sourcePaths).map((sourcePath, sourceRank) => ({
+    test,
+    sourcePath,
+    sourceRank,
+    affinity: sourceAffinity(test.path, sourcePath),
+    application: !isFrameworkSource(sourcePath),
+  })));
+  if (relations.length === 0) return [];
 
-  const source = contextFile(target, sourcePath, [], maxFileBytes);
-  const test = contextFile(target, seed.path, terms, maxFileBytes);
+  const applicationRelations = relations.filter((relation) => relation.application);
+  const pool = applicationRelations.length > 0 ? applicationRelations : relations;
+  pool.sort((a, b) =>
+    b.test.score - a.test.score
+    || b.affinity - a.affinity
+    || a.sourceRank - b.sourceRank
+    || a.test.path.localeCompare(b.test.path)
+    || a.sourcePath.localeCompare(b.sourcePath));
+  const best = pool[0]!;
+
+  const source = contextFile(target, best.sourcePath, [], maxFileBytes);
+  const test = contextFile(target, best.test.path, terms, maxFileBytes);
   return source && test ? [source, test] : [];
 }
 
