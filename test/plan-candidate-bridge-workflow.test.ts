@@ -41,7 +41,12 @@ test("recovery default 이동은 bounded Framework-only compare에만 trusted gu
   assert.match(bridgeSection, /file\.previous_filename/);
   assert.match(bridgeSection, /path\.startsWith\('src\/self-improvement\/'\)/);
   assert.match(bridgeSection, /path === 'FRAMEWORK\.md'/);
-  assert.match(bridgeSection, /frameworkDoc\.test\(path\) \|\| frameworkTest\.test\(path\)/);
+  assert.match(bridgeSection, /const frameworkRootTests = new Set\(\[/);
+  assert.match(bridgeSection, /'test\/orchestrator-workflow\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-candidate-bridge-workflow\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-candidate-bridge\.test\.ts'/);
+  assert.match(bridgeSection, /path\.startsWith\('test\/self-improvement\/'\) \|\| frameworkRootTests\.has\(path\)/);
+  assert.doesNotMatch(bridgeSection, /\(\?:plan-\|bounded-\|single-pass-/);
   assert.match(bridgeSection, /recovery compare failed/);
   assert.match(bridgeSection, /recovery requires re-plan; ambiguous or application changes/);
 });
