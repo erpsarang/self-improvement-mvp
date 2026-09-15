@@ -85,3 +85,58 @@ test("순수 업무 요구만으로 fixture 문자열의 가짜 import를 무시
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("exact runtime hint가 있으면 더 높은 lexical relevance의 다른 application 관계가 이를 덮어쓰지 않는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-runtime-hint-priority-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "test"));
+
+    writeFileSync(
+      join(root, "src", "batch-order-analysis.ts"),
+      "export interface BatchOrderAnalysisResult { summary: { totalCount: number } }\nexport function analyzeOrderBatch() { return { results: [], summary: { totalCount: 0 } }; }\n",
+    );
+    writeFileSync(
+      join(root, "src", "order-analysis.ts"),
+      "export function analyzeOrder() { return { status: 'SHIP_READY', reasonCodes: [] }; }\n",
+    );
+    writeFileSync(
+      join(root, "test", "batch-order-analysis.test.ts"),
+      [
+        "import { analyzeOrderBatch } from '../src/batch-order-analysis.js';",
+        "test('batch contract', () => { void analyzeOrderBatch; });",
+        "// 기존 주문 판정 결과는 유지한다.",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "test", "order-analysis.test.ts"),
+      [
+        "import { analyzeOrder } from '../src/order-analysis.js';",
+        "const business = '예외 주문 원인을 사유별로 묶어서 각각 몇 건인지 보여주고 어떤 사유가 가장 많이 발생했는지 바로 알 수 있으면 좋겠습니다.';",
+        "const repeated = '예외 주문 원인을 사유별로 묶어서 각각 몇 건인지 보여주고 어떤 사유가 가장 많이 발생했는지 바로 알 수 있으면 좋겠습니다.';",
+        "test('업무 문장 경쟁자', () => { void analyzeOrder; void business; void repeated; });",
+        "// 현재 사용하고 있는 각 주문의 출고 가능 예외 판정 결과는 바뀌지 않아야 합니다.",
+        "",
+      ].join("\n"),
+    );
+
+    const requirement = [
+      "예외 주문 원인을 사유별로 묶어서 각각 몇 건인지 보여주고 어떤 사유가 가장 많이 발생했는지 바로 알 수 있으면 좋겠습니다.",
+      "대상은 `src/batch-order-analysis.ts`의 batch 분석입니다.",
+      "현재 사용하고 있는 각 주문의 출고 가능/예외 판정 결과는 바뀌지 않아야 합니다.",
+    ].join("\n");
+    const options = { maxFiles: 4, maxBytes: 20_000, maxFileBytes: 4_000 };
+    const selected = selectPlanContext(requirement, root, "example/orders", "b".repeat(40), options);
+    const selectedPaths = selected.files.map((file) => file.path);
+    assert.ok(selectedPaths.includes("src/batch-order-analysis.ts"), `explicit runtime was not selected: ${selectedPaths.join(", ")}`);
+
+    const augmented = augmentPlanContextWithBusinessRelations(requirement, root, selected, options);
+    const paths = augmented.files.map((file) => file.path);
+    assert.deepEqual(paths.slice(0, 2), ["src/batch-order-analysis.ts", "test/batch-order-analysis.test.ts"]);
+    assert.notEqual(paths[0], "src/order-analysis.ts");
+    assert.notEqual(paths[1], "test/order-analysis.test.ts");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
