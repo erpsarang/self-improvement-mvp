@@ -34,6 +34,10 @@ test("recovery는 source Worker run과 exact artifact를 fail-closed 재검증�
 });
 
 test("recovery default 이동은 bounded Framework-only compare에만 trusted guard를 발급한다", () => {
+  assert.match(bridgeSection, /github\.rest\.repos\.getBranch/);
+  assert.match(bridgeSection, /currentDefaultSha = branch\.commit\.sha/);
+  assert.match(bridgeSection, /context\.ref !== `refs\/heads\/\$\{defaultBranch\}` \|\| context\.sha !== currentDefaultSha/);
+  assert.match(bridgeSection, /basehead: `\$\{base\}\.\.\.\$\{currentDefaultSha\}`/);
   assert.match(bridgeSection, /compareCommitsWithBasehead/);
   assert.match(bridgeSection, /!\['ahead', 'identical'\]\.includes\(data\.status\)/);
   assert.match(bridgeSection, /files\.length > 50/);
@@ -53,6 +57,8 @@ test("recovery default 이동은 bounded Framework-only compare에만 trusted gu
   assert.match(bridgeSection, /path\.startsWith\('test\/self-improvement\/'\) \|\| frameworkRootTests\.has\(path\)/);
   assert.doesNotMatch(bridgeSection, /path\.startsWith\('test\/'\)\s*\|\|/);
   assert.doesNotMatch(bridgeSection, /\(\?:plan-\|bounded-\|single-pass-/);
+  assert.doesNotMatch(bridgeSection, /data\.head_commit/);
+  assert.match(bridgeSection, /data\.merge_base_commit\.sha === base \? currentDefaultSha : 'invalid'/);
   assert.match(bridgeSection, /recovery compare failed/);
   assert.match(bridgeSection, /recovery requires re-plan; ambiguous or application changes/);
 });

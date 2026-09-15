@@ -139,13 +139,26 @@ jobs:
         with:
           script: |
             const base = process.env.WORKER_BASE_SHA;
-            const current = context.payload.repository.default_branch;
+            const defaultBranch = context.payload.repository.default_branch;
+            let currentDefaultSha;
             let comparison;
             try {
+              const { data: branch } = await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: defaultBranch,
+              });
+              currentDefaultSha = branch.commit.sha;
+              if (context.ref !== `refs/heads/${defaultBranch}` || context.sha !== currentDefaultSha) {
+                core.setFailed(
+                  `recovery trusted code is not exact current default: ref=${context.ref}, trusted=${context.sha}, default=${currentDefaultSha}`,
+                );
+                return;
+              }
               comparison = await github.rest.repos.compareCommitsWithBasehead({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                basehead: `${base}...${current}`,
+                basehead: `${base}...${currentDefaultSha}`,
                 per_page: 100,
               });
             } catch (error) {
@@ -183,7 +196,7 @@ jobs:
             }
             core.setOutput('kind', 'trusted-recovery-compare-v1');
             core.setOutput('base_sha', base);
-            core.setOutput('default_sha', data.merge_base_commit.sha === base ? data.head_commit.sha : 'invalid');
+            core.setOutput('default_sha', data.merge_base_commit.sha === base ? currentDefaultSha : 'invalid');
 
       - name: Trusted bridge control-plane checkout
         uses: actions/checkout@v4
