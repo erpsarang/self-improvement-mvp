@@ -408,6 +408,7 @@ async function finalize(): Promise<void> {
   const bridgeRunId = positiveInteger("BRIDGE_RUN_ID");
   const bridgeRunAttempt = positiveInteger("BRIDGE_RUN_ATTEMPT");
   const trustedCodeSha = required("BRIDGE_TRUSTED_CODE_SHA");
+  const recoveryGuard = trustedRecoveryGuard();
   const provenance = createPlanCandidateBridgeProvenance({
     bundle: live.bundle,
     requirement: live.requirement,
@@ -417,6 +418,7 @@ async function finalize(): Promise<void> {
     handoffArtifact: live.handoffArtifact,
     workerSource: live.workerSource,
     workerArtifact,
+    ...(recoveryGuard ? { recoveryGuard } : {}),
     deterministicValidation: validation,
     candidatePatch: patch,
     bridgeRun: { runId: bridgeRunId, runAttempt: bridgeRunAttempt, trustedCodeSha },
