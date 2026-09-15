@@ -274,6 +274,28 @@ test("Worker workflow/path/default branch drift는 fail-closed 한다", () => {
     ),
     /re-plan required/,
   );
+
+  const moved = { ...f.workerSource, currentDefaultSha: "9".repeat(40) };
+  assert.doesNotThrow(() => validatePlanCandidateWorkerSource(
+    f.workerProvenance,
+    moved,
+    f.workerArtifact,
+    {
+      kind: "trusted-recovery-compare-v1",
+      baseSha: f.workerProvenance.baseSha,
+      currentDefaultSha: moved.currentDefaultSha,
+    },
+  ));
+  assert.throws(() => validatePlanCandidateWorkerSource(
+    f.workerProvenance,
+    moved,
+    f.workerArtifact,
+    {
+      kind: "trusted-recovery-compare-v1",
+      baseSha: "8".repeat(40),
+      currentDefaultSha: moved.currentDefaultSha,
+    },
+  ), /re-plan required/);
 });
 
 test("Issue title/body가 승인 digest에서 바뀌면 frozen requirement를 만들지 않는다", () => {
