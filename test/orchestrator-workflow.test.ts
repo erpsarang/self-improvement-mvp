@@ -4,6 +4,7 @@ import test from "node:test";
 
 const workflow = await readFile(".github/workflows/orchestrator.yml", "utf8");
 const trustedRail = await readFile(".github/workflows/trusted-rail.yml", "utf8");
+const orchestratorHandler = await readFile("src/self-improvement/orchestrator-handler.ts", "utf8");
 const routeSection = workflow.split("\n  route:\n")[1]?.split("\n  merge_boundary:\n")[0] ?? "";
 const mergeSection = workflow.split("\n  merge_boundary:\n")[1]?.split("\n  record:\n")[0] ?? "";
 const recordSection = workflow.split("\n  record:\n")[1] ?? "";
@@ -71,6 +72,15 @@ test("PASS → MERGE_READY일 때만 PR boundary job이 실행된다", () => {
   assert.match(mergeSection, /needs\.route\.outputs\.should_create_pr == 'true'/);
   assert.match(mergeSection, /decision !== 'PASS' \|\| nextState !== 'MERGE_READY'/);
   assert.match(mergeSection, /branch !== `ai-publish\/issue-\$\{issueNumber\}`/);
+});
+
+test("requirements digest는 내부 raw hex를 유지하고 PR boundary transport에서만 sha256 접두사를 붙인다", () => {
+  assert.match(
+    orchestratorHandler,
+    /writeOutput\("requirements_digest", `sha256:\$\{validatedReview\.requirementsDigest\}`\)/,
+  );
+  assert.match(mergeSection, /\^sha256:\[0-9a-f\]\{64\}\$/);
+  assert.match(mergeSection, /invalid requirements digest/);
 });
 
 test("PR boundary는 contents read + pull-requests write만 사용하고 exact remote SHA를 검증한다", () => {
