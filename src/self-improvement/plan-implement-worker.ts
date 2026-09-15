@@ -48,6 +48,12 @@ export interface PlanImplementWorkerSourceRun {
   readonly currentDefaultSha: string;
 }
 
+export interface PlanImplementWorkerRecoveryGuard {
+  readonly kind: "trusted-recovery-compare-v1";
+  readonly baseSha: string;
+  readonly currentDefaultSha: string;
+}
+
 export interface PlanImplementWorkerBundle {
   readonly contract: ImplementContract;
   readonly context: ImplementContextPack;
@@ -181,6 +187,7 @@ export function validatePlanImplementWorkerSource(
   bundle: PlanImplementWorkerBundle,
   source: PlanImplementWorkerSourceRun,
   sourceArtifact: HandoffArtifactMetadata,
+  recoveryGuard?: PlanImplementWorkerRecoveryGuard,
 ): void {
   positiveInteger("source handoff run id", source.id);
   positiveInteger("source handoff run attempt", source.runAttempt);
@@ -197,7 +204,13 @@ export function validatePlanImplementWorkerSource(
   if (!GIT_SHA.test(source.headSha) || !GIT_SHA.test(source.currentDefaultSha)) throw new Error("invalid source handoff SHA");
   if (source.headSha !== bundle.contract.baseSha) throw new Error("source handoff SHA mismatch");
   if (source.currentDefaultSha !== bundle.contract.baseSha) {
-    throw new Error("default branch moved after handoff; re-plan required");
+    if (
+      recoveryGuard?.kind !== "trusted-recovery-compare-v1" ||
+      recoveryGuard.baseSha !== bundle.contract.baseSha ||
+      recoveryGuard.currentDefaultSha !== source.currentDefaultSha
+    ) {
+      throw new Error("default branch moved after handoff; re-plan required");
+    }
   }
   if (sourceArtifact.name !== planImplementHandoffArtifactName(bundle.authorization)) {
     throw new Error("source handoff artifact name mismatch");
