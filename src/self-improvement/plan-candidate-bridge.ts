@@ -100,6 +100,7 @@ export interface PlanCandidateBridgePayload {
   readonly candidateDigest: string;
   readonly deterministicValidation: DeterministicValidationResult;
   readonly candidatePatchDigest: string;
+  readonly recoveryGuard?: TrustedRecoveryCompareGuard;
   readonly bridgeWorkflow: {
     readonly workflowPath: typeof PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH;
     readonly runId: number;
@@ -152,6 +153,33 @@ function sha256(value: string | Buffer): string {
 
 function sha256Prefixed(value: string | Buffer): string {
   return `sha256:${sha256(value)}`;
+}
+
+export function validateBridgeTrustedCodeIdentity(input: {
+  readonly baseSha: string;
+  readonly trustedCodeSha: string;
+  readonly recoveryGuard?: TrustedRecoveryCompareGuard;
+}): void {
+  assertSha("bridge base SHA", input.baseSha);
+  assertSha("bridge trusted code SHA", input.trustedCodeSha);
+  if (!input.recoveryGuard) {
+    if (input.trustedCodeSha !== input.baseSha) {
+      throw new Error("bridge trusted code SHA must equal exact candidate base SHA");
+    }
+    return;
+  }
+
+  if (input.recoveryGuard.kind !== "trusted-recovery-compare-v1") {
+    throw new Error("bridge recovery guard kind mismatch");
+  }
+  assertSha("bridge recovery base SHA", input.recoveryGuard.baseSha);
+  assertSha("bridge recovery current default SHA", input.recoveryGuard.currentDefaultSha);
+  if (
+    input.recoveryGuard.baseSha !== input.baseSha ||
+    input.recoveryGuard.currentDefaultSha !== input.trustedCodeSha
+  ) {
+    throw new Error("bridge recovery guard does not bind candidate base and trusted code SHA");
+  }
 }
 
 function workerPayload(value: WorkerCandidateProvenance): Omit<WorkerCandidateProvenance, "digestAlgorithm" | "provenanceDigest"> {
@@ -359,6 +387,7 @@ function bridgePayload(value: PlanCandidateBridgeProvenance): PlanCandidateBridg
     candidateDigest: value.candidateDigest,
     deterministicValidation: value.deterministicValidation,
     candidatePatchDigest: value.candidatePatchDigest,
+    ...(value.recoveryGuard ? { recoveryGuard: { ...value.recoveryGuard } } : {}),
     bridgeWorkflow: { ...value.bridgeWorkflow },
   };
 }
@@ -421,10 +450,11 @@ export function createPlanCandidateBridgeProvenance(input: {
   }
   positiveInteger("bridge run id", input.bridgeRun.runId);
   positiveInteger("bridge run attempt", input.bridgeRun.runAttempt);
-  assertSha("bridge trusted code SHA", input.bridgeRun.trustedCodeSha);
-  if (input.bridgeRun.trustedCodeSha !== input.bundle.contract.baseSha) {
-    throw new Error("bridge trusted code SHA must equal exact candidate base SHA");
-  }
+  validateBridgeTrustedCodeIdentity({
+    baseSha: input.bundle.contract.baseSha,
+    trustedCodeSha: input.bridgeRun.trustedCodeSha,
+    ...(input.recoveryGuard ? { recoveryGuard: input.recoveryGuard } : {}),
+  });
   const patchSize = typeof input.candidatePatch === "string" ? Buffer.byteLength(input.candidatePatch) : input.candidatePatch.length;
   if (patchSize < 1) throw new Error("candidate patch must be non-empty");
 
@@ -456,6 +486,7 @@ export function createPlanCandidateBridgeProvenance(input: {
     candidateDigest: input.candidate.candidateDigest,
     deterministicValidation: input.deterministicValidation,
     candidatePatchDigest: sha256Prefixed(input.candidatePatch),
+    ...(input.recoveryGuard ? { recoveryGuard: { ...input.recoveryGuard } } : {}),
     bridgeWorkflow: {
       workflowPath: PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH,
       runId: input.bridgeRun.runId,
@@ -474,6 +505,9 @@ export function verifyPlanCandidateBridgeProvenance(value: unknown): PlanCandida
   if (!record(value.requirement) || !record(value.sourcePlanAuthorize) || !record(value.sourceHandoff) ||
       !record(value.sourceWorker) || !record(value.bridgeWorkflow)) {
     throw new Error("PLAN candidate bridge provenance identity is incomplete");
+  }
+  if (value.recoveryGuard !== undefined && !record(value.recoveryGuard)) {
+    throw new Error("PLAN candidate bridge recovery guard shape is invalid");
   }
   if (typeof value.repository !== "string" || !/^[^/]+\/[^/]+$/.test(value.repository)) throw new Error("bridge repository invalid");
   positiveInteger("bridge issueNumber", value.issueNumber);
@@ -545,15 +579,16 @@ export function verifyPlanCandidateBridgeProvenance(value: unknown): PlanCandida
     throw new Error("bridge deterministic validation mismatch");
   }
 
-  if (
-    provenance.bridgeWorkflow.workflowPath !== PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH ||
-    provenance.bridgeWorkflow.trustedCodeSha !== provenance.baseSha
-  ) {
+  if (provenance.bridgeWorkflow.workflowPath !== PLAN_CANDIDATE_BRIDGE_WORKFLOW_PATH) {
     throw new Error("bridge workflow identity mismatch");
   }
   positiveInteger("bridge workflow runId", provenance.bridgeWorkflow.runId);
   positiveInteger("bridge workflow runAttempt", provenance.bridgeWorkflow.runAttempt);
-  assertSha("bridge workflow trustedCodeSha", provenance.bridgeWorkflow.trustedCodeSha);
+  validateBridgeTrustedCodeIdentity({
+    baseSha: provenance.baseSha,
+    trustedCodeSha: provenance.bridgeWorkflow.trustedCodeSha,
+    ...(provenance.recoveryGuard ? { recoveryGuard: provenance.recoveryGuard } : {}),
+  });
 
   if (sha256(JSON.stringify(bridgePayload(provenance))) !== provenance.bridgeDigest) {
     throw new Error("bridge provenance digest mismatch");
