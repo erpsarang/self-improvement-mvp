@@ -162,6 +162,11 @@ jobs:
               'test/orchestrator-workflow.test.ts',
               'test/plan-candidate-bridge-workflow.test.ts',
               'test/plan-candidate-bridge.test.ts',
+              'test/fix-dispatch-workflow.test.ts',
+              'test/plan-candidate-bridge-recovery-finalize.test.ts',
+              'test/plan-candidate-bridge-recovery-provenance.test.ts',
+              'test/plan-trusted-rail-recovery-source.test.ts',
+              'test/seal-workflow.test.ts',
             ]);
             const frameworkTest = (path) =>
               path.startsWith('test/self-improvement/') || frameworkRootTests.has(path);
