@@ -127,6 +127,58 @@ jobs:
             core.setOutput('run_id', String(run.id));
             core.setOutput('run_attempt', String(run.run_attempt));
             core.setOutput('bridge_control_plane_sha', recovery ? context.sha : run.head_sha);
+            core.setOutput('recovery', recovery ? 'true' : 'false');
+            core.setOutput('worker_base_sha', run.head_sha);
+
+      - name: recovery default 이동 trusted compare guard
+        id: recovery_guard
+        if: steps.candidate_artifact.outputs.recovery == 'true'
+        uses: actions/github-script@v7
+        env:
+          WORKER_BASE_SHA: ${{ steps.candidate_artifact.outputs.worker_base_sha }}
+        with:
+          script: |
+            const base = process.env.WORKER_BASE_SHA;
+            const current = context.payload.repository.default_branch;
+            let comparison;
+            try {
+              comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                basehead: `${base}...${current}`,
+                per_page: 100,
+              });
+            } catch (error) {
+              core.setFailed(`recovery compare failed: ${error.message}`);
+              return;
+            }
+            const data = comparison.data;
+            const files = data.files;
+            if (!['ahead', 'identical'].includes(data.status) || !Array.isArray(files) || files.length > 50) {
+              core.setFailed(`recovery compare is not a bounded ancestor diff: status=${data.status}, files=${files?.length}`);
+              return;
+            }
+            const frameworkRootTests = new Set([
+              'test/orchestrator-workflow.test.ts',
+              'test/plan-candidate-bridge-workflow.test.ts',
+              'test/plan-candidate-bridge.test.ts',
+            ]);
+            const frameworkTest = (path) =>
+              path.startsWith('test/self-improvement/') || frameworkRootTests.has(path);
+            const frameworkDoc = /^docs\/(?:self-improvement\/|(?:architecture|trust-model|state-machine|phase-[1-6]-[^/]+|orchestrator-smoke|fix-loop-smoke-[^/]+)\.md$)/;
+            const allowed = (path) => path.startsWith('.github/workflows/') ||
+              path.startsWith('src/self-improvement/') || path === 'FRAMEWORK.md' ||
+              frameworkDoc.test(path) || frameworkTest(path);
+            const rejected = files.filter((file) =>
+              !['added', 'modified'].includes(file.status) || !allowed(file.filename) || file.previous_filename,
+            );
+            if (rejected.length > 0) {
+              core.setFailed(`recovery requires re-plan; ambiguous or application changes: ${rejected.map((f) => `${f.status}:${f.filename}`).join(',')}`);
+              return;
+            }
+            core.setOutput('kind', 'trusted-recovery-compare-v1');
+            core.setOutput('base_sha', base);
+            core.setOutput('default_sha', data.merge_base_commit.sha === base ? data.head_commit.sha : 'invalid');
 
       - name: Trusted bridge control-plane checkout
         uses: actions/checkout@v4
@@ -170,6 +222,9 @@ jobs:
           SOURCE_CANDIDATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-candidate
           BRIDGE_RUN_ID: ${{ github.run_id }}
           BRIDGE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          TRUSTED_RECOVERY_GUARD_KIND: ${{ steps.recovery_guard.outputs.kind }}
+          TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
+          TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
 
       - name: exact Handoff artifact 다운로드
         uses: actions/download-artifact@v4
@@ -227,6 +282,9 @@ jobs:
           TARGET_DIRECTORY: ${{ github.workspace }}/validation-target
           OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
           STATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-state
+          TRUSTED_RECOVERY_GUARD_KIND: ${{ steps.recovery_guard.outputs.kind }}
+          TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
+          TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
         run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts validate
 
       - name: canonical patch와 bridge provenance 생성
@@ -248,6 +306,9 @@ jobs:
           BRIDGE_RUN_ID: ${{ github.run_id }}
           BRIDGE_RUN_ATTEMPT: ${{ github.run_attempt }}
           BRIDGE_TRUSTED_CODE_SHA: ${{ steps.candidate_artifact.outputs.bridge_control_plane_sha }}
+          TRUSTED_RECOVERY_GUARD_KIND: ${{ steps.recovery_guard.outputs.kind }}
+          TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
+          TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
         run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts finalize
 
       - name: canonical PLAN bridge artifact 저장

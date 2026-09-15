@@ -33,6 +33,7 @@ import {
   type ArtifactMetadata,
   type FrozenPlanRequirement,
   type PlanCandidateWorkerSourceRun,
+  type TrustedRecoveryCompareGuard,
 } from "./plan-candidate-bridge.js";
 import type { CandidateChangeSet } from "./single-pass-worker.js";
 
@@ -134,6 +135,17 @@ function selectedWorkerArtifact(): ArtifactMetadata {
   };
 }
 
+function trustedRecoveryGuard(): TrustedRecoveryCompareGuard | undefined {
+  const kind = process.env.TRUSTED_RECOVERY_GUARD_KIND;
+  if (!kind) return undefined;
+  if (kind !== "trusted-recovery-compare-v1") throw new Error("invalid trusted recovery guard kind");
+  return {
+    kind,
+    baseSha: required("TRUSTED_RECOVERY_BASE_SHA"),
+    currentDefaultSha: required("TRUSTED_RECOVERY_DEFAULT_SHA"),
+  };
+}
+
 async function defaultBranchIdentity(owner: string, repo: string): Promise<{ defaultBranch: string; currentDefaultSha: string }> {
   const repositoryInfo = await api<any>(`/repos/${owner}/${repo}`);
   const defaultBranch = repositoryInfo.default_branch;
@@ -184,7 +196,7 @@ async function validateLiveWorkerSource(
   ) {
     throw new Error("live Worker candidate artifact identity mismatch");
   }
-  validatePlanCandidateWorkerSource(provenance, source, selectedArtifact);
+  validatePlanCandidateWorkerSource(provenance, source, selectedArtifact, trustedRecoveryGuard());
   return source;
 }
 
@@ -257,6 +269,7 @@ async function validateAllLiveInputs(input: {
   const workerSource = await validateLiveWorkerSource(provenance, input.workerArtifact);
   const bundle = loadBundle(input.handoffDirectory);
   const { source: handoffSource, artifact: handoffArtifact } = await validateLiveHandoff(bundle, provenance);
+  const recoveryGuard = trustedRecoveryGuard();
   validateWorkerCandidateAgainstHandoff({
     candidate,
     provenance,
@@ -265,6 +278,7 @@ async function validateAllLiveInputs(input: {
     handoffArtifact,
     workerSource,
     workerArtifact: input.workerArtifact,
+    ...(recoveryGuard ? { recoveryGuard } : {}),
   });
   const requirement = await freezeLiveRequirement(bundle);
   return { candidate, provenance, bundle, workerSource, handoffSource, handoffArtifact, requirement };

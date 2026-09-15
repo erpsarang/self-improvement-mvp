@@ -51,6 +51,12 @@ export interface PlanCandidateWorkerSourceRun {
   readonly currentDefaultSha: string;
 }
 
+export interface TrustedRecoveryCompareGuard {
+  readonly kind: "trusted-recovery-compare-v1";
+  readonly baseSha: string;
+  readonly currentDefaultSha: string;
+}
+
 export interface FrozenPlanRequirement {
   readonly issueNumber: number;
   readonly title: string;
@@ -215,6 +221,7 @@ export function validatePlanCandidateWorkerSource(
   provenance: WorkerCandidateProvenance,
   source: PlanCandidateWorkerSourceRun,
   sourceArtifact: ArtifactMetadata,
+  recoveryGuard?: TrustedRecoveryCompareGuard,
 ): void {
   positiveInteger("Worker source run id", source.id);
   positiveInteger("Worker source run attempt", source.runAttempt);
@@ -233,7 +240,15 @@ export function validatePlanCandidateWorkerSource(
     throw new Error("Worker source run identity mismatch");
   }
   if (source.headSha !== provenance.baseSha) throw new Error("Worker source head SHA mismatch");
-  if (source.currentDefaultSha !== provenance.baseSha) throw new Error("default branch moved after Worker; re-plan required");
+  if (source.currentDefaultSha !== provenance.baseSha) {
+    if (
+      recoveryGuard?.kind !== "trusted-recovery-compare-v1" ||
+      recoveryGuard.baseSha !== provenance.baseSha ||
+      recoveryGuard.currentDefaultSha !== source.currentDefaultSha
+    ) {
+      throw new Error("default branch moved after Worker; re-plan required");
+    }
+  }
 
   const pattern = new RegExp(
     `^bounded-worker-candidate-issue-${provenance.issueNumber}-plan-${provenance.approvedPlan.runId}-approval-${provenance.approvalCommentId}` +
@@ -251,10 +266,11 @@ export function validateWorkerCandidateAgainstHandoff(input: {
   readonly handoffArtifact: HandoffArtifactMetadata;
   readonly workerSource: PlanCandidateWorkerSourceRun;
   readonly workerArtifact: ArtifactMetadata;
+  readonly recoveryGuard?: TrustedRecoveryCompareGuard;
 }): void {
   const provenance = verifyWorkerCandidateProvenanceShape(input.provenance);
   verifyCandidateChangeSet(input.candidate, input.bundle.contract, input.bundle.context);
-  validatePlanCandidateWorkerSource(provenance, input.workerSource, input.workerArtifact);
+  validatePlanCandidateWorkerSource(provenance, input.workerSource, input.workerArtifact, input.recoveryGuard);
 
   if (input.handoffSource.id !== provenance.sourceHandoff.runId || input.handoffSource.runAttempt !== provenance.sourceHandoff.runAttempt) {
     throw new Error("Worker provenance source Handoff run mismatch");

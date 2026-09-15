@@ -33,6 +33,32 @@ test("recovery는 source Worker run과 exact artifact를 fail-closed 재검증�
   assert.match(bridgeSection, /matches\.length !== 1 \|\| exact\.length !== 1/);
 });
 
+test("recovery default 이동은 bounded Framework-only compare에만 trusted guard를 발급한다", () => {
+  assert.match(bridgeSection, /compareCommitsWithBasehead/);
+  assert.match(bridgeSection, /!\['ahead', 'identical'\]\.includes\(data\.status\)/);
+  assert.match(bridgeSection, /files\.length > 50/);
+  assert.match(bridgeSection, /!\['added', 'modified'\]\.includes\(file\.status\)/);
+  assert.match(bridgeSection, /file\.previous_filename/);
+  assert.match(bridgeSection, /path\.startsWith\('src\/self-improvement\/'\)/);
+  assert.match(bridgeSection, /path === 'FRAMEWORK\.md'/);
+  assert.match(bridgeSection, /const frameworkRootTests = new Set\(\[/);
+  assert.match(bridgeSection, /'test\/orchestrator-workflow\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-candidate-bridge-workflow\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-candidate-bridge\.test\.ts'/);
+  assert.match(bridgeSection, /path\.startsWith\('test\/self-improvement\/'\) \|\| frameworkRootTests\.has\(path\)/);
+  assert.doesNotMatch(bridgeSection, /\(\?:plan-\|bounded-\|single-pass-/);
+  assert.match(bridgeSection, /recovery compare failed/);
+  assert.match(bridgeSection, /recovery requires re-plan; ambiguous or application changes/);
+});
+
+test("trusted recovery guard는 workflow 산출 SHA에 바인딩되어 모든 검증 단계에 전달된다", () => {
+  assert.match(bridgeSection, /core\.setOutput\('kind', 'trusted-recovery-compare-v1'\)/);
+  assert.match(bridgeSection, /core\.setOutput\('base_sha', base\)/);
+  assert.match(bridgeSection, /TRUSTED_RECOVERY_GUARD_KIND: \$\{\{ steps\.recovery_guard\.outputs\.kind \}\}/);
+  assert.match(bridgeSection, /TRUSTED_RECOVERY_BASE_SHA: \$\{\{ steps\.recovery_guard\.outputs\.base_sha \}\}/);
+  assert.match(bridgeSection, /TRUSTED_RECOVERY_DEFAULT_SHA: \$\{\{ steps\.recovery_guard\.outputs\.default_sha \}\}/);
+});
+
 test("recovery bridge는 새 trusted SHA를 쓰되 source Worker identity는 artifact와 함께 유지한다", () => {
   assert.match(
     bridgeSection,
