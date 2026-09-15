@@ -158,11 +158,17 @@ jobs:
               core.setFailed(`recovery compare is not a bounded ancestor diff: status=${data.status}, files=${files?.length}`);
               return;
             }
-            const frameworkTest = /^test\/(?:self-improvement\/|(?:plan-|bounded-|single-pass-|orchestrator|authorization|authorize-|implement-|publish|review|seal|state|verify|fix-|human-status|context-pack|deterministic-ci|planner)[^/]*\.test\.ts$)/;
+            const frameworkRootTests = new Set([
+              'test/orchestrator-workflow.test.ts',
+              'test/plan-candidate-bridge-workflow.test.ts',
+              'test/plan-candidate-bridge.test.ts',
+            ]);
+            const frameworkTest = (path) =>
+              path.startsWith('test/self-improvement/') || frameworkRootTests.has(path);
             const frameworkDoc = /^docs\/(?:self-improvement\/|(?:architecture|trust-model|state-machine|phase-[1-6]-[^/]+|orchestrator-smoke|fix-loop-smoke-[^/]+)\.md$)/;
             const allowed = (path) => path.startsWith('.github/workflows/') ||
               path.startsWith('src/self-improvement/') || path === 'FRAMEWORK.md' ||
-              frameworkDoc.test(path) || frameworkTest.test(path);
+              frameworkDoc.test(path) || frameworkTest(path);
             const rejected = files.filter((file) =>
               !['added', 'modified'].includes(file.status) || !allowed(file.filename) || file.previous_filename,
             );
