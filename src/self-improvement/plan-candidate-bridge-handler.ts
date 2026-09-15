@@ -238,7 +238,7 @@ async function validateLiveHandoff(
   ) {
     throw new Error("live Handoff artifact identity mismatch");
   }
-  validatePlanImplementWorkerSource(bundle, source, artifact);
+  validatePlanImplementWorkerSource(bundle, source, artifact, trustedRecoveryGuard());
   return { source, artifact };
 }
 
