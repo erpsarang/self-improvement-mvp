@@ -4,15 +4,31 @@ on:
   workflow_run:
     workflows: ["PLAN Bounded IMPLEMENT Worker"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_worker_run_id:
+        description: completed PLAN Bounded IMPLEMENT Worker run ID
+        required: true
+        type: string
+      source_worker_run_attempt:
+        description: exact source Worker run attempt
+        required: true
+        type: string
+      source_candidate_artifact_name:
+        description: exact bounded Worker candidate artifact name
+        required: true
+        type: string
 
 permissions: {}
 
 jobs:
   bridge:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'workflow_run' &&
-      github.event.workflow_run.head_branch == github.event.repository.default_branch
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'workflow_run' &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch) ||
+      github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       actions: read
@@ -26,22 +42,68 @@ jobs:
       - name: bounded Worker source와 candidate artifact exact 선택
         id: candidate_artifact
         uses: actions/github-script@v7
+        env:
+          RECOVERY_SOURCE_RUN_ID: ${{ inputs.source_worker_run_id }}
+          RECOVERY_SOURCE_RUN_ATTEMPT: ${{ inputs.source_worker_run_attempt }}
+          RECOVERY_SOURCE_ARTIFACT: ${{ inputs.source_candidate_artifact_name }}
         with:
           script: |
-            const run = context.payload.workflow_run;
-            if (
-              run.name !== 'PLAN Bounded IMPLEMENT Worker' ||
-              run.path !== '.github/workflows/plan-implement-worker.yml' ||
-              run.event !== 'workflow_run' ||
-              run.conclusion !== 'success' ||
-              run.head_branch !== context.payload.repository.default_branch
-            ) {
-              core.setFailed(`unexpected bounded Worker source: ${run.name} ${run.path} ${run.event} ${run.conclusion}`);
-              return;
+            const recovery = context.eventName === 'workflow_dispatch';
+            let run;
+            let requestedArtifact = null;
+
+            if (recovery) {
+              const runId = Number(process.env.RECOVERY_SOURCE_RUN_ID);
+              const runAttempt = Number(process.env.RECOVERY_SOURCE_RUN_ATTEMPT);
+              requestedArtifact = process.env.RECOVERY_SOURCE_ARTIFACT;
+              if (!Number.isSafeInteger(runId) || runId <= 0 ||
+                  !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
+                core.setFailed('invalid recovery Worker run identity');
+                return;
+              }
+
+              const response = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              });
+              run = response.data;
+              if (
+                run.name !== 'PLAN Bounded IMPLEMENT Worker' ||
+                run.path !== '.github/workflows/plan-implement-worker.yml' ||
+                run.event !== 'workflow_run' ||
+                run.status !== 'completed' ||
+                run.conclusion !== 'success' ||
+                run.head_branch !== context.payload.repository.default_branch ||
+                run.run_attempt !== runAttempt
+              ) {
+                core.setFailed(
+                  `invalid recovery Worker source: name=${run.name}, path=${run.path}, event=${run.event}, status=${run.status}, conclusion=${run.conclusion}, branch=${run.head_branch}, attempt=${run.run_attempt}`,
+                );
+                return;
+              }
+            } else {
+              run = context.payload.workflow_run;
+              if (
+                run.name !== 'PLAN Bounded IMPLEMENT Worker' ||
+                run.path !== '.github/workflows/plan-implement-worker.yml' ||
+                run.event !== 'workflow_run' ||
+                run.conclusion !== 'success' ||
+                run.head_branch !== context.payload.repository.default_branch
+              ) {
+                core.setFailed(`unexpected bounded Worker source: ${run.name} ${run.path} ${run.event} ${run.conclusion}`);
+                return;
+              }
             }
+
             const pattern = new RegExp(
               `^bounded-worker-candidate-issue-\\d+-plan-\\d+-approval-\\d+-handoff-\\d+-attempt-\\d+-worker-${run.id}-attempt-${run.run_attempt}$`,
             );
+            if (recovery && !pattern.test(requestedArtifact)) {
+              core.setFailed(`unexpected recovery candidate artifact: ${requestedArtifact}`);
+              return;
+            }
+
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -49,19 +111,27 @@ jobs:
               per_page: 100,
             });
             const matches = data.artifacts.filter((artifact) => !artifact.expired && pattern.test(artifact.name));
-            if (matches.length !== 1) {
-              core.setFailed(`expected exactly one bounded Worker candidate artifact; found=${matches.length}`);
+            const exact = recovery
+              ? matches.filter((artifact) => artifact.name === requestedArtifact)
+              : matches;
+            if (matches.length !== 1 || exact.length !== 1) {
+              core.setFailed(
+                `expected exactly one bounded Worker candidate artifact; total=${matches.length}, exact=${exact.length}`,
+              );
               return;
             }
-            const artifact = matches[0];
+            const artifact = exact[0];
             core.setOutput('name', artifact.name);
             core.setOutput('id', String(artifact.id));
             core.setOutput('digest', artifact.digest ?? '');
+            core.setOutput('run_id', String(run.id));
+            core.setOutput('run_attempt', String(run.run_attempt));
+            core.setOutput('bridge_control_plane_sha', recovery ? context.sha : run.head_sha);
 
       - name: Trusted bridge control-plane checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ steps.candidate_artifact.outputs.bridge_control_plane_sha }}
           persist-credentials: false
           path: bridge-control
 
@@ -83,7 +153,7 @@ jobs:
           path: ${{ runner.temp }}/plan-bridge-candidate
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.candidate_artifact.outputs.run_id }}
 
       - name: candidate provenance 검증 및 Handoff exact identity 준비
         id: prepare
@@ -92,8 +162,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_WORKER_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_WORKER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_WORKER_RUN_ID: ${{ steps.candidate_artifact.outputs.run_id }}
+          SOURCE_WORKER_RUN_ATTEMPT: ${{ steps.candidate_artifact.outputs.run_attempt }}
           SOURCE_CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
           SOURCE_CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.id }}
           SOURCE_CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_artifact.outputs.digest }}
@@ -147,8 +217,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_WORKER_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_WORKER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_WORKER_RUN_ID: ${{ steps.candidate_artifact.outputs.run_id }}
+          SOURCE_WORKER_RUN_ATTEMPT: ${{ steps.candidate_artifact.outputs.run_attempt }}
           SOURCE_CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
           SOURCE_CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.id }}
           SOURCE_CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_artifact.outputs.digest }}
@@ -164,8 +234,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_WORKER_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_WORKER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_WORKER_RUN_ID: ${{ steps.candidate_artifact.outputs.run_id }}
+          SOURCE_WORKER_RUN_ATTEMPT: ${{ steps.candidate_artifact.outputs.run_attempt }}
           SOURCE_CANDIDATE_ARTIFACT_NAME: ${{ steps.candidate_artifact.outputs.name }}
           SOURCE_CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.id }}
           SOURCE_CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_artifact.outputs.digest }}
@@ -177,7 +247,7 @@ jobs:
           BRIDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/plan-bridge-output
           BRIDGE_RUN_ID: ${{ github.run_id }}
           BRIDGE_RUN_ATTEMPT: ${{ github.run_attempt }}
-          BRIDGE_TRUSTED_CODE_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRIDGE_TRUSTED_CODE_SHA: ${{ steps.candidate_artifact.outputs.bridge_control_plane_sha }}
         run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts finalize
 
       - name: canonical PLAN bridge artifact 저장
