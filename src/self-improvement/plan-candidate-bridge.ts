@@ -388,6 +388,7 @@ export function createPlanCandidateBridgeProvenance(input: {
   readonly handoffArtifact: HandoffArtifactMetadata;
   readonly workerSource: PlanCandidateWorkerSourceRun;
   readonly workerArtifact: ArtifactMetadata;
+  readonly recoveryGuard?: TrustedRecoveryCompareGuard;
   readonly deterministicValidation: DeterministicValidationResult;
   readonly candidatePatch: string | Buffer;
   readonly bridgeRun: BridgeRunIdentity;
@@ -400,6 +401,7 @@ export function createPlanCandidateBridgeProvenance(input: {
     handoffArtifact: input.handoffArtifact,
     workerSource: input.workerSource,
     workerArtifact: input.workerArtifact,
+    ...(input.recoveryGuard ? { recoveryGuard: input.recoveryGuard } : {}),
   });
   verifyDeterministicValidationResult(input.deterministicValidation);
   if (input.deterministicValidation.status !== "PASS") throw new Error("deterministic validation did not PASS");
