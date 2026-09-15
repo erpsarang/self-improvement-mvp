@@ -27,8 +27,9 @@ test("explicit candidate source는 kind별 exact workflow/event/run/artifact ide
   assert.match(sealSection, /'\.github\/workflows\/plan-candidate-bridge\.yml'/);
   assert.match(sealSection, /'\.github\/workflows\/fix-worker\.yml'/);
   assert.match(sealSection, /run\.path !== expectedPath/);
-  assert.match(sealSection, /const expectedEvent = sourceKind === 'PLAN_BRIDGE'/);
-  assert.match(sealSection, /run\.event !== expectedEvent/);
+  assert.match(sealSection, /const expectedEvents = sourceKind === 'PLAN_BRIDGE'/);
+  assert.match(sealSection, /new Set\(\['workflow_run', 'workflow_dispatch'\]\)/);
+  assert.match(sealSection, /!expectedEvents\.has\(run\.event\)/);
   assert.match(sealSection, /run\.run_attempt !== runAttempt/);
   assert.match(sealSection, /expected exactly one explicit \$\{sourceKind\} candidate artifact/);
   assert.match(sealSection, /implement-candidate-/);
