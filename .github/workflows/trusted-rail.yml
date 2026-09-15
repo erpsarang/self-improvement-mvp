@@ -103,16 +103,16 @@ jobs:
               const expectedPath = sourceKind === 'PLAN_BRIDGE'
                 ? '.github/workflows/plan-candidate-bridge.yml'
                 : '.github/workflows/fix-worker.yml';
-              const expectedEvent = sourceKind === 'PLAN_BRIDGE'
-                ? 'workflow_run'
-                : 'workflow_dispatch';
+              const expectedEvents = sourceKind === 'PLAN_BRIDGE'
+                ? new Set(['workflow_run', 'workflow_dispatch'])
+                : new Set(['workflow_dispatch']);
 
               if (
                 !run ||
                 run.status !== 'completed' ||
                 run.conclusion !== 'success' ||
                 run.path !== expectedPath ||
-                run.event !== expectedEvent ||
+                !expectedEvents.has(run.event) ||
                 run.head_branch !== context.payload.repository.default_branch ||
                 run.head_sha !== context.sha ||
                 run.run_attempt !== runAttempt
