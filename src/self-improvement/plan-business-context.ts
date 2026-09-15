@@ -72,6 +72,17 @@ function requirementTerms(requirement: string): string[] {
   return [...new Set(terms)].sort((a, b) => a.localeCompare(b));
 }
 
+function requirementRuntimePathHints(requirement: string, sourcePaths: readonly string[], contextPaths: ReadonlySet<string>): string[] {
+  const sourceSet = new Set(sourcePaths);
+  const result: string[] = [];
+  for (const match of requirement.matchAll(/`([A-Za-z0-9._/-]{3,500})`/g)) {
+    const path = match[1]!;
+    if (!path.startsWith("src/") || isFrameworkSource(path) || !sourceSet.has(path) || !contextPaths.has(path)) continue;
+    if (!result.includes(path)) result.push(path);
+  }
+  return result;
+}
+
 function occurrences(text: string, term: string): number {
   let count = 0;
   let from = 0;
@@ -228,6 +239,7 @@ function rebind(repository: string, sha: string, files: readonly PlanContextFile
 function businessRelationCandidates(
   requirement: string,
   target: string,
+  contextPaths: ReadonlySet<string>,
   maxFileBytes: number,
 ): PlanContextFile[] {
   const terms = requirementTerms(requirement);
@@ -250,6 +262,23 @@ function businessRelationCandidates(
     application: !isFrameworkSource(sourcePath),
   })));
   if (relations.length === 0) return [];
+
+  const runtimeHints = requirementRuntimePathHints(requirement, sourcePaths, contextPaths);
+  const hintedSource = runtimeHints.find((path) => relations.some((relation) => relation.sourcePath === path));
+  if (hintedSource) {
+    const hintedRelations = relations
+      .filter((relation) => relation.sourcePath === hintedSource)
+      .sort((a, b) =>
+        b.affinity - a.affinity
+        || b.test.score - a.test.score
+        || a.sourceRank - b.sourceRank
+        || a.test.path.localeCompare(b.test.path));
+    const best = hintedRelations[0]!;
+    const source = contextFile(target, hintedSource, [], maxFileBytes);
+    const test = contextFile(target, best.test.path, terms, maxFileBytes);
+    return source && test ? [source, test] : [];
+  }
+  if (runtimeHints.length > 0) return [];
 
   const applicationRelations = relations.filter((relation) => relation.application);
   const pool = applicationRelations.length > 0 ? applicationRelations : relations;
@@ -280,7 +309,8 @@ export function augmentPlanContextWithBusinessRelations(
     throw new Error("Invalid business context budget");
   }
 
-  const candidates = businessRelationCandidates(requirement, target, maxFileBytes).slice(0, maxFiles);
+  const contextPaths = new Set(context.files.map((file) => file.path));
+  const candidates = businessRelationCandidates(requirement, target, contextPaths, maxFileBytes).slice(0, maxFiles);
   if (candidates.length < 2) return context;
 
   const candidatePaths = new Set(candidates.map((file) => file.path));
