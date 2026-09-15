@@ -100,7 +100,7 @@ if (command === "prepare") {
   writeOutput("next_fix_attempt", route.nextFixAttempt ?? "");
   writeOutput("reviewed_branch", validatedReview.reviewedBranch);
   writeOutput("reviewed_head_sha", validatedReview.reviewedHeadSha);
-  writeOutput("requirements_digest", validatedReview.requirementsDigest);
+  writeOutput("requirements_digest", `sha256:${validatedReview.requirementsDigest}`);
   process.exit(0);
 }
 
