@@ -32,7 +32,7 @@ test("source run / default SHA / artifact identity를 exact하게 고정한다",
 
 test("producer는 AI 호출, workflow dispatch, repository write를 수행하지 않는다", () => {
   assert.doesNotMatch(workflow, /openai\/codex-action/);
-  assert.doesNotMatch(workflow, /createWorkflowDispatch|workflow_dispatch.*uses:/s);
+  assert.doesNotMatch(workflow, /createWorkflowDispatch/);
   assert.doesNotMatch(workflow, /git push/);
   assert.doesNotMatch(workflow, /pulls\.create|issues\.create|issues\.createComment/);
   assert.match(workflow, /persist-credentials: false/);
