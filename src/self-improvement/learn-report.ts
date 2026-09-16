@@ -341,7 +341,6 @@ function reportItemSchema(): Record<string, unknown> {
       evidenceIds: {
         type: "array",
         minItems: 1,
-        uniqueItems: true,
         items: { type: "string" },
       },
       confidence: { type: "string", enum: ["high", "medium", "low"] },
