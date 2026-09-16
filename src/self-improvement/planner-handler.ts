@@ -13,6 +13,7 @@ import {
 } from "./planner.js";
 import { augmentPlanContextWithBusinessRelations } from "./plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
+import { augmentPlanContextWithExplicitPaths } from "./plan-explicit-path-context.js";
 import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
 
 function env(name: string): string {
@@ -36,9 +37,10 @@ if (command === "prepare") {
   const before = snapshot(target);
   const selectedContext = selectPlanContext(requirement, target, repository, sha);
   const businessContext = augmentPlanContextWithBusinessRelations(requirement, target, selectedContext);
-  const context = needsHumanOutputPlanContext(requirement)
+  const humanContext = needsHumanOutputPlanContext(requirement)
     ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, businessContext)
     : businessContext;
+  const context = augmentPlanContextWithExplicitPaths(requirement, target, humanContext);
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,
