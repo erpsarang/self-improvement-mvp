@@ -363,9 +363,9 @@ export function createLearnReportOutputSchema(pack: LearnInputPack): Record<stri
       "uncertainties",
     ],
     properties: {
-      schemaVersion: { const: 1 },
-      kind: { const: "untrusted-learn-report" },
-      sourcePackDigest: { const: pack.packDigest },
+      schemaVersion: { type: "integer", const: 1 },
+      kind: { type: "string", const: "untrusted-learn-report" },
+      sourcePackDigest: { type: "string", const: pack.packDigest },
       observations: { type: "array", maxItems: LEARN_REPORT_BUDGET.maxItemsPerSection, items: reportItemSchema() },
       lessons: { type: "array", maxItems: LEARN_REPORT_BUDGET.maxItemsPerSection, items: reportItemSchema() },
       improvementHypotheses: { type: "array", maxItems: LEARN_REPORT_BUDGET.maxItemsPerSection, items: reportItemSchema() },
