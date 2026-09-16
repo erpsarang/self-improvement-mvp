@@ -1,0 +1,363 @@
+name: Read-only AI LEARN
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed Cycle / LEARN Input Pack source workflow run ID
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact source workflow run attempt
+        required: true
+        type: string
+      completed_cycle_artifact_name:
+        description: Exact Completed Cycle Record artifact name
+        required: true
+        type: string
+      learn_input_artifact_name:
+        description: Exact Trusted LEARN Input Pack artifact name
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  prepare:
+    name: trusted LEARN 입력 검증
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      issue_number: ${{ steps.prepare.outputs.issue_number }}
+      human_merge_pr: ${{ steps.prepare.outputs.human_merge_pr }}
+      pack_digest: ${{ steps.prepare.outputs.pack_digest }}
+      request_artifact_name: ${{ steps.names.outputs.request_artifact_name }}
+      source_run_id: ${{ steps.source.outputs.source_run_id }}
+      source_run_attempt: ${{ steps.source.outputs.source_run_attempt }}
+      input_artifact_name: ${{ steps.source.outputs.input_artifact_name }}
+      input_artifact_id: ${{ steps.source.outputs.input_artifact_id }}
+      input_artifact_digest: ${{ steps.source.outputs.input_artifact_digest }}
+      completed_artifact_id: ${{ steps.source.outputs.completed_artifact_id }}
+      completed_artifact_digest: ${{ steps.source.outputs.completed_artifact_digest }}
+    steps:
+      - name: trusted LEARN control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted LEARN 의존성 설치
+        run: npm ci --ignore-scripts
+
+      - name: exact source run과 artifact 선택
+        id: source
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          COMPLETED_ARTIFACT_NAME: ${{ inputs.completed_cycle_artifact_name }}
+          INPUT_ARTIFACT_NAME: ${{ inputs.learn_input_artifact_name }}
+        with:
+          script: |
+            const runIdRaw = process.env.SOURCE_RUN_ID;
+            const attemptRaw = process.env.SOURCE_RUN_ATTEMPT;
+            if (!/^[1-9]\d*$/.test(runIdRaw) || !/^[1-9]\d*$/.test(attemptRaw)) {
+              core.setFailed('source run id/attempt must be positive integers');
+              return;
+            }
+            const runId = Number(runIdRaw);
+            const runAttempt = Number(attemptRaw);
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+            if (run.run_attempt !== runAttempt || run.status !== 'completed' || run.conclusion !== 'success') {
+              core.setFailed(`source run must be exact completed success: actual attempt=${run.run_attempt}, status=${run.status}, conclusion=${run.conclusion}`);
+              return;
+            }
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+              per_page: 100,
+            });
+            const exactArtifact = (name) => {
+              const matches = data.artifacts.filter((artifact) => !artifact.expired && artifact.name === name);
+              if (matches.length !== 1) throw new Error(`expected one non-expired artifact named ${name}, found ${matches.length}`);
+              return matches[0];
+            };
+            const completed = exactArtifact(process.env.COMPLETED_ARTIFACT_NAME);
+            const input = exactArtifact(process.env.INPUT_ARTIFACT_NAME);
+            if (completed.id === input.id) throw new Error('Completed Cycle and LEARN Input Pack artifacts must be distinct');
+            core.setOutput('source_run_id', runId);
+            core.setOutput('source_run_attempt', runAttempt);
+            core.setOutput('completed_artifact_id', completed.id);
+            core.setOutput('completed_artifact_digest', completed.digest || '');
+            core.setOutput('input_artifact_name', input.name);
+            core.setOutput('input_artifact_id', input.id);
+            core.setOutput('input_artifact_digest', input.digest || '');
+
+      - name: Completed Cycle Record 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.completed_cycle_artifact_name }}
+          path: ${{ runner.temp }}/learn-completed-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.source_run_id }}
+
+      - name: LEARN Input Pack 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.input_artifact_name }}
+          path: ${{ runner.temp }}/learn-input-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.source_run_id }}
+
+      - name: source artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t completed_files < <(find "${RUNNER_TEMP}/learn-completed-source" -type f -print)
+          mapfile -t input_files < <(find "${RUNNER_TEMP}/learn-input-source" -type f -print)
+          if [ "${#completed_files[@]}" -ne 1 ] || [ "$(basename "${completed_files[0]}")" != "completed-cycle.json" ]; then
+            echo "Completed Cycle artifact must contain exactly completed-cycle.json" >&2
+            exit 1
+          fi
+          if [ "${#input_files[@]}" -ne 1 ] || [ "$(basename "${input_files[0]}")" != "learn-input-pack.json" ]; then
+            echo "LEARN Input Pack artifact must contain exactly learn-input-pack.json" >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/learn-source" "${RUNNER_TEMP}/learn-request"
+          cp "${completed_files[0]}" "${RUNNER_TEMP}/learn-source/completed-cycle.json"
+          cp "${input_files[0]}" "${RUNNER_TEMP}/learn-source/learn-input-pack.json"
+
+      - name: exact Completed Cycle과 LEARN Input Pack 검증 및 AI 입력 생성
+        id: prepare
+        run: npm exec -- tsx src/self-improvement/learn-handler.ts prepare
+        env:
+          COMPLETED_CYCLE_JSON: ${{ runner.temp }}/learn-source/completed-cycle.json
+          LEARN_INPUT_PACK_JSON: ${{ runner.temp }}/learn-source/learn-input-pack.json
+          LEARN_RUNTIME_DIR: ${{ runner.temp }}/learn-request
+
+      - name: request artifact 이름 고정
+        id: names
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
+        run: echo "request_artifact_name=learn-request-issue-${ISSUE_NUMBER}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: trusted LEARN request 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.names.outputs.request_artifact_name }}
+          path: ${{ runner.temp }}/learn-request/
+          if-no-files-found: error
+
+  learner:
+    name: isolated read-only AI Learner
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+    steps:
+      - name: trusted LEARN request 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.request_artifact_name }}
+          path: ${{ runner.temp }}/learn-request
+
+      - name: LEARN request 구조 확인 및 neutral workspace 생성
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find "${RUNNER_TEMP}/learn-request" -type f -print)
+          if [ "${#files[@]}" -ne 3 ]; then
+            echo "LEARN request artifact must contain exactly three files" >&2
+            exit 1
+          fi
+          for required in learn-input-pack.json learn-prompt.md learn-output.schema.json; do
+            test -f "${RUNNER_TEMP}/learn-request/${required}"
+          done
+          mkdir -p "${RUNNER_TEMP}/learn-neutral" "${RUNNER_TEMP}/learner-output"
+
+      - name: Untrusted read-only AI Learner
+        timeout-minutes: 3
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          allow-bot-users: "github-actions[bot]"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/learn-neutral
+          codex-home: ${{ runner.temp }}/learn-codex-home
+          prompt-file: ${{ runner.temp }}/learn-request/learn-prompt.md
+          output-schema-file: ${{ runner.temp }}/learn-request/learn-output.schema.json
+          output-file: ${{ runner.temp }}/learner-output/learner.json
+          effort: medium
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: Learner output 최소 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "${RUNNER_TEMP}/learner-output/learner.json"
+          node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${RUNNER_TEMP}/learner-output/learner.json"
+
+      - name: untrusted Learner output 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: learner-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/learner-output/learner.json
+          if-no-files-found: error
+
+  finalize:
+    name: trusted LEARN report 검증
+    needs: [prepare, learner]
+    if: needs.prepare.result == 'success' && needs.learner.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: trusted LEARN control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted LEARN 의존성 설치
+        run: npm ci --ignore-scripts
+
+      - name: source run/artifact identity 재검증
+        id: source
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ needs.prepare.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.prepare.outputs.source_run_attempt }}
+          COMPLETED_ARTIFACT_NAME: ${{ inputs.completed_cycle_artifact_name }}
+          INPUT_ARTIFACT_NAME: ${{ needs.prepare.outputs.input_artifact_name }}
+          EXPECTED_COMPLETED_ID: ${{ needs.prepare.outputs.completed_artifact_id }}
+          EXPECTED_COMPLETED_DIGEST: ${{ needs.prepare.outputs.completed_artifact_digest }}
+          EXPECTED_INPUT_ID: ${{ needs.prepare.outputs.input_artifact_id }}
+          EXPECTED_INPUT_DIGEST: ${{ needs.prepare.outputs.input_artifact_digest }}
+        with:
+          script: |
+            const runId = Number(process.env.SOURCE_RUN_ID);
+            const runAttempt = Number(process.env.SOURCE_RUN_ATTEMPT);
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
+            if (run.run_attempt !== runAttempt || run.status !== 'completed' || run.conclusion !== 'success') {
+              core.setFailed('source run identity changed before LEARN finalize');
+              return;
+            }
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({ ...context.repo, run_id: runId, per_page: 100 });
+            const exact = (name) => data.artifacts.filter((artifact) => !artifact.expired && artifact.name === name);
+            const completed = exact(process.env.COMPLETED_ARTIFACT_NAME);
+            const input = exact(process.env.INPUT_ARTIFACT_NAME);
+            if (completed.length !== 1 || input.length !== 1) {
+              core.setFailed('source artifacts are missing or ambiguous at finalize');
+              return;
+            }
+            const same =
+              String(completed[0].id) === process.env.EXPECTED_COMPLETED_ID &&
+              (completed[0].digest || '') === process.env.EXPECTED_COMPLETED_DIGEST &&
+              String(input[0].id) === process.env.EXPECTED_INPUT_ID &&
+              (input[0].digest || '') === process.env.EXPECTED_INPUT_DIGEST;
+            if (!same) {
+              core.setFailed('source artifact identity changed between prepare and finalize');
+              return;
+            }
+            core.setOutput('input_artifact_id', input[0].id);
+            core.setOutput('input_artifact_digest', input[0].digest || '');
+
+      - name: Completed Cycle Record 재다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.completed_cycle_artifact_name }}
+          path: ${{ runner.temp }}/learn-completed-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.prepare.outputs.source_run_id }}
+
+      - name: LEARN Input Pack 재다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.input_artifact_name }}
+          path: ${{ runner.temp }}/learn-input-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.prepare.outputs.source_run_id }}
+
+      - name: untrusted Learner output 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: learner-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/learner-output
+
+      - name: finalize 입력 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t completed_files < <(find "${RUNNER_TEMP}/learn-completed-source" -type f -print)
+          mapfile -t input_files < <(find "${RUNNER_TEMP}/learn-input-source" -type f -print)
+          mapfile -t learner_files < <(find "${RUNNER_TEMP}/learner-output" -type f -print)
+          if [ "${#completed_files[@]}" -ne 1 ] || [ "$(basename "${completed_files[0]}")" != "completed-cycle.json" ]; then exit 1; fi
+          if [ "${#input_files[@]}" -ne 1 ] || [ "$(basename "${input_files[0]}")" != "learn-input-pack.json" ]; then exit 1; fi
+          if [ "${#learner_files[@]}" -ne 1 ] || [ "$(basename "${learner_files[0]}")" != "learner.json" ]; then exit 1; fi
+          mkdir -p "${RUNNER_TEMP}/learn-final"
+          cp "${completed_files[0]}" "${RUNNER_TEMP}/learn-final/completed-cycle.json"
+          cp "${input_files[0]}" "${RUNNER_TEMP}/learn-final/learn-input-pack.json"
+          cp "${learner_files[0]}" "${RUNNER_TEMP}/learn-final/learner.json"
+
+      - name: evidence grounding 검증 및 LEARN report finalize
+        id: finalize
+        run: npm exec -- tsx src/self-improvement/learn-handler.ts finalize
+        env:
+          COMPLETED_CYCLE_JSON: ${{ runner.temp }}/learn-final/completed-cycle.json
+          LEARN_INPUT_PACK_JSON: ${{ runner.temp }}/learn-final/learn-input-pack.json
+          LEARNER_OUTPUT_JSON: ${{ runner.temp }}/learn-final/learner.json
+          LEARN_REPORT_JSON: ${{ runner.temp }}/learn-final/learn-report.json
+          LEARN_RUN_ID: ${{ github.run_id }}
+          LEARN_RUN_ATTEMPT: ${{ github.run_attempt }}
+          LEARN_SOURCE_RUN_ID: ${{ needs.prepare.outputs.source_run_id }}
+          LEARN_SOURCE_RUN_ATTEMPT: ${{ needs.prepare.outputs.source_run_attempt }}
+          LEARN_INPUT_ARTIFACT_NAME: ${{ needs.prepare.outputs.input_artifact_name }}
+          LEARN_INPUT_ARTIFACT_ID: ${{ steps.source.outputs.input_artifact_id }}
+          LEARN_INPUT_ARTIFACT_DIGEST: ${{ steps.source.outputs.input_artifact_digest }}
+          LEARNER_PROVIDER: OpenAI
+          LEARNER_ACTION: openai/codex-action@v1
+          LEARNER_MODEL: action-default
+          LEARNER_REASONING_EFFORT: medium
+
+      - name: validated untrusted LEARN report 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.finalize.outputs.report_artifact_name }}
+          path: ${{ runner.temp }}/learn-final/learn-report.json
+          if-no-files-found: error
