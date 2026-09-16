@@ -1,0 +1,171 @@
+name: Trusted Improvement Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      learn_run_id:
+        description: Successful Read-only AI LEARN workflow run ID
+        required: true
+        type: string
+      learn_run_attempt:
+        description: Exact LEARN workflow run attempt
+        required: true
+        type: string
+      learn_report_artifact_name:
+        description: Exact validated LEARN report artifact name
+        required: true
+        type: string
+      source_run_id:
+        description: Exact source run that produced the LEARN Input Pack
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact source workflow run attempt
+        required: true
+        type: string
+      learn_input_artifact_name:
+        description: Exact Trusted LEARN Input Pack artifact name
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  candidate:
+    name: trusted Improvement Candidate 구조화
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: trusted candidate control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted candidate 의존성 설치
+        run: npm ci --ignore-scripts
+
+      - name: exact LEARN/source run과 artifact 선택
+        id: source
+        uses: actions/github-script@v7
+        env:
+          LEARN_RUN_ID: ${{ inputs.learn_run_id }}
+          LEARN_RUN_ATTEMPT: ${{ inputs.learn_run_attempt }}
+          LEARN_REPORT_ARTIFACT_NAME: ${{ inputs.learn_report_artifact_name }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          LEARN_INPUT_ARTIFACT_NAME: ${{ inputs.learn_input_artifact_name }}
+        with:
+          script: |
+            const positive = (name, value) => {
+              if (!/^[1-9]\d*$/.test(value || '')) throw new Error(`${name} must be a positive integer`);
+              return Number(value);
+            };
+            const learnRunId = positive('learn_run_id', process.env.LEARN_RUN_ID);
+            const learnRunAttempt = positive('learn_run_attempt', process.env.LEARN_RUN_ATTEMPT);
+            const sourceRunId = positive('source_run_id', process.env.SOURCE_RUN_ID);
+            const sourceRunAttempt = positive('source_run_attempt', process.env.SOURCE_RUN_ATTEMPT);
+
+            const exactSuccessfulRun = async (runId, attempt, label) => {
+              const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
+              if (run.run_attempt !== attempt || run.status !== 'completed' || run.conclusion !== 'success') {
+                throw new Error(`${label} must be exact completed success: actual attempt=${run.run_attempt}, status=${run.status}, conclusion=${run.conclusion}`);
+              }
+              return run;
+            };
+            await exactSuccessfulRun(learnRunId, learnRunAttempt, 'LEARN run');
+            await exactSuccessfulRun(sourceRunId, sourceRunAttempt, 'source run');
+
+            const exactArtifact = async (runId, name, label) => {
+              const { data } = await github.rest.actions.listWorkflowRunArtifacts({ ...context.repo, run_id: runId, per_page: 100 });
+              const matches = data.artifacts.filter((artifact) => !artifact.expired && artifact.name === name);
+              if (matches.length !== 1) throw new Error(`expected one non-expired ${label} artifact named ${name}, found ${matches.length}`);
+              const artifact = matches[0];
+              if (!artifact.digest) throw new Error(`${label} artifact digest is required`);
+              return artifact;
+            };
+
+            const report = await exactArtifact(learnRunId, process.env.LEARN_REPORT_ARTIFACT_NAME, 'LEARN report');
+            const input = await exactArtifact(sourceRunId, process.env.LEARN_INPUT_ARTIFACT_NAME, 'LEARN input');
+
+            core.setOutput('learn_run_id', learnRunId);
+            core.setOutput('learn_run_attempt', learnRunAttempt);
+            core.setOutput('report_artifact_name', report.name);
+            core.setOutput('report_artifact_id', report.id);
+            core.setOutput('report_artifact_digest', report.digest);
+            core.setOutput('source_run_id', sourceRunId);
+            core.setOutput('source_run_attempt', sourceRunAttempt);
+            core.setOutput('input_artifact_name', input.name);
+            core.setOutput('input_artifact_id', input.id);
+            core.setOutput('input_artifact_digest', input.digest);
+
+      - name: exact LEARN report 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.report_artifact_name }}
+          path: ${{ runner.temp }}/candidate-report-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.learn_run_id }}
+
+      - name: exact LEARN Input Pack 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.input_artifact_name }}
+          path: ${{ runner.temp }}/candidate-input-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.source_run_id }}
+
+      - name: source artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t report_files < <(find "${RUNNER_TEMP}/candidate-report-source" -type f -print)
+          mapfile -t input_files < <(find "${RUNNER_TEMP}/candidate-input-source" -type f -print)
+          if [ "${#report_files[@]}" -ne 1 ] || [ "$(basename "${report_files[0]}")" != "learn-report.json" ]; then
+            echo "LEARN report artifact must contain exactly learn-report.json" >&2
+            exit 1
+          fi
+          if [ "${#input_files[@]}" -ne 1 ] || [ "$(basename "${input_files[0]}")" != "learn-input-pack.json" ]; then
+            echo "LEARN Input Pack artifact must contain exactly learn-input-pack.json" >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/improvement-candidate"
+          cp "${report_files[0]}" "${RUNNER_TEMP}/improvement-candidate/learn-report.json"
+          cp "${input_files[0]}" "${RUNNER_TEMP}/improvement-candidate/learn-input-pack.json"
+
+      - name: exact source binding 검증 및 proposal-only candidate 생성
+        id: candidate
+        run: npm exec -- tsx src/self-improvement/improvement-candidate-handler.ts
+        env:
+          LEARN_REPORT_JSON: ${{ runner.temp }}/improvement-candidate/learn-report.json
+          LEARN_INPUT_PACK_JSON: ${{ runner.temp }}/improvement-candidate/learn-input-pack.json
+          IMPROVEMENT_CANDIDATE_PACK_JSON: ${{ runner.temp }}/improvement-candidate/improvement-candidate-pack.json
+          LEARN_RUN_ID: ${{ steps.source.outputs.learn_run_id }}
+          LEARN_RUN_ATTEMPT: ${{ steps.source.outputs.learn_run_attempt }}
+          LEARN_REPORT_ARTIFACT_NAME: ${{ steps.source.outputs.report_artifact_name }}
+          LEARN_REPORT_ARTIFACT_ID: ${{ steps.source.outputs.report_artifact_id }}
+          LEARN_REPORT_ARTIFACT_DIGEST: ${{ steps.source.outputs.report_artifact_digest }}
+          LEARN_SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+          LEARN_SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.source_run_attempt }}
+          LEARN_INPUT_ARTIFACT_NAME: ${{ steps.source.outputs.input_artifact_name }}
+          LEARN_INPUT_ARTIFACT_ID: ${{ steps.source.outputs.input_artifact_id }}
+          LEARN_INPUT_ARTIFACT_DIGEST: ${{ steps.source.outputs.input_artifact_digest }}
+
+      - name: proposal-only Improvement Candidate artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.candidate.outputs.candidate_artifact_name }}
+          path: ${{ runner.temp }}/improvement-candidate/improvement-candidate-pack.json
+          if-no-files-found: error
