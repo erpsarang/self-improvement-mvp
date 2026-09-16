@@ -25,6 +25,7 @@ export interface CompletedCycleEvidence {
     readonly trustedRail: {
       readonly runId: number;
       readonly runAttempt: number;
+      readonly controlPlaneSha: string;
     };
     readonly orchestrationProvenance: {
       readonly artifact: {
@@ -33,7 +34,7 @@ export interface CompletedCycleEvidence {
         readonly digest: string;
       };
     };
-    readonly trustedFrameworkSha: string;
+    readonly frameworkSourceSha: string;
   };
 }
 
@@ -63,6 +64,7 @@ export interface CompletedCycleRecordPayload {
     readonly trustedRail: {
       readonly runId: number;
       readonly runAttempt: number;
+      readonly controlPlaneSha: string;
     };
     readonly orchestrationProvenance: {
       readonly artifact: {
@@ -71,7 +73,7 @@ export interface CompletedCycleRecordPayload {
         readonly digest: string;
       };
     };
-    readonly trustedFrameworkSha: string;
+    readonly frameworkSourceSha: string;
   };
 }
 
@@ -155,6 +157,7 @@ function validateEvidence(evidence: CompletedCycleEvidence): {
 
   assertPositiveInteger("source.trustedRail.runId", evidence.source.trustedRail.runId);
   assertPositiveInteger("source.trustedRail.runAttempt", evidence.source.trustedRail.runAttempt);
+  assertGitSha("source.trustedRail.controlPlaneSha", evidence.source.trustedRail.controlPlaneSha);
   assertNonempty(
     "source.orchestrationProvenance.artifact.name",
     evidence.source.orchestrationProvenance.artifact.name,
@@ -167,7 +170,7 @@ function validateEvidence(evidence: CompletedCycleEvidence): {
     "source.orchestrationProvenance.artifact.digest",
     evidence.source.orchestrationProvenance.artifact.digest,
   );
-  assertGitSha("source.trustedFrameworkSha", evidence.source.trustedFrameworkSha);
+  assertGitSha("source.frameworkSourceSha", evidence.source.frameworkSourceSha);
 
   return {
     requirementDigest,
@@ -217,7 +220,7 @@ export function createCompletedCycleRecord(evidence: CompletedCycleEvidence): Co
           digest: normalized.orchestrationArtifactDigest,
         },
       },
-      trustedFrameworkSha: evidence.source.trustedFrameworkSha,
+      frameworkSourceSha: evidence.source.frameworkSourceSha,
     },
   };
 
