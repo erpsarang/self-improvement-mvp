@@ -1,0 +1,235 @@
+name: Trusted LEARN Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      requirement_issue_number:
+        description: Completed cycle requirement Issue number
+        required: true
+        type: string
+      human_merge_pr_number:
+        description: Human Merge PR number
+        required: true
+        type: string
+      trusted_rail_run_id:
+        description: Exact successful Trusted Rail run ID
+        required: true
+        type: string
+      trusted_rail_run_attempt:
+        description: Exact Trusted Rail run attempt
+        required: true
+        type: string
+      orchestration_artifact_name:
+        description: Exact orchestration provenance artifact name
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  source:
+    name: trusted completed cycle / LEARN input 생성
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+    outputs:
+      issue_number: ${{ steps.build.outputs.issue_number }}
+      human_merge_pr: ${{ steps.build.outputs.human_merge_pr }}
+      completed_cycle_artifact_name: ${{ steps.build.outputs.completed_cycle_artifact_name }}
+      learn_input_artifact_name: ${{ steps.build.outputs.learn_input_artifact_name }}
+      record_digest: ${{ steps.build.outputs.record_digest }}
+      pack_digest: ${{ steps.build.outputs.pack_digest }}
+      completed_cycle_artifact_id: ${{ steps.upload_completed.outputs.artifact-id }}
+      completed_cycle_artifact_digest: ${{ steps.upload_completed.outputs.artifact-digest }}
+      learn_input_artifact_id: ${{ steps.upload_input.outputs.artifact-id }}
+      learn_input_artifact_digest: ${{ steps.upload_input.outputs.artifact-digest }}
+
+    steps:
+      - name: trusted source control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: trusted source 의존성 설치
+        run: npm ci --ignore-scripts
+
+      - name: exact GitHub cycle facts와 source artifact 선택
+        id: freeze
+        uses: actions/github-script@v7
+        env:
+          REQUIREMENT_ISSUE: ${{ inputs.requirement_issue_number }}
+          HUMAN_MERGE_PR: ${{ inputs.human_merge_pr_number }}
+          TRUSTED_RAIL_RUN_ID: ${{ inputs.trusted_rail_run_id }}
+          TRUSTED_RAIL_RUN_ATTEMPT: ${{ inputs.trusted_rail_run_attempt }}
+          ORCHESTRATION_ARTIFACT_NAME: ${{ inputs.orchestration_artifact_name }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const { createHash } = require('node:crypto');
+            const positive = (name, raw) => {
+              if (!/^[1-9]\d*$/.test(raw || '')) throw new Error(`${name} must be a positive integer`);
+              const value = Number(raw);
+              if (!Number.isSafeInteger(value)) throw new Error(`${name} must be a safe integer`);
+              return value;
+            };
+            const issueNumber = positive('requirement_issue_number', process.env.REQUIREMENT_ISSUE);
+            const prNumber = positive('human_merge_pr_number', process.env.HUMAN_MERGE_PR);
+            const runId = positive('trusted_rail_run_id', process.env.TRUSTED_RAIL_RUN_ID);
+            const runAttempt = positive('trusted_rail_run_attempt', process.env.TRUSTED_RAIL_RUN_ATTEMPT);
+            const artifactName = process.env.ORCHESTRATION_ARTIFACT_NAME || '';
+            if (!artifactName.trim()) throw new Error('orchestration_artifact_name is required');
+
+            const { data: repo } = await github.rest.repos.get(context.repo);
+            const { data: currentDefault } = await github.rest.repos.getBranch({
+              ...context.repo,
+              branch: repo.default_branch,
+            });
+            if (context.ref !== `refs/heads/${repo.default_branch}` || context.sha !== currentDefault.commit.sha) {
+              throw new Error('Trusted LEARN Source must execute at the exact current default branch SHA');
+            }
+
+            const { data: frameworkFile } = await github.rest.repos.getContent({
+              ...context.repo,
+              path: 'FRAMEWORK.md',
+              ref: context.sha,
+            });
+            if (Array.isArray(frameworkFile) || frameworkFile.type !== 'file' || !frameworkFile.content) {
+              throw new Error('FRAMEWORK.md file is required');
+            }
+            const frameworkText = Buffer.from(frameworkFile.content, 'base64').toString('utf8');
+            const frameworkMatch = frameworkText.match(/^- Framework source SHA: `([0-9a-f]{40,64})`$/m);
+            if (!frameworkMatch) throw new Error('FRAMEWORK.md must contain one canonical Framework source SHA');
+            const frameworkSourceSha = frameworkMatch[1];
+
+            const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: issueNumber });
+            if (issue.pull_request || !issue.body?.trim()) throw new Error('exact requirement Issue with body is required');
+            const requirementDigest = createHash('sha256')
+              .update(JSON.stringify([issue.title, issue.body]), 'utf8')
+              .digest('hex');
+
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
+            if (!pr.merged || !pr.merge_commit_sha || !pr.merged_at) throw new Error('Human Merge PR must be actually merged');
+            if (pr.base.ref !== repo.default_branch) throw new Error('Human Merge PR must target the default branch');
+            if (pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error('Human Merge PR head must belong to this repository');
+            }
+
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
+            if (
+              run.run_attempt !== runAttempt ||
+              run.status !== 'completed' ||
+              run.conclusion !== 'success' ||
+              run.path !== '.github/workflows/trusted-rail.yml' ||
+              run.head_branch !== repo.default_branch
+            ) {
+              throw new Error('Trusted Rail source run identity/status/workflow/default branch mismatch');
+            }
+            const { data: artifactData } = await github.rest.actions.listWorkflowRunArtifacts({
+              ...context.repo,
+              run_id: runId,
+              per_page: 100,
+            });
+            const matches = artifactData.artifacts.filter(
+              (artifact) => !artifact.expired && artifact.name === artifactName,
+            );
+            if (matches.length !== 1) throw new Error(`expected one exact orchestration artifact, found ${matches.length}`);
+            const artifact = matches[0];
+            if (!/^sha256:[0-9a-f]{64}$/.test(artifact.digest || '')) {
+              throw new Error('exact orchestration artifact digest is required');
+            }
+
+            const facts = {
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+              defaultBranch: repo.default_branch,
+              requirement: {
+                issueNumber: issue.number,
+                title: issue.title,
+                body: issue.body,
+                digest: requirementDigest,
+              },
+              humanMerge: {
+                pullRequestNumber: pr.number,
+                merged: pr.merged,
+                headSha: pr.head.sha,
+                mergeCommitSha: pr.merge_commit_sha,
+                mergedAt: pr.merged_at,
+                baseBranch: pr.base.ref,
+              },
+              trustedRail: {
+                runId: run.id,
+                runAttempt: run.run_attempt,
+                status: run.status,
+                conclusion: run.conclusion,
+                workflowPath: run.path,
+                headBranch: run.head_branch,
+                headSha: run.head_sha,
+              },
+              orchestrationArtifact: {
+                name: artifact.name,
+                id: artifact.id,
+                digest: artifact.digest,
+              },
+              frameworkSourceSha,
+            };
+            const outputDir = path.join(process.env.RUNNER_TEMP, 'learn-source');
+            fs.mkdirSync(outputDir, { recursive: true });
+            fs.writeFileSync(path.join(outputDir, 'facts.json'), `${JSON.stringify(facts, null, 2)}\n`);
+            core.setOutput('source_run_id', runId);
+            core.setOutput('orchestration_artifact_name', artifact.name);
+
+      - name: exact orchestration provenance 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.freeze.outputs.orchestration_artifact_name }}
+          path: ${{ runner.temp }}/learn-orchestration-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.freeze.outputs.source_run_id }}
+
+      - name: orchestration artifact 구조 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find "${RUNNER_TEMP}/learn-orchestration-source" -type f -print)
+          if [ "${#files[@]}" -ne 1 ] || [ "$(basename "${files[0]}")" != "orchestration.json" ]; then
+            echo "orchestration artifact must contain exactly orchestration.json" >&2
+            exit 1
+          fi
+          cp "${files[0]}" "${RUNNER_TEMP}/learn-source/orchestration.json"
+
+      - name: Completed Cycle Record와 bounded LEARN Input Pack 생성
+        id: build
+        run: npm exec -- tsx src/self-improvement/learn-source-handler.ts
+        env:
+          LEARN_SOURCE_FACTS_JSON: ${{ runner.temp }}/learn-source/facts.json
+          ORCHESTRATION_JSON: ${{ runner.temp }}/learn-source/orchestration.json
+          LEARN_SOURCE_OUTPUT_DIR: ${{ runner.temp }}/learn-source/output
+
+      - name: Completed Cycle Record 저장
+        id: upload_completed
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.completed_cycle_artifact_name }}
+          path: ${{ runner.temp }}/learn-source/output/completed-cycle/completed-cycle.json
+          if-no-files-found: error
+
+      - name: bounded LEARN Input Pack 저장
+        id: upload_input
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.learn_input_artifact_name }}
+          path: ${{ runner.temp }}/learn-source/output/learn-input/learn-input-pack.json
+          if-no-files-found: error
