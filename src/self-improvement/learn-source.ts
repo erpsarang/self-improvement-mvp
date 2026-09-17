@@ -1,3 +1,5 @@
+import { validateVerifyProvenanceForReview } from "./review.js";
+import { parseValidationCommand } from "./deterministic-ci.js";
 import { createHash } from "node:crypto";
 import {
   completedCycleRecordArtifactName,
@@ -109,7 +111,8 @@ function requiredInteger(object: JsonObject, key: string, name: string): number 
 function optionalObjectPath(root: JsonObject, path: readonly string[]): JsonObject | undefined {
   let current: unknown = root;
   for (const segment of path) {
-    if (typeof current !== "object" || current === null || Array.isArray(current)) return undefined;
+    if (current === undefined) return undefined;
+    asObject(path.join("."), current);
     current = (current as JsonObject)[segment];
   }
   if (current === undefined) return undefined;
@@ -383,6 +386,89 @@ export function createTrustedLearnSourceArtifacts(
       }),
     },
   ];
+
+  const planSource = optionalObjectPath(orchestration, [
+    "sourceReview", "sourceVerify", "sourcePublish", "sourceSeal", "sourcePlanBridge",
+  ]);
+  const bridge = planSource === undefined ? undefined : asObject("sourcePlanBridge.bridge", planSource.bridge);
+  // Older recovery-only records have no execution provenance.
+  const recoveryOnly = bridge !== undefined && Object.keys(bridge).length === 1 && Object.hasOwn(bridge, "recoveryGuard");
+  if (bridge !== undefined && !recoveryOnly) {
+    // Validate the original nested objects, before projecting or bounding their content.
+    // This includes the canonical validation/bridge digests and artifact/run bindings.
+    const verify = validateVerifyProvenanceForReview({
+      verify: sourceReview.sourceVerify,
+      verifyArtifactName: requiredString(sourceReview, "sourceVerifyArtifactName", "sourceReview.sourceVerifyArtifactName"),
+      repository: facts.repository,
+    });
+    const publish = verify.sourcePublish;
+    const seal = publish.sourceSeal;
+    const source = seal.sourcePlanBridge!;
+    const validatedBridge = source.bridge;
+    const validation = validatedBridge.deterministicValidation;
+    if (
+      verify.issueNumber !== facts.requirement.issueNumber ||
+      verify.verifiedHeadSha !== reviewedHeadSha ||
+      verify.verifyWorkflow.runId !== facts.trustedRail.runId ||
+      verify.verifyWorkflow.runAttempt > facts.trustedRail.runAttempt ||
+      [verify.verifyWorkflow, publish.publishWorkflow, seal.sealWorkflow].some(
+        (workflow) => workflow.trustedCodeSha !== facts.trustedRail.headSha,
+      ) ||
+      validatedBridge.requirement.digest !== exactRequirementDigest ||
+      validatedBridge.candidatePatchDigest !== seal.sealedPatchDigest ||
+      validation.baseSha !== seal.baseSha
+    ) {
+      throw new Error("test-execution exact content chain mismatch");
+    }
+    if (validation.status !== "PASS" || !Array.isArray(validation.commands) || validation.commands.length === 0) {
+      throw new Error("test-execution requires executed PASS commands");
+    }
+    const commands = validation.commands.map((command) => {
+      const spec = parseValidationCommand(command.raw);
+      if (
+        command.status !== "PASS" || command.exitCode !== 0 || command.signal !== null ||
+        command.executable !== spec.executable || JSON.stringify(command.args) !== JSON.stringify(spec.args) ||
+        typeof command.stdout !== "string" || typeof command.stderr !== "string"
+      ) {
+        throw new Error("test-execution command result mismatch");
+      }
+      // Logs remain bound by evidenceDigest; omit them from the bounded Input Pack.
+      return {
+        raw: command.raw, executable: command.executable, args: command.args,
+        status: command.status, exitCode: command.exitCode, signal: command.signal,
+        stdoutBytes: Buffer.byteLength(command.stdout), stdoutDigest: sha256(command.stdout),
+        stderrBytes: Buffer.byteLength(command.stderr), stderrDigest: sha256(command.stderr),
+      };
+    });
+    evidence.push({
+      evidenceId: "test-execution-01",
+      kind: "test-execution",
+      repository: facts.repository,
+      cycle: cycleBinding,
+      source: {
+        kind: "artifact", artifactId: facts.orchestrationArtifact.id,
+        name: facts.orchestrationArtifact.name, digest: facts.orchestrationArtifact.digest,
+      },
+      content: JSON.stringify({
+        executionMethod: "trusted-content-chain",
+        conclusion: "success",
+        status: validation.status, commands,
+        evidenceDigest: validation.evidenceDigest,
+        contractDigest: validation.contractDigest, contextDigest: validation.contextDigest,
+        candidateDigest: validation.candidateDigest, baseSha: validation.baseSha,
+        candidatePatchDigest: validatedBridge.candidatePatchDigest, sealedPatchDigest: seal.sealedPatchDigest,
+        publishedHeadSha: publish.publishedHeadSha, verifiedHeadSha: verify.verifiedHeadSha, reviewedHeadSha,
+        bridgeWorkflow: validatedBridge.bridgeWorkflow, candidateArtifactName: source.candidateArtifactName,
+        worker: { runId: validatedBridge.sourceWorker.runId, runAttempt: validatedBridge.sourceWorker.runAttempt,
+          artifact: validatedBridge.sourceWorker.artifact },
+        sealWorkflow: seal.sealWorkflow, publishWorkflow: publish.publishWorkflow,
+        verifyWorkflow: verify.verifyWorkflow, reviewWorkflow,
+        sourceSealArtifactName: publish.sourceSealArtifactName,
+        sourcePublishArtifactName: verify.sourcePublishArtifactName,
+        sourceVerifyArtifactName: sourceReview.sourceVerifyArtifactName,
+      }),
+    });
+  }
 
   const recoveryGuard = optionalObjectPath(orchestration, [
     "sourceReview",
