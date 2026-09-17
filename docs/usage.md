@@ -1,218 +1,241 @@
-# AI Development Framework 사용 가이드
+# AI Development Framework v0.2 사용 가이드
 
-이 문서는 **신규 프로그래밍 요구사항을 AI Development Framework v0.1에 넣어 실제 개발 사이클을 시작하는 방법**을 설명합니다.
+이 문서는 **업무 요구사항을 AI Development Framework v0.2에 넣어 실제 개발 사이클을 시작하고, Human Merge 이후 LEARN / IMPROVE까지 연결하는 방법**을 설명합니다.
 
-## 1. 언제 사용하는가
+## 1. 사람이 처음 작성하는 것은 구현 지시가 아니라 Requirement
 
-다음과 같은 신규 개발 요구사항에 사용합니다.
-
-- 기존 기능 개선
-- 신규 API / 화면 / 배치 / 도메인 로직 추가
-- 작은 버그 수정
-- 테스트 추가
-- 현재 Node 기반 verifier로 검증 가능한 애플리케이션 개발 작업
-
-SAP RAP 같은 비-Node 대상은 향후 verifier 확장 대상이며, 현재 v0.1의 직접 지원 범위에는 포함하지 않습니다.
-
-핵심은 사람이 구현 방법을 세세하게 지시하는 것이 아니라 **무엇을 만들어야 하는지와 완료 조건을 명확히 정의하는 것**입니다.
-
-## 2. 사람이 하는 일
-
-사람의 필수 개입은 기본적으로 두 번입니다.
-
-```text
-① 시작 승인: Issue에 SI-승인
-② 최종 승인: Human Merge PR을 사람이 Merge
-```
-
-중간의 IMPLEMENT, VERIFY, REVIEW, 제한된 FIX는 Framework가 자동으로 진행합니다.
-
-## 3. 요구사항 Issue 작성
-
-GitHub에서 **AI 개발 요구사항** Issue 템플릿을 선택합니다.
-
-좋은 요구사항은 최소한 다음 다섯 가지를 포함합니다.
-
-1. **목표** — 무엇을 만들거나 바꿀 것인가
-2. **범위** — 어떤 기능과 파일/모듈이 대상인가
-3. **완료 조건** — 무엇이 충족되면 완료인가
-4. **검증 방법** — 어떤 test/build/check가 통과해야 하는가
-5. **금지사항** — 건드리면 안 되는 범위가 있는가
+사용자는 파일명이나 함수 구현 방법을 세세하게 지정할 필요가 없습니다. 무엇이 필요한지와 완료 조건을 명확히 적습니다.
 
 예:
 
 ```markdown
 ## 목표
-Sales Order 조회 API에 Sold-to Party 필터를 추가한다.
-
-## 범위
-- Sales Order 조회 조건
-- 관련 테스트
+예외 주문의 주요 원인을 한눈에 파악하고 싶다.
 
 ## 완료 조건
-- Sold-to Party를 입력하면 해당 주문만 조회된다.
-- 기존 조회 조건의 동작은 바뀌지 않는다.
-- 자동 테스트가 추가된다.
-
-## 검증 방법
-- npm test 통과
-- npm run build 통과
+- 예외 사유별 건수를 확인할 수 있다.
+- 가장 많이 발생한 사유를 확인할 수 있다.
+- 기존 주문 판정 결과는 바뀌지 않는다.
+- 자동 테스트가 통과한다.
 
 ## 금지사항
-- 무관한 파일 수정 금지
+- 무관한 기능 변경 금지
 - main 직접 push 금지
 ```
 
-## 4. 요구사항을 고정하고 시작하기
-
-`SI-승인`은 `policy/trusted-approvers.yml`에 등록된 trusted approver가 직접 남겨야 합니다. 일반 Issue 작성자가 이 정책에 등록되어 있지 않다면 댓글을 남겨도 개발 사이클은 시작되지 않습니다.
-
-Issue 본문을 최종 확인한 뒤 trusted approver가 댓글에 정확히 다음 한 줄을 작성합니다.
+## 2. v0.2 기본 흐름
 
 ```text
-SI-승인
+User Requirement
+→ read-only AI PLAN
+→ Human PLAN-승인
+→ Trusted PLAN_AUTHORIZE
+→ Trusted ImplementContract + exact-SHA Context Pack
+→ bounded untrusted IMPLEMENT Worker
+→ deterministic CI
+→ canonical PLAN Bridge
+→ Trusted Rail
+   → SEAL → PUBLISH → VERIFY → Semantic REVIEW
+   → 필요 시 bounded FIX
+→ MERGE_READY
+→ Human Merge
+→ Completed Cycle Record
+→ bounded LEARN Input Pack
+→ read-only AI LEARN
+→ proposal-only Improvement Candidate
+→ Human 판단
 ```
 
-이 댓글이 Human Authorization 경계입니다.
+중요한 Human Boundary는 세 곳입니다.
 
-`Trusted AUTHORIZE`는 승인 이벤트와 당시 요구사항, 기준 SHA를 provenance로 고정합니다. 승인 후 Issue 본문을 임의로 바꿔 다음 단계를 속이는 방식은 신뢰 근거로 사용하지 않습니다.
+1. **PLAN 승인** — AI가 제안한 exact PLAN을 사람이 승인
+2. **최종 Merge** — 검증·리뷰된 exact 결과를 사람이 Merge
+3. **개선 후보 선택** — LEARN이 만든 후보 중 다음 cycle로 보낼 항목을 사람이 선택
 
-## 5. 자동 개발 흐름
+## 3. read-only AI PLAN
 
-승인 후 기본 흐름은 다음과 같습니다.
+Requirement가 준비되면 Planner가 repository의 bounded Context를 읽고 PLAN을 만듭니다.
+
+Planner는 다음을 제안합니다.
+
+- 구현 접근
+- 변경할 exact path 후보
+- `requiredChanges`
+- `forbiddenChanges`
+- 검증 명령
+- 구현 준비 여부 `implementationScope.ready`
+
+Planner는 repository를 수정하지 않으며 PLAN 자체도 authority가 아닙니다.
+
+`ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
+
+## 4. Human `PLAN-승인`
+
+PLAN을 확인한 뒤 승인하려면 Requirement Issue에 정확히 다음 댓글을 남깁니다.
 
 ```text
-SI-승인
-→ AUTHORIZE
-→ IMPLEMENT
-→ SEAL
+PLAN-승인
+```
+
+Trusted `PLAN_AUTHORIZE`는 댓글 문자열만 믿지 않고 다음 identity를 다시 검증합니다.
+
+- Requirement Issue / digest
+- PLAN run / attempt
+- PLAN artifact / provenance
+- frozen target SHA
+- approval comment ID
+- approver immutable GitHub user ID
+
+Requirement나 target SHA가 PLAN 이후 바뀌었다면 silent substitution하지 않고 fail-closed합니다. 이 경우 새 PLAN이 필요합니다.
+
+## 5. Trusted Handoff와 bounded IMPLEMENT
+
+승인된 PLAN의 structured scope는 Trusted control-plane에서 그대로 `ImplementContract`로 변환됩니다. 자연어를 다시 자의적으로 해석하지 않습니다.
+
+exact base SHA에서 `allowedPaths`에 필요한 최소 Context만 `Context Pack`으로 고정합니다.
+
+IMPLEMENT Worker는 다음 제한을 가집니다.
+
+- untrusted
+- repository write credential 없음
+- bounded Context만 사용
+- 허용 path와 byte/file budget 안에서 candidate 생성
+- 결과는 candidate artifact일 뿐
+
+Worker가 만든 candidate는 clean exact-base checkout에서 deterministic validation을 통과해야 canonical PLAN Bridge가 됩니다.
+
+## 6. Trusted Rail
+
+canonical PLAN Bridge가 만들어지면 Trusted Rail이 시작됩니다.
+
+```text
+SEAL
 → PUBLISH
-→ VERIFY
+→ VERIFY exact published SHA
 → Semantic REVIEW
 ```
 
-### IMPLEMENT
-
-Codex Worker가 실제 코드를 작성합니다. Worker는 **untrusted**이며 GitHub write credential을 받지 않습니다. 결과는 candidate artifact일 뿐 아직 신뢰된 코드가 아닙니다.
-
 ### SEAL
 
-Trusted Rail이 candidate의 출처와 exact bytes를 검증하고 봉인합니다.
+candidate bytes와 provenance를 검증하고 봉인합니다.
 
 ### PUBLISH
 
-봉인된 candidate만 `ai-publish/issue-<N>` branch에 게시합니다. `main`에는 직접 쓰지 않습니다.
+봉인된 candidate만 publish branch에 게시합니다. Worker가 직접 push하지 않습니다.
 
 ### VERIFY
 
-게시된 branch 이름을 믿는 것이 아니라 실제 `publishedHeadSha`를 exact checkout하여 test/build/check를 수행합니다.
+branch 이름이 아니라 exact `publishedHeadSha`를 checkout하여 기계 검증합니다.
 
 ### Semantic REVIEW
 
-승인 당시 요구사항과 exact verified SHA를 함께 보고 다음 셋 중 하나를 판단합니다.
+승인된 Requirement와 exact verified SHA를 함께 검토합니다.
 
 | Decision | 의미 | 다음 행동 |
 | --- | --- | --- |
-| `PASS` | 요구사항을 충족 | `MERGE_READY` → Human Merge PR |
-| `LOCAL_FIX` | 제한된 작은 수정으로 해결 가능 | FIX loop 자동 실행 |
-| `STRUCTURAL_CHANGE` | 구조적 판단이나 요구사항 재정의 필요 | 자동 진행 중단, 사람 판단 |
+| `PASS` | 요구사항 충족 | `MERGE_READY` → Human Merge PR |
+| `LOCAL_FIX` | 제한된 수정으로 해결 가능 | bounded FIX loop |
+| `STRUCTURAL_CHANGE` | 범위를 넘는 재설계 필요 | `STOPPED` / Human 판단 |
 
-## 6. LOCAL_FIX가 나오면
+## 7. LOCAL_FIX
 
-사람이 Codex에게 다시 직접 수정 지시를 내리지 않습니다.
+`LOCAL_FIX`라고 해서 사람이 Codex에 자유형 수정 명령을 다시 주는 것이 아닙니다.
 
 ```text
 REVIEW = LOCAL_FIX
 → Trusted FIX Request
-→ Untrusted FIX Worker
+→ bounded Untrusted FIX Worker
 → candidate
-→ 다시 SEAL
-→ PUBLISH
-→ VERIFY
-→ REVIEW
+→ SEAL → PUBLISH → VERIFY → REVIEW
 ```
 
-FIX Worker도 최초 IMPLEMENT와 동일하게 untrusted입니다. 수정 결과는 **반드시 전체 Trusted Rail을 다시 통과**해야 합니다.
+FIX Worker 역시 write credential을 받지 않고 candidate만 만듭니다. 수정 후 전체 Trusted Rail을 다시 통과해야 합니다.
 
-v0.1에서 LOCAL_FIX는 최대 2회로 제한합니다. 무한 수정 loop를 허용하지 않습니다.
+반복 횟수와 실행 예산은 Framework가 제한하며 한도를 넘으면 사람이 판단하도록 중단합니다.
 
-## 7. PASS가 나오면
+## 8. PASS와 Human Merge
 
-Framework가 `MERGE_READY`로 전환하고 Human Merge PR을 생성합니다.
+`PASS`에서만 Framework가 `MERGE_READY` Human Merge PR을 만듭니다.
 
-PR에는 검토를 통과한 exact reviewed SHA가 기록됩니다.
+사람은 최소 다음을 확인합니다.
 
-사람은 다음을 확인합니다.
+- PR HEAD가 reviewed exact SHA와 일치하는가
+- 변경 파일이 승인된 범위 안인가
+- CI / provenance가 정상인가
+- 예상하지 못한 운영·보안 영향이 없는가
 
-- PR HEAD가 expected reviewed SHA와 일치하는가
-- 변경 파일과 diff가 요구사항 범위 안인가
-- 예상하지 못한 보안/운영 영향이 없는가
-- Merge해도 되는가
+그 뒤 사람이 직접 Merge합니다.
 
-문제가 없으면 사람이 직접 Merge합니다.
+**Auto Merge는 사용하지 않습니다.**
 
-Framework는 Auto Merge하지 않습니다.
+## 9. Human Merge 이후 LEARN
 
-## 8. STRUCTURAL_CHANGE가 나오면
+LEARN은 open PR이나 MERGE_READY를 완료된 사실로 취급하지 않습니다. 실제 Human Merge가 끝난 cycle만 학습 대상으로 사용합니다.
 
-이 경우는 "AI가 알아서 더 크게 고쳐라"가 아닙니다.
+Trusted LEARN Source가 다음을 exact provenance로 고정합니다.
 
-예를 들면 다음 상황입니다.
+- Requirement identity
+- reviewed exact SHA
+- merge commit / merged_at
+- Trusted Rail run / orchestration artifact
+- final REVIEW
+- deterministic test execution evidence가 있으면 그 exact chain
 
-- DB 구조 변경이 필요
-- API 계약 자체를 바꿔야 함
-- 여러 모듈의 책임 분리가 필요
-- 요구사항이 서로 충돌
-- 보안 또는 운영 정책 판단 필요
+그 결과를 bounded `LEARN Input Pack`으로 만든 뒤 read-only AI Learner가 읽습니다.
 
-이때는 자동 loop를 멈추고 사람이 요구사항을 다시 설계해야 합니다. 필요하면 새 Issue로 분리한 뒤 다시 `SI-승인`부터 시작합니다.
+Learner는 GitHub 최신 상태나 repository 전체를 다시 탐색하지 않습니다.
 
-## 9. 신규 요구사항 작성 원칙
+## 10. Improvement Candidate와 Human-selected LOOP
 
-Framework가 잘 동작하려면 요구사항은 **구현방법보다 완료조건 중심**으로 씁니다.
+LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candidate Pack`으로 구조화됩니다.
 
-나쁜 예:
+각 candidate는:
 
-```text
-foo.ts 31번째 줄에서 if문을 넣고 bar()를 호출해라.
-```
+- `proposal-only`
+- `pending-human`
+- evidence-grounded
+- 자동 ranking 없음
+- 자동 IMPLEMENT 없음
 
-좋은 예:
+사람이 의미 있는 candidate를 선택한 경우에만 **새 Requirement**로 만들어 다음 PLAN cycle을 시작합니다.
 
-```text
-취소된 주문은 출고 대상에서 제외되어야 한다.
-완료조건:
-- status=CANCELLED 주문은 출고 목록에 나타나지 않는다.
-- 기존 정상 주문 조회에는 영향이 없다.
-- 해당 동작을 검증하는 테스트가 추가된다.
-```
+즉 Self-Improvement도 자기 승인 구조가 아닙니다.
 
-구현 세부사항을 지나치게 고정하면 AI의 설계 여지를 없애고, 반대로 완료조건이 없으면 Reviewer가 무엇을 기준으로 PASS해야 할지 불명확해집니다.
+## 11. v0.2에서 실제 증명한 dogfood
 
-## 10. 현재 v0.1의 한계
-
-v0.1은 다음 경로를 실제 runtime으로 증명한 MVP입니다.
+`erpsarang/sales-order-exception-analyzer` Issue #8을 실제 업무 요구로 사용했습니다.
 
 ```text
-Human 승인
-→ AI IMPLEMENT
-→ Trusted 검증
-→ Semantic REVIEW
-→ bounded FIX
-→ 재검증
-→ PASS
-→ MERGE_READY
+Issue #8
+→ PLAN
+→ PLAN-승인
+→ bounded IMPLEMENT
+→ deterministic CI
+→ Trusted Rail
+→ REVIEW PASS
+→ Human Merge PR #24
 → Human Merge
+→ LEARN
+→ Improvement Candidate
+→ Human-selected candidate
+→ Framework 개선 Requirement #171
+→ 구현 / Human Merge
+→ dogfood 재동기화
+→ historical exact LEARN replay
 ```
 
-현재 VERIFY는 Node 기반으로 `npm ci`, `npm test`, `npm run build`를 실행합니다. 따라서 SAP RAP/ABAP처럼 다른 빌드·검증 체계가 필요한 대상은 verifier adapter가 추가되기 전까지 v0.1의 직접 지원 대상이 아닙니다.
+최신 replay에서는 별도 `test-execution` evidence로 `npm test / PASS / exitCode 0 / signal null`을 검증했습니다.
 
-아직 범위 밖인 기능은 다음과 같습니다.
+## 12. 현재 한계
 
-- PR 생성 이후 외부 `@codex review` 실패를 공식 FIX loop에 연결
-- 범용 GRAPH Engine 전체 구현
-- 장기 durable provenance 저장소
-- 자동 Self-Improvement loop
-- Auto Merge
+v0.2는 GitHub + Node 기반 실제 프로젝트에서 신뢰 가능한 수직 루프를 검증한 MVP입니다.
 
-따라서 v0.1은 **신규 요구사항을 안전한 AI 개발 사이클로 실행하는 최소 프레임워크**로 사용하고, 자동화 범위는 단계적으로 확장합니다.
+아직 일반화할 영역:
+
+- SAP RAP/ABAP 등 다른 검증 체계용 verifier adapter
+- 범용 GRAPH DSL / 독립 runtime
+- GitHub 외 repository adapter
+- durable append-only provenance 저장소
+- 운영 UI / observability
+
+이 제한 때문에 검증할 수 없는 프로젝트에서는 자동 범위를 넓히지 말고 Human 경계에서 멈춰야 합니다.
