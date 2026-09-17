@@ -8,6 +8,7 @@ export type LearnEvidenceKind =
   | "requirement-summary"
   | "final-review"
   | "orchestration-summary"
+  | "test-execution"
   | "recovery-event"
   | "human-boundary";
 
@@ -85,6 +86,7 @@ const EVIDENCE_KINDS = new Set<string>([
   "requirement-summary",
   "final-review",
   "orchestration-summary",
+  "test-execution",
   "recovery-event",
   "human-boundary",
 ]);
@@ -93,6 +95,7 @@ const ALLOWED_SOURCE_KINDS: Record<LearnEvidenceKind, readonly LearnEvidenceSour
   "requirement-summary": ["issue"],
   "final-review": ["workflow-run", "artifact"],
   "orchestration-summary": ["workflow-run", "artifact"],
+  "test-execution": ["artifact"],
   "recovery-event": ["workflow-run", "artifact"],
   "human-boundary": ["pull-request", "issue"],
 };
