@@ -256,7 +256,8 @@ jobs:
 
       - name: Untrusted read-only Semantic Reviewer
         id: semantic_reviewer
-        uses: openai/codex-action@v1
+        timeout-minutes: 4
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
         with:
           openai-api-key: ${{ secrets.CODEX_API_KEY }}
           permission-profile: ":read-only"
