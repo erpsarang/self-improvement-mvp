@@ -450,6 +450,8 @@ export function createTrustedLearnSourceArtifacts(
         name: facts.orchestrationArtifact.name, digest: facts.orchestrationArtifact.digest,
       },
       content: JSON.stringify({
+        executionMethod: "trusted-content-chain",
+        conclusion: "success",
         status: validation.status, commands,
         evidenceDigest: validation.evidenceDigest,
         contractDigest: validation.contractDigest, contextDigest: validation.contextDigest,

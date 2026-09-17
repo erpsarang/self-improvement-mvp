@@ -268,6 +268,8 @@ test("LEARN includes bounded exact execution evidence deterministically", () => 
   const item = result.learnInputPack.evidence.find(e => e.kind === "test-execution")!;
   assert.equal(item.source.kind, "artifact");
   const summary = JSON.parse(item.content);
+  assert.equal(summary.executionMethod, "trusted-content-chain");
+  assert.equal(summary.conclusion, "success");
   assert.equal(summary.evidenceDigest, f.bridge.deterministicValidation.evidenceDigest);
   assert.equal(summary.commands[0].raw, "npm test");
   assert.equal(summary.commands[0].exitCode, 0);
