@@ -1,0 +1,91 @@
+name: LEARN Source Completed Bridge
+
+on:
+  workflow_run:
+    workflows: ["Trusted LEARN Source"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  dispatch_learn:
+    name: completed LEARN Source → Read-only AI LEARN
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      github.event.workflow_run.event == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: exact source artifacts 선택
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (
+              run.path !== '.github/workflows/learn-source.yml' ||
+              run.status !== 'completed' ||
+              run.conclusion !== 'success' ||
+              run.head_branch !== context.payload.repository.default_branch
+            ) {
+              core.setFailed('Trusted LEARN Source completed-success identity mismatch');
+              return;
+            }
+
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              ...context.repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const active = data.artifacts.filter((artifact) => !artifact.expired);
+            const completed = active.filter((artifact) =>
+              /^completed-cycle-issue-[1-9]\d*-pr-[1-9]\d*$/.test(artifact.name),
+            );
+            const input = active.filter((artifact) =>
+              /^learn-input-issue-[1-9]\d*-pr-[1-9]\d*-record-[0-9a-f]{64}$/.test(artifact.name),
+            );
+
+            if (completed.length !== 1 || input.length !== 1) {
+              core.setFailed(
+                `expected one Completed Cycle and one LEARN Input artifact; completed=${completed.length}, input=${input.length}`,
+              );
+              return;
+            }
+            for (const artifact of [completed[0], input[0]]) {
+              if (!/^sha256:[0-9a-f]{64}$/.test(artifact.digest || '')) {
+                core.setFailed(`artifact digest missing/invalid: ${artifact.name}`);
+                return;
+              }
+            }
+
+            core.setOutput('source_run_id', String(run.id));
+            core.setOutput('source_run_attempt', String(run.run_attempt));
+            core.setOutput('completed_cycle_artifact_name', completed[0].name);
+            core.setOutput('learn_input_artifact_name', input[0].name);
+
+      - name: Read-only AI LEARN 자동 시작
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.source_run_attempt }}
+          COMPLETED_CYCLE_ARTIFACT_NAME: ${{ steps.source.outputs.completed_cycle_artifact_name }}
+          LEARN_INPUT_ARTIFACT_NAME: ${{ steps.source.outputs.learn_input_artifact_name }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'learn.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                source_run_id: process.env.SOURCE_RUN_ID,
+                source_run_attempt: process.env.SOURCE_RUN_ATTEMPT,
+                completed_cycle_artifact_name: process.env.COMPLETED_CYCLE_ARTIFACT_NAME,
+                learn_input_artifact_name: process.env.LEARN_INPUT_ARTIFACT_NAME,
+              },
+            });
+            core.info('Read-only AI LEARN을 자동 dispatch했습니다');

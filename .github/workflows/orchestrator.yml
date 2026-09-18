@@ -160,6 +160,8 @@ jobs:
           REVIEW_DECISION: ${{ needs.route.outputs.decision }}
           NEXT_STATE: ${{ needs.route.outputs.next_state }}
           REQUIREMENTS_DIGEST: ${{ needs.route.outputs.requirements_digest }}
+          TRUSTED_RAIL_RUN_ID: ${{ github.run_id }}
+          TRUSTED_RAIL_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           script: |
             const issueNumber = Number(process.env.ISSUE_NUMBER);
@@ -168,6 +170,8 @@ jobs:
             const decision = process.env.REVIEW_DECISION;
             const nextState = process.env.NEXT_STATE;
             const requirementsDigest = process.env.REQUIREMENTS_DIGEST;
+            const trustedRailRunId = Number(process.env.TRUSTED_RAIL_RUN_ID);
+            const trustedRailRunAttempt = Number(process.env.TRUSTED_RAIL_RUN_ATTEMPT);
             const base = context.payload.repository.default_branch;
 
             if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
@@ -188,6 +192,11 @@ jobs:
             }
             if (!/^sha256:[0-9a-f]{64}$/.test(requirementsDigest)) {
               core.setFailed('invalid requirements digest');
+              return;
+            }
+            if (!Number.isSafeInteger(trustedRailRunId) || trustedRailRunId <= 0 ||
+                !Number.isSafeInteger(trustedRailRunAttempt) || trustedRailRunAttempt <= 0) {
+              core.setFailed('invalid Trusted Rail run identity');
               return;
             }
 
@@ -227,6 +236,10 @@ jobs:
               core.info(`reusing existing Human Merge PR #${pr.number}`);
             } else {
               const marker = `<!-- ai-dev-framework:MERGE_READY issue=${issueNumber} reviewed-sha=${expectedSha} -->`;
+              const orchestrationArtifact =
+                `orchestration-provenance-issue-${issueNumber}-${trustedRailRunId}-attempt-${trustedRailRunAttempt}`;
+              const trustedRailMarker =
+                `<!-- ai-dev-framework:TRUSTED_RAIL run-id=${trustedRailRunId} run-attempt=${trustedRailRunAttempt} orchestration-artifact=${orchestrationArtifact} -->`;
               const { data: created } = await github.rest.pulls.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -253,6 +266,7 @@ jobs:
                   `Closes #${issueNumber}`,
                   '',
                   marker,
+                  trustedRailMarker,
                 ].join('\n'),
               });
               pr = created;
