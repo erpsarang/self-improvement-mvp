@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ApprovedPlanIdentity } from "./implement-contract.js";
+import { requirementSnapshotDigest, type ApprovedPlanIdentity } from "./implement-contract.js";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const GIT_SHA = /^[0-9a-f]{40,64}$/;
@@ -63,7 +63,7 @@ function nonempty(name: string, value: string): string {
 }
 
 export function requirementDigest(title: string, body: string | null): string {
-  return createHash("sha256").update(JSON.stringify([title, body]), "utf8").digest("hex");
+  return requirementSnapshotDigest({ title, body });
 }
 
 export function assertExactPlanApproval(body: string): void {
