@@ -81,9 +81,10 @@ function assertDigest(name: string, value: string): void {
 function normalizePaths(name: "allowedPaths" | "contextPaths", paths: readonly string[], allowEmpty: boolean): string[] {
   if (!allowEmpty && paths.length === 0) throw new Error(`${name} must not be empty`);
   const normalized = paths.map((path) => {
-    assertNonempty(name, path);
+    const label = name === "allowedPaths" ? "allowed path" : "context path";
+    assertNonempty(label, path);
     if (path.startsWith("/") || path.includes("\\") || path.split("/").some((segment) => segment === ".." || segment === "")) {
-      throw new Error(`unsafe ${name} path: ${path}`);
+      throw new Error(`unsafe ${label}: ${path}`);
     }
     return path;
   });
