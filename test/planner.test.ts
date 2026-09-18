@@ -44,6 +44,7 @@ function planFor(context: PlanContextPack) {
     implementationScope: {
       ready: true,
       allowedPaths: [allowedPath],
+      contextPaths: [],
       requiredChanges: ["고객 이름 필터를 추가한다"],
       forbiddenChanges: ["승인 또는 병합 경계를 변경하지 않는다"],
       validationCommands: ["npm test"],
@@ -144,7 +145,7 @@ test("implementation scope is fail-closed and cannot authorize unseen existing p
     const paused = {
       ...valid,
       questions: ["정확한 출력 지점을 확인해야 합니다."],
-      implementationScope: { ready: false, allowedPaths: [], requiredChanges: [], forbiddenChanges: [], validationCommands: [] },
+      implementationScope: { ready: false, allowedPaths: [], contextPaths: [], requiredChanges: [], forbiddenChanges: [], validationCommands: [] },
     };
     const normalizedPaused = validatePlan(paused, f.target, context);
     assert.equal((normalizedPaused.implementationScope as { ready: boolean }).ready, false);
@@ -194,7 +195,9 @@ test("rejects free-form quote/path evidence, missing strategies, empty requireme
     assert.match(schemaText, /evidenceId/);
     assert.doesNotMatch(schemaText, /quote/);
     assert.doesNotMatch(schemaText, /"path"/);
-    assert.match(JSON.stringify(PLAN_SCHEMA.properties.implementationScope), /allowedPaths/);
+    const scopeSchema = JSON.stringify(PLAN_SCHEMA.properties.implementationScope);
+    assert.match(scopeSchema, /allowedPaths/);
+    assert.match(scopeSchema, /contextPaths/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
