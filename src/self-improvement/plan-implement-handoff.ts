@@ -36,6 +36,7 @@ export interface PlanAuthorizeSourceRun {
 export interface PlanImplementationScopeInput {
   readonly ready: boolean;
   readonly allowedPaths: readonly string[];
+  readonly contextPaths: readonly string[];
   readonly requiredChanges: readonly string[];
   readonly forbiddenChanges: readonly string[];
   readonly validationCommands: readonly string[];
@@ -191,18 +192,21 @@ export function validateApprovedPlanDocument(value: unknown): ApprovedPlanDocume
   if (!record(value.implementationScope)) throw new Error("approved PLAN implementationScope missing");
 
   const scope = value.implementationScope;
-  const expectedKeys = ["allowedPaths", "forbiddenChanges", "ready", "requiredChanges", "validationCommands"];
+  const expectedKeys = ["allowedPaths", "contextPaths", "forbiddenChanges", "ready", "requiredChanges", "validationCommands"];
   if (JSON.stringify(Object.keys(scope).sort()) !== JSON.stringify(expectedKeys)) {
     throw new Error("approved PLAN implementationScope shape is invalid");
   }
   if (scope.ready !== true) throw new Error("approved PLAN implementationScope is not ready");
 
   const allowedPaths = exactArray("allowedPaths", scope.allowedPaths, PLAN_IMPLEMENT_MAX_FILES, false);
+  const contextPaths = exactArray("contextPaths", scope.contextPaths, PLAN_IMPLEMENT_MAX_FILES, true);
   const requiredChanges = exactArray("requiredChanges", scope.requiredChanges, 8, false);
   const forbiddenChanges = exactArray("forbiddenChanges", scope.forbiddenChanges, 8, true);
   const validationCommands = exactArray("validationCommands", scope.validationCommands, 2, false);
   if (new Set(allowedPaths).size !== allowedPaths.length) throw new Error("approved PLAN allowedPaths must be unique");
+  if (new Set(contextPaths).size !== contextPaths.length) throw new Error("approved PLAN contextPaths must be unique");
   for (const path of allowedPaths) assertSafePath(path);
+  for (const path of contextPaths) assertSafePath(path);
   for (const command of validationCommands) {
     if (!TRUSTED_VALIDATION_COMMANDS.has(command)) throw new Error(`untrusted approved validation command: ${command}`);
   }
@@ -212,6 +216,7 @@ export function validateApprovedPlanDocument(value: unknown): ApprovedPlanDocume
     implementationScope: {
       ready: true,
       allowedPaths,
+      contextPaths,
       requiredChanges,
       forbiddenChanges,
       validationCommands,
@@ -258,6 +263,7 @@ export function createPlanImplementContract(
   const scope = plan.implementationScope;
   return createImplementContract(toApprovedPlanIdentity(trustedAuthorization), {
     allowedPaths: scope.allowedPaths,
+    contextPaths: scope.contextPaths,
     requiredChanges: scope.requiredChanges,
     forbiddenChanges: scope.forbiddenChanges,
     validationCommands: scope.validationCommands,
