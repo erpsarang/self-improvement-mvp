@@ -24,9 +24,10 @@ const identity: ApprovedPlanIdentity = {
   approval: { commentId: 9001, approverUserId: 8370921 },
 };
 
-function contract(overrides: Partial<{ allowedPaths: readonly string[]; maxContextBytes: number }> = {}) {
+function contract(overrides: Partial<{ allowedPaths: readonly string[]; contextPaths: readonly string[]; maxContextBytes: number }> = {}) {
   return createImplementContract(identity, {
     allowedPaths: overrides.allowedPaths ?? ["src/a.ts", "src/new.ts"],
+    contextPaths: overrides.contextPaths ?? [],
     requiredChanges: ["bounded patch를 만든다"],
     forbiddenChanges: ["Auto Merge 금지"],
     validationCommands: ["npm test"],
@@ -42,21 +43,23 @@ function tempRepo(): string {
   return root;
 }
 
-test("allowedPaths의 exact UTF-8 문맥만 deterministic Context Pack으로 고정한다", () => {
+test("allowedPaths와 read-only contextPaths의 exact UTF-8 문맥을 deterministic Context Pack으로 고정한다", () => {
   const root = tempRepo();
   try {
     writeFileSync(join(root, "src/a.ts"), "export const a = 1;\n", "utf8");
+    writeFileSync(join(root, "src/reference.ts"), "export const ref = 2;\n", "utf8");
     writeFileSync(join(root, "unrelated.txt"), "절대 포함되면 안 됨", "utf8");
-    const c = contract();
+    const c = contract({ contextPaths: ["src/reference.ts"] });
 
     const first = createImplementContextPack(c, root, identity.targetSha);
     const second = createImplementContextPack(c, root, identity.targetSha);
 
     assert.deepEqual(first, second);
-    assert.deepEqual(first.files.map(({ path }) => path), ["src/a.ts", "src/new.ts"]);
-    assert.equal(first.files[0]?.state, "present");
-    assert.equal(first.files[1]?.state, "missing");
-    assert.equal(first.totalContextBytes, Buffer.byteLength("export const a = 1;\n", "utf8"));
+    assert.deepEqual(first.files.map(({ path }) => path), ["src/a.ts", "src/new.ts", "src/reference.ts"]);
+    assert.equal(first.files.find(({ path }) => path === "src/a.ts")?.state, "present");
+    assert.equal(first.files.find(({ path }) => path === "src/new.ts")?.state, "missing");
+    assert.equal(first.files.find(({ path }) => path === "src/reference.ts")?.state, "present");
+    assert.equal(first.totalContextBytes, Buffer.byteLength("export const a = 1;\nexport const ref = 2;\n", "utf8"));
     assert.doesNotThrow(() => verifyImplementContextPack(first, c));
     assert.match(contextPackArtifactName(c), new RegExp(`^implement-context-issue-62-contract-${c.contractDigest}$`));
   } finally {
@@ -85,16 +88,19 @@ test("Context Pack byte budget을 넘는 입력은 AI에 전달되기 전에 차
   }
 });
 
-test("symlink와 non-UTF-8 binary context를 거부한다", () => {
+test("missing/symlink/non-UTF-8 read-only context를 거부한다", () => {
   const root = tempRepo();
   try {
+    const missingContext = contract({ allowedPaths: ["src/new.ts"], contextPaths: ["src/missing-reference.ts"] });
+    assert.throws(() => createImplementContextPack(missingContext, root, identity.targetSha), /contextPath must exist/);
+
     writeFileSync(join(root, "outside.ts"), "secret\n", "utf8");
     symlinkSync(join(root, "outside.ts"), join(root, "src/link.ts"));
-    const symlinkContract = contract({ allowedPaths: ["src/link.ts"] });
+    const symlinkContract = contract({ allowedPaths: ["src/new.ts"], contextPaths: ["src/link.ts"] });
     assert.throws(() => createImplementContextPack(symlinkContract, root, identity.targetSha), /symlink/);
 
     writeFileSync(join(root, "src/binary.bin"), Buffer.from([0xff, 0xfe, 0xfd]));
-    const binaryContract = contract({ allowedPaths: ["src/binary.bin"] });
+    const binaryContract = contract({ allowedPaths: ["src/new.ts"], contextPaths: ["src/binary.bin"] });
     assert.throws(() => createImplementContextPack(binaryContract, root, identity.targetSha), /UTF-8/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -114,7 +120,7 @@ test("Context Pack content/identity 위변조와 allowedPaths 밖 파일을 거�
 
     const forgedPath = JSON.parse(JSON.stringify(pack)) as { files: Array<Record<string, unknown>> };
     forgedPath.files[0]!["path"] = "secret.txt";
-    assert.throws(() => verifyImplementContextPack(forgedPath as unknown as ImplementContextPack, c), /exactly match allowedPaths/);
+    assert.throws(() => verifyImplementContextPack(forgedPath as unknown as ImplementContextPack, c), /exactly match allowedPaths plus contextPaths/);
 
     const other = contract({ maxContextBytes: 2048 });
     assert.throws(() => verifyImplementContextPack(pack, other), /contract identity mismatch/);
