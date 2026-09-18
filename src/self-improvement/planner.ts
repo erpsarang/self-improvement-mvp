@@ -34,6 +34,7 @@ export interface PlanContextPack extends PlanContextPackPayload {
 export interface PlanImplementationScope {
   readonly ready: boolean;
   readonly allowedPaths: readonly string[];
+  readonly contextPaths: readonly string[];
   readonly requiredChanges: readonly string[];
   readonly forbiddenChanges: readonly string[];
   readonly validationCommands: readonly string[];
@@ -396,10 +397,11 @@ export const PLAN_SCHEMA = {
     questions: { type: "array", maxItems: 6, items: { type: "string", maxLength: 1200 } },
     implementationScope: {
       type: "object", additionalProperties: false,
-      required: ["ready", "allowedPaths", "requiredChanges", "forbiddenChanges", "validationCommands"],
+      required: ["ready", "allowedPaths", "contextPaths", "requiredChanges", "forbiddenChanges", "validationCommands"],
       properties: {
         ready: { type: "boolean" },
         allowedPaths: pathStrings,
+        contextPaths: pathStrings,
         requiredChanges: optionalStrings,
         forbiddenChanges: optionalStrings,
         validationCommands: { type: "array", maxItems: 2, items: { type: "string", enum: ["npm test", "npm run build"] } },
@@ -417,26 +419,34 @@ function assertSafePlanPath(path: string): void {
 function validateImplementationScope(value: unknown, target: string, context: PlanContextPack, questions: readonly string[]): PlanImplementationScope {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Missing implementationScope");
   const scope = value as Record<string, unknown>;
-  const expectedKeys = ["allowedPaths", "forbiddenChanges", "ready", "requiredChanges", "validationCommands"];
+  const expectedKeys = ["allowedPaths", "contextPaths", "forbiddenChanges", "ready", "requiredChanges", "validationCommands"];
   if (JSON.stringify(Object.keys(scope).sort()) !== JSON.stringify(expectedKeys)) throw new Error("Invalid implementationScope fields");
   if (typeof scope.ready !== "boolean") throw new Error("Invalid implementationScope.ready");
-  const arrays = ["allowedPaths", "requiredChanges", "forbiddenChanges", "validationCommands"] as const;
+  const arrays = ["allowedPaths", "contextPaths", "requiredChanges", "forbiddenChanges", "validationCommands"] as const;
   for (const key of arrays) {
     if (!Array.isArray(scope[key]) || !scope[key].every((item) => typeof item === "string" && item.trim().length > 0)) {
       throw new Error(`Invalid implementationScope.${key}`);
     }
   }
   const allowedPaths = scope.allowedPaths as string[];
+  const contextPaths = scope.contextPaths as string[];
   const requiredChanges = scope.requiredChanges as string[];
   const forbiddenChanges = scope.forbiddenChanges as string[];
   const validationCommands = scope.validationCommands as string[];
-  if (allowedPaths.length > 8 || requiredChanges.length > 8 || forbiddenChanges.length > 8 || validationCommands.length > 2) throw new Error("implementationScope exceeds budget");
+  if (allowedPaths.length > 8 || contextPaths.length > 8 || requiredChanges.length > 8 || forbiddenChanges.length > 8 || validationCommands.length > 2) throw new Error("implementationScope exceeds budget");
   if (new Set(allowedPaths).size !== allowedPaths.length) throw new Error("Duplicate implementation scope path");
+  if (new Set(contextPaths).size !== contextPaths.length) throw new Error("Duplicate context scope path");
   const contextPaths = new Set(context.files.map((file) => file.path));
   for (const path of allowedPaths) {
     assertSafePlanPath(path);
     if (existsSync(join(target, path)) && !contextPaths.has(path)) {
       throw new Error(`Existing implementation scope path is outside bounded PLAN context: ${path}`);
+    }
+  }
+  for (const path of contextPaths) {
+    assertSafePlanPath(path);
+    if (!existsSync(join(target, path))) {
+      throw new Error(`Read-only context path does not exist at frozen target SHA: ${path}`);
     }
   }
   for (const command of validationCommands) {
@@ -447,12 +457,13 @@ function validateImplementationScope(value: unknown, target: string, context: Pl
     if (allowedPaths.length === 0 || requiredChanges.length === 0 || validationCommands.length === 0) {
       throw new Error("implementationScope.ready requires exact paths, required changes and validation commands");
     }
-  } else if (allowedPaths.length > 0 || requiredChanges.length > 0 || forbiddenChanges.length > 0 || validationCommands.length > 0) {
+  } else if (allowedPaths.length > 0 || contextPaths.length > 0 || requiredChanges.length > 0 || forbiddenChanges.length > 0 || validationCommands.length > 0) {
     throw new Error("implementationScope must be empty when ready=false");
   }
   return {
     ready: scope.ready,
     allowedPaths: [...allowedPaths],
+    contextPaths: [...contextPaths],
     requiredChanges: [...requiredChanges],
     forbiddenChanges: [...forbiddenChanges],
     validationCommands: [...validationCommands],
@@ -471,10 +482,11 @@ approach: 구현 접근, changeCandidates: 변경 후보 경로와 이유, accep
 testStrategy: 기존 문맥에서 확인 가능한 테스트와 추가할 테스트 및 실행 방법, questions: IMPLEMENT 범위 또는 검증 방법을 확정하지 못하게 하는 blocking question만 작성하세요. 비차단 확인/참고 사항은 questions에 넣지 말고 approach 또는 testStrategy에 검증 방법으로 반영하세요.
 implementationScope는 IMPLEMENT에 넘길 machine-actionable 제안입니다. exact path만 사용하고 wildcard/placeholder를 쓰지 마세요.
 기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 path여야 합니다. 필요한 신규 파일은 exact safe path로 제안할 수 있습니다.
+contextPaths는 IMPLEMENT Worker가 읽기만 할 기존 참고 파일입니다. exact safe path만 사용하고, 변경 권한을 부여하지 않습니다. 필요한 경우 PLAN Context에서 보지 못한 기존 파일도 제안할 수 있지만 frozen target SHA에 실제 존재해야 합니다.
 validationCommands는 'npm test', 'npm run build' 중 필요한 것만 사용하세요. budget 값은 AI가 정하지 않습니다.
 구현 범위와 검증 방법을 확정할 수 있고 blocking questions가 하나도 없을 때만 implementationScope.ready=true로 하세요.
 implementationScope.ready=true이면 questions는 반드시 빈 배열 []이어야 합니다.
-blocking question이 하나라도 있으면 implementationScope.ready=false로 하고 allowedPaths/requiredChanges/forbiddenChanges/validationCommands를 모두 빈 배열로 반환하세요.
+blocking question이 하나라도 있으면 implementationScope.ready=false로 하고 allowedPaths/contextPaths/requiredChanges/forbiddenChanges/validationCommands를 모두 빈 배열로 반환하세요.
 이미 구현 또는 테스트했다고 주장하지 마세요. 파일 수정, 테스트/빌드/설치 실행, commit, push, branch/PR 생성, 후속 단계 실행은 금지합니다.
 최종 응답만 주어진 JSON schema로 반환하세요. PLAN은 제안이며 구현 승인이 아닙니다.
 
