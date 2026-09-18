@@ -154,3 +154,95 @@ test("첫 command 실패 시 fail-fast하고 뒤 command를 실행하지 않는�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+const BOOTSTRAP_LOG_LIMIT = 32 * 1024;
+const BOOTSTRAP_LOG_MARKER = "\n...[truncated middle]...\n";
+const BOOTSTRAP_AVAILABLE_BYTES = BOOTSTRAP_LOG_LIMIT - Buffer.byteLength(BOOTSTRAP_LOG_MARKER, "utf8");
+const BOOTSTRAP_HEAD_BYTES = Math.floor(BOOTSTRAP_AVAILABLE_BYTES / 4);
+const BOOTSTRAP_TAIL_BYTES = BOOTSTRAP_AVAILABLE_BYTES - BOOTSTRAP_HEAD_BYTES;
+
+function validateBoundedLogs(stdout: string, stderr: string) {
+  const { root, contract, contextPack, candidate } = fixture(["npm test"]);
+  try {
+    return runDeterministicValidation(contract, contextPack, candidate, root, identity.targetSha, {
+      executor: () => ({ status: 1, signal: null, stdout, stderr }),
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("긴 deterministic CI 로그는 32KiB 안에서 head와 failure tail을 함께 보존한다", () => {
+  const short = "short log\n";
+  const shortResult = validateBoundedLogs(short, short);
+  assert.equal(shortResult.commands[0]?.stdout, short);
+  assert.equal(shortResult.commands[0]?.stderr, short);
+
+  const head = "START OF CI\n";
+  const tail = "\nnot ok 150 - regression\nAssertionError: expected true\n# tests 150\n# pass 149\n# fail 1\n";
+  const long = head + "m".repeat(40 * 1024) + tail;
+  const result = validateBoundedLogs(long, long);
+
+  for (const stream of [result.commands[0]?.stdout, result.commands[0]?.stderr]) {
+    assert.ok(stream);
+    assert.ok(stream.startsWith(head));
+    assert.ok(stream.includes(BOOTSTRAP_LOG_MARKER));
+    assert.ok(stream.endsWith(tail));
+    assert.equal(Buffer.byteLength(stream, "utf8"), BOOTSTRAP_LOG_LIMIT);
+  }
+});
+
+test("UTF-8 clipping 경계에서 multi-byte 문자를 깨뜨리지 않는다", () => {
+  for (const character of ["é", "한", "🙂"]) {
+    const width = Buffer.byteLength(character, "utf8");
+    for (let offset = 0; offset < width; offset += 1) {
+      const head = "H".repeat(BOOTSTRAP_HEAD_BYTES - offset);
+      const tail = "T".repeat(BOOTSTRAP_TAIL_BYTES - (width - offset));
+      const input = head + character + "m".repeat(40 * 1024) + character + tail;
+      const expected = head + BOOTSTRAP_LOG_MARKER + (offset === 0 ? character : "") + tail;
+      const result = validateBoundedLogs(input, input);
+
+      for (const stream of [result.commands[0]?.stdout, result.commands[0]?.stderr]) {
+        assert.equal(stream, expected);
+        assert.equal(stream?.includes("\ufffd"), false);
+        assert.ok(Buffer.byteLength(stream ?? "", "utf8") <= BOOTSTRAP_LOG_LIMIT);
+      }
+    }
+  }
+});
+
+test("bounded log representation과 evidence digest는 deterministic하게 결합된다", () => {
+  const { root, contract, contextPack, candidate } = fixture(["npm test"]);
+  const input = "HEAD\n" + "m".repeat(40 * 1024) + "\nnot ok 150\nAssertionError\n# fail 1\n";
+
+  const run = (stdout: string, stderr: string) => {
+    writeFileSync(join(root, "src/a.ts"), "export const a = 1;\n", "utf8");
+    rmSync(join(root, "src/new.ts"), { force: true });
+    return runDeterministicValidation(contract, contextPack, candidate, root, identity.targetSha, {
+      executor: () => ({ status: 1, signal: null, stdout, stderr }),
+    });
+  };
+
+  try {
+    const first = run(input, input);
+    const second = run(input, input);
+    assert.deepEqual(second, first);
+    assert.equal(second.evidenceDigest, first.evidenceDigest);
+
+    const omittedIndex = BOOTSTRAP_HEAD_BYTES + 1000;
+    const middleChanged = input.slice(0, omittedIndex) + "x" + input.slice(omittedIndex + 1);
+    assert.equal(run(middleChanged, middleChanged).evidenceDigest, first.evidenceDigest);
+
+    assert.notEqual(run(input + "tail change", input).evidenceDigest, first.evidenceDigest);
+    assert.notEqual(run(input, input + "tail change").evidenceDigest, first.evidenceDigest);
+
+    const tampered = {
+      ...first,
+      commands: first.commands.map((command) => ({ ...command, stdout: command.stdout + "tampered" })),
+    };
+    assert.throws(() => verifyDeterministicValidationResult(tampered), /evidence digest mismatch/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

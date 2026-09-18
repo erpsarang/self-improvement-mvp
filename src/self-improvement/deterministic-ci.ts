@@ -70,6 +70,7 @@ export type ValidationExecutor = (
 const SHA256 = /^[0-9a-f]{64}$/;
 const FORBIDDEN_COMMAND_CHARS = /[\n\r;&|<>`$'"\\]/;
 const MAX_LOG_BYTES = 32 * 1024;
+const LOG_TRUNCATION_MARKER = "\n...[truncated middle]...\n";
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
@@ -173,7 +174,23 @@ export function applyCandidateToExactBase(
 function truncateLog(value: string): string {
   const bytes = Buffer.from(value, "utf8");
   if (bytes.byteLength <= MAX_LOG_BYTES) return value;
-  return `${bytes.subarray(0, MAX_LOG_BYTES).toString("utf8")}\n...[truncated]`;
+
+  const markerBytes = Buffer.byteLength(LOG_TRUNCATION_MARKER, "utf8");
+  const availableBytes = MAX_LOG_BYTES - markerBytes;
+  const headBudget = Math.floor(availableBytes / 4);
+  const tailBudget = availableBytes - headBudget;
+
+  let headEnd = headBudget;
+  let tailStart = bytes.byteLength - tailBudget;
+
+  while (headEnd > 0 && (bytes[headEnd]! & 0xc0) === 0x80) headEnd -= 1;
+  while (tailStart < bytes.byteLength && (bytes[tailStart]! & 0xc0) === 0x80) tailStart += 1;
+
+  return (
+    bytes.subarray(0, headEnd).toString("utf8")
+    + LOG_TRUNCATION_MARKER
+    + bytes.subarray(tailStart).toString("utf8")
+  );
 }
 
 const defaultExecutor: ValidationExecutor = (executable, args, cwd, timeoutMs) => {
