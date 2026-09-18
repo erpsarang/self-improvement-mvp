@@ -24,7 +24,7 @@ import { verifyDistributionManifest } from '../src/self-improvement/distribution
 const REPOSITORY = 'fixture/framework';
 const EMPTY_DIGEST = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 const FIXED_SHA = '0123456789abcdef0123456789abcdef01234567';
-const FIXED_CANONICAL = '{"schemaVersion":1,"sourceRepository":"fixture/framework","sourceSha":"0123456789abcdef0123456789abcdef01234567","entries":[{"sourcePath":"empty.txt","targetPath":"framework/empty.txt","classification":"required","contentDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}';
+const FIXED_CANONICAL = '{"schemaVersion":1,"releaseLine":"v0.3","sourceRepository":"fixture/framework","sourceSha":"0123456789abcdef0123456789abcdef01234567","entries":[{"sourcePath":"empty.txt","targetPath":"framework/empty.txt","classification":"required","ownership":"framework","contentDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}';
 // The expected identity is derived solely from a fixed literal, independently of
 // the production serializer and its digest helper.
 const FIXED_MANIFEST_DIGEST = createHash('sha256').update(FIXED_CANONICAL, 'utf8').digest('hex');
@@ -33,8 +33,9 @@ function fixedPayload(): DistributionManifestPayload {
   return {
     schemaVersion: 1,
     sourceRepository: REPOSITORY,
+    releaseLine: 'v0.3',
     sourceSha: FIXED_SHA,
-    entries: [{ sourcePath: 'empty.txt', targetPath: 'framework/empty.txt', classification: 'required', contentDigest: EMPTY_DIGEST }],
+    entries: [{ sourcePath: 'empty.txt', targetPath: 'framework/empty.txt', classification: 'required', ownership: 'framework', contentDigest: EMPTY_DIGEST }],
   };
 }
 
@@ -80,9 +81,11 @@ function withFixture(run: (fixture: Fixture) => void): void {
     const payload: DistributionManifestPayload = {
       schemaVersion: 1,
       sourceRepository: REPOSITORY,
+      releaseLine: 'v0.3',
       sourceSha: fixtureGit(root, ['rev-parse', 'HEAD']),
       entries: trusted.entries.map(entry => ({
         ...entry,
+        ownership: 'framework',
         contentDigest: sha256Bytes(readFileSync(join(root, entry.sourcePath))),
       })),
     };
@@ -141,11 +144,13 @@ test('entry order and object insertion order do not affect canonical identity', 
   const payload = { ...fixedPayload(), entries: [first, second] };
   const reordered: DistributionManifestPayload = {
     entries: [second, first].map(entry => ({
+      ownership: entry.ownership,
       contentDigest: entry.contentDigest,
       classification: entry.classification,
       targetPath: entry.targetPath,
       sourcePath: entry.sourcePath,
     })),
+    releaseLine: payload.releaseLine,
     sourceSha: payload.sourceSha,
     sourceRepository: payload.sourceRepository,
     schemaVersion: 1,
@@ -154,6 +159,7 @@ test('entry order and object insertion order do not affect canonical identity', 
   assert.equal(createDistributionManifest(payload).entries[0]!.sourcePath, 'Z.txt');
   assert.equal(payload.entries[0], first);
   for (const changed of [
+    { ...payload, releaseLine: 'v0.4' },
     { ...payload, sourceRepository: 'another/framework' },
     { ...payload, sourceSha: 'f'.repeat(40) },
     { ...payload, entries: [{ ...first, targetPath: 'other.txt' }, second] },
@@ -183,6 +189,32 @@ test('schemas and runtime validators reject malformed shapes and additional prop
   assert.throws(() => assertTrustedOwnershipList({ ...trusted, entries: valid.entries }));
   assert.throws(() => assertTrustedOwnershipList({ ...trusted, extra: true }));
   assert.throws(() => assertDistributionManifest(Object.defineProperty({ ...valid }, 'sourceSha', { get: () => FIXED_SHA })));
+});
+
+
+test('release line and framework ownership are mandatory contract fields', () => {
+  const payload = fixedPayload();
+  const manifest = createDistributionManifest(payload);
+  const { releaseLine: omittedLine, ...missingLine } = manifest;
+  const { ownership: omittedOwnership, ...missingOwnership } = manifest.entries[0]!;
+  assert.throws(() => assertDistributionManifest(missingLine));
+  assert.throws(() => assertDistributionManifest({ ...manifest, entries: [missingOwnership] }));
+  for (const releaseLine of [undefined, null, 3, '', 'v0', '0.3', 'v0.3.0', 'v01.3', 'v0.03', ' v0.3', 'v0.3\n']) {
+    assert.throws(() => assertDistributionManifest({ ...manifest, releaseLine }));
+    assert.throws(() => canonicalSerializeManifestPayload({ ...payload, releaseLine } as DistributionManifestPayload));
+  }
+  for (const ownership of [undefined, null, 1, '', 'project', 'Framework']) {
+    const entries = [{ ...payload.entries[0]!, ownership }];
+    assert.throws(() => assertDistributionManifest({ ...manifest, entries }));
+    assert.throws(() => canonicalSerializeManifestPayload({ ...payload, entries } as DistributionManifestPayload));
+  }
+  assert.equal(verifyManifestDigest({ ...manifest, releaseLine: 'v0.4' }), false);
+  assert.ok(distributionManifestSchema.required.includes('releaseLine'));
+  assert.ok(distributionManifestSchema.properties.entries.items.required.includes('ownership'));
+  assert.equal(distributionManifestSchema.properties.entries.items.properties.ownership.const, 'framework');
+  const releasePattern = new RegExp(distributionManifestSchema.properties.releaseLine.pattern, 'u');
+  assert.equal(releasePattern.test('v0.3'), true);
+  assert.equal(releasePattern.test('v0.3.0'), false);
 });
 
 test('unsafe source and target paths, duplicate mappings, and prefix collisions fail closed', () => {
@@ -269,7 +301,7 @@ test('untracked source files, missing files, directories, and nested roots fail 
   withFixture(fixture => {
     writeFileSync(join(fixture.root, 'untracked.txt'), Buffer.alloc(0));
     const trusted: TrustedOwnershipList = { ...fixture.trusted, entries: [{ sourcePath: 'untracked.txt', targetPath: 'untracked.txt', classification: 'required' }] };
-    const payload: DistributionManifestPayload = { ...fixture.payload, entries: [{ ...trusted.entries[0]!, contentDigest: EMPTY_DIGEST }] };
+    const payload: DistributionManifestPayload = { ...fixture.payload, entries: [{ ...trusted.entries[0]!, ownership: 'framework', contentDigest: EMPTY_DIGEST }] };
     assert.throws(() => verify(fixture, payload, trusted), /commit-tree blob/);
     assert.throws(() => verifyDistributionManifest({
       manifest: createDistributionManifest(fixture.payload), trustedOwnershipList: fixture.trusted,

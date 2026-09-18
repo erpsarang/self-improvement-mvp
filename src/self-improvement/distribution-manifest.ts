@@ -9,6 +9,7 @@ export interface TrustedOwnershipEntry {
 }
 
 export interface DistributionManifestEntry extends TrustedOwnershipEntry {
+  readonly ownership: 'framework';
   readonly contentDigest: string;
 }
 
@@ -20,6 +21,7 @@ export interface TrustedOwnershipList {
 
 export interface DistributionManifestPayload {
   readonly schemaVersion: 1;
+  readonly releaseLine: string;
   readonly sourceRepository: string;
   readonly sourceSha: string;
   readonly entries: readonly DistributionManifestEntry[];
@@ -31,6 +33,7 @@ export interface DistributionManifest extends DistributionManifestPayload {
 
 const PATH_PATTERN = '^(?!/)(?!.*[\\\\:\\u0000-\\u0020\\u007f-\\u009f])(?!.*(?:^|/)[.]{1,2}(?:/|$))[^/]+(?:/[^/]+)*$';
 const REPOSITORY_PATTERN = '^\\S(?:[^\\u0000-\\u001f\\u007f-\\u009f]*\\S)?$';
+const RELEASE_LINE_PATTERN = '^v(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$';
 const SHA_PATTERN = '^(?:[0-9a-f]{40}|[0-9a-f]{64})$';
 const DIGEST_PATTERN = '^[0-9a-f]{64}$';
 
@@ -65,10 +68,11 @@ export const distributionManifestSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
   additionalProperties: false,
-  required: ['schemaVersion', 'sourceRepository', 'sourceSha', 'entries', 'manifestDigest'],
+  required: ['schemaVersion', 'releaseLine', 'sourceRepository', 'sourceSha', 'entries', 'manifestDigest'],
   properties: {
     schemaVersion: { const: 1 },
     sourceRepository: { type: 'string', pattern: REPOSITORY_PATTERN },
+    releaseLine: { type: 'string', pattern: RELEASE_LINE_PATTERN },
     sourceSha: { type: 'string', pattern: SHA_PATTERN },
     manifestDigest: { type: 'string', pattern: DIGEST_PATTERN },
     entries: {
@@ -76,9 +80,10 @@ export const distributionManifestSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['sourcePath', 'targetPath', 'classification', 'contentDigest'],
+        required: ['sourcePath', 'targetPath', 'classification', 'ownership', 'contentDigest'],
         properties: {
           ...ownershipProperties,
+          ownership: { const: 'framework' },
           contentDigest: { type: 'string', pattern: DIGEST_PATTERN },
         },
       },
@@ -135,7 +140,7 @@ function assertEntries(value: unknown, withDigest: boolean): void {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) fail('invalid entries array element');
     const keys = withDigest
-      ? ['sourcePath', 'targetPath', 'classification', 'contentDigest']
+      ? ['sourcePath', 'targetPath', 'classification', 'ownership', 'contentDigest']
       : ['sourcePath', 'targetPath', 'classification'];
     const entry = exactObject(descriptor.value, keys, `entries[${index}]`);
     assertSafeRelativePath(entry.sourcePath);
@@ -143,7 +148,10 @@ function assertEntries(value: unknown, withDigest: boolean): void {
     if (entry.classification !== 'required' && entry.classification !== 'optional') {
       fail('classification must be required or optional');
     }
-    if (withDigest) matches(entry.contentDigest, DIGEST_PATTERN, 'contentDigest');
+    if (withDigest) {
+      if (entry.ownership !== 'framework') fail('ownership must be framework');
+      matches(entry.contentDigest, DIGEST_PATTERN, 'contentDigest');
+    }
     if (sources.has(entry.sourcePath)) fail(`duplicate sourcePath: ${entry.sourcePath}`);
     if (targets.has(entry.targetPath)) fail(`duplicate targetPath: ${entry.targetPath}`);
     sources.add(entry.sourcePath);
@@ -168,8 +176,9 @@ export function assertTrustedOwnershipList(value: unknown): asserts value is Tru
 }
 
 export function assertDistributionManifestPayload(value: unknown): asserts value is DistributionManifestPayload {
-  const payload = exactObject(value, ['schemaVersion', 'sourceRepository', 'sourceSha', 'entries'], 'payload');
+  const payload = exactObject(value, ['schemaVersion', 'releaseLine', 'sourceRepository', 'sourceSha', 'entries'], 'payload');
   if (payload.schemaVersion !== 1) fail('unsupported manifest schemaVersion');
+  matches(payload.releaseLine, RELEASE_LINE_PATTERN, 'releaseLine');
   assertRepository(payload.sourceRepository);
   matches(payload.sourceSha, SHA_PATTERN, 'sourceSha');
   assertEntries(payload.entries, true);
@@ -177,9 +186,10 @@ export function assertDistributionManifestPayload(value: unknown): asserts value
 
 /** Structural validation only; use verifyManifestDigest for integrity validation. */
 export function assertDistributionManifest(value: unknown): asserts value is DistributionManifest {
-  const manifest = exactObject(value, ['schemaVersion', 'sourceRepository', 'sourceSha', 'entries', 'manifestDigest'], 'manifest');
+  const manifest = exactObject(value, ['schemaVersion', 'releaseLine', 'sourceRepository', 'sourceSha', 'entries', 'manifestDigest'], 'manifest');
   assertDistributionManifestPayload({
     schemaVersion: manifest.schemaVersion,
+    releaseLine: manifest.releaseLine,
     sourceRepository: manifest.sourceRepository,
     sourceSha: manifest.sourceSha,
     entries: manifest.entries,
@@ -194,12 +204,14 @@ function compareText(left: string, right: string): number {
 function orderedPayload(payload: DistributionManifestPayload): DistributionManifestPayload {
   return {
     schemaVersion: 1,
+    releaseLine: payload.releaseLine,
     sourceRepository: payload.sourceRepository,
     sourceSha: payload.sourceSha,
     entries: payload.entries.map(entry => ({
       sourcePath: entry.sourcePath,
       targetPath: entry.targetPath,
       classification: entry.classification,
+      ownership: entry.ownership,
       contentDigest: entry.contentDigest,
     })).sort((left, right) =>
       compareText(left.sourcePath, right.sourcePath)
@@ -212,6 +224,7 @@ function orderedPayload(payload: DistributionManifestPayload): DistributionManif
 function payloadOf(manifest: DistributionManifest): DistributionManifestPayload {
   return {
     schemaVersion: manifest.schemaVersion,
+    releaseLine: manifest.releaseLine,
     sourceRepository: manifest.sourceRepository,
     sourceSha: manifest.sourceSha,
     entries: manifest.entries,

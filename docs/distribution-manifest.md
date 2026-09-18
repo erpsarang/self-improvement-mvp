@@ -7,10 +7,13 @@
 `DistributionManifest`는 다음 필드만 허용한다.
 
 - `schemaVersion`: 숫자 `1`.
+- `releaseLine`: Framework release line. `v0.3` 같은 `v<major>.<minor>` 형식이며 각 숫자는 0 또는 선행 0 없는 양의 정수다. 계약 버전과 별개이고 patch·prerelease·공백은 허용하지 않는다.
 - `sourceRepository`: 독립적으로 기대하는 repository 식별자와 정확히 일치하는 문자열. 앞뒤 공백과 제어 문자는 허용하지 않는다.
 - `sourceSha`: 소문자 전체 Git commit object ID. SHA-1의 40자리 또는 SHA-256의 64자리이며 축약 SHA는 거부한다.
-- `entries`: `sourcePath`, `targetPath`, `classification`, `contentDigest`만 포함하는 파일 목록.
+- `entries`: `sourcePath`, `targetPath`, `classification`, `ownership`, `contentDigest`만 포함하는 파일 목록.
 - `manifestDigest`: canonical payload UTF-8 bytes의 소문자 SHA-256 hex 64자리.
+
+각 manifest entry의 `ownership`은 필수 상수 `framework`다. 이 선언만으로 ownership 권위를 부여하지 않으며 독립 trusted 목록과의 일치 검증을 유지한다.
 
 `TrustedOwnershipList`는 manifest와 별도 모델이며 `schemaVersion: 1`, `sourceRepository`, `entries`만 가진다. 각 entry는 `sourcePath`, `targetPath`, `classification`만 가진다. Manifest에서 이 목록을 추출하여 신뢰 목록으로 넘겨서는 안 된다. 호출자가 별도로 승인된 목록과 `expectedSourceRepository`를 제공해야 한다. API 인자를 분리하는 것만으로 호출자의 신뢰 공급 경로가 증명되지는 않는다.
 
@@ -22,7 +25,7 @@
 
 ## Canonical identity와 API
 
-`canonicalSerializeManifestPayload(payload)`는 payload만 받으며 `manifestDigest` 속성이 들어 있으면 거부한다. JSON 키 순서는 `schemaVersion`, `sourceRepository`, `sourceSha`, `entries`다. 각 entry의 키 순서는 `sourcePath`, `targetPath`, `classification`, `contentDigest`다. Entry는 이 네 필드를 순서대로 비교하여 정렬하며, locale에 의존하지 않는 JavaScript UTF-16 code-unit 사전순 비교를 사용한다. 원본 배열은 변경하지 않는다.
+`canonicalSerializeManifestPayload(payload)`는 payload만 받으며 `manifestDigest` 속성이 들어 있으면 거부한다. JSON 키 순서는 `schemaVersion`, `releaseLine`, `sourceRepository`, `sourceSha`, `entries`다. 각 entry의 키 순서는 `sourcePath`, `targetPath`, `classification`, `ownership`, `contentDigest`다. `releaseLine`과 `ownership`도 digest에 포함한다. Entry는 상수 ownership을 제외한 네 필드를 순서대로 비교하여 정렬하며, locale에 의존하지 않는 JavaScript UTF-16 code-unit 사전순 비교를 사용한다. 원본 배열은 변경하지 않는다.
 
 Serialization은 `JSON.stringify` 결과 그대로이며 들여쓰기, BOM, 마지막 newline을 추가하지 않는다. Unicode나 파일 내용을 정규화하지 않는다. 이 문자열을 UTF-8로 인코딩한 bytes에 SHA-256을 적용한다. `manifestDigest` 자체는 digest payload에서 제외한다. `canonicalSerializeManifest(manifest)`는 digest를 재검증하고 canonical payload 키 뒤에 `manifestDigest`를 마지막 키로 추가한다.
 

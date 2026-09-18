@@ -122,6 +122,7 @@ export function verifyDistributionManifest(options: VerifyDistributionManifestOp
     // Copy after validation so later work does not rely on mutable caller objects.
     const manifest = createDistributionManifest({
       schemaVersion: options.manifest.schemaVersion,
+      releaseLine: options.manifest.releaseLine,
       sourceRepository: options.manifest.sourceRepository,
       sourceSha: options.manifest.sourceSha,
       entries: options.manifest.entries,
