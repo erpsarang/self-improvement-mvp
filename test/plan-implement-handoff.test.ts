@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPlanAuthorizeArtifact, type PlanAuthorizeArtifact } from "../src/self-improvement/plan-authorization.js";
+import { createPlanAuthorizeArtifact, requirementDigest, type PlanAuthorizeArtifact } from "../src/self-improvement/plan-authorization.js";
 import {
   createPlanImplementContract,
   createPlanImplementHandoffManifest,
@@ -13,11 +13,16 @@ import {
 } from "../src/self-improvement/plan-implement-handoff.js";
 
 const targetSha = "b".repeat(40);
+const requirementSnapshot = {
+  title: "Framework 실행 상태를 사람이 이해하기 쉬운 한국어로 표시",
+  body: "approved Requirement body",
+} as const;
+const approvedRequirementDigest = requirementDigest(requirementSnapshot.title, requirementSnapshot.body);
 
 function authorization(): PlanAuthorizeArtifact {
   return createPlanAuthorizeArtifact({
     normalizedPlan: {
-      requirement: { issueNumber: 83, digest: "a".repeat(64) },
+      requirement: { issueNumber: 83, digest: approvedRequirementDigest },
       repository: "erpsarang/self-improvement-mvp",
       targetSha,
       plan: {
@@ -36,7 +41,7 @@ function authorization(): PlanAuthorizeArtifact {
       id: 10308236589,
       digest: "d".repeat(64),
     },
-    currentRequirementDigest: "a".repeat(64),
+    currentRequirementDigest: approvedRequirementDigest,
     currentTargetSha: targetSha,
     approvalCommentId: 5649698571,
     approverUserId: 8370921,
@@ -108,9 +113,10 @@ test("canonical PLAN.json wrapper와 ready scope를 deterministic ImplementContr
   assert.doesNotThrow(() => verifyPlanAuthorizeArtifact(approved));
   assert.doesNotThrow(() => validatePlanAuthorizeSource(approved, source()));
 
-  const contract = createPlanImplementContract(approved, canonicalPlanArtifact());
+  const contract = createPlanImplementContract(approved, canonicalPlanArtifact(), requirementSnapshot);
   assert.equal(contract.baseSha, targetSha);
   assert.equal(contract.requirement.issueNumber, 83);
+  assert.deepEqual(contract.requirementSnapshot, requirementSnapshot);
   assert.equal(contract.approvedPlan.runId, 34727609462);
   assert.equal(contract.approvedPlan.runAttempt, 2);
   assert.equal(contract.approval.commentId, 5649698571);
@@ -122,6 +128,19 @@ test("canonical PLAN.json wrapper와 ready scope를 deterministic ImplementContr
   assert.deepEqual(contract.scope.forbiddenChanges, readyPlan.implementationScope.forbiddenChanges);
   assert.deepEqual(contract.scope.validationCommands, ["npm test"]);
   assert.match(contract.contractDigest, /^[0-9a-f]{64}$/);
+});
+
+
+test("approved Requirement snapshot이 digest와 다르면 re-plan required로 fail-closed 한다", () => {
+  const approved = authorization();
+  assert.throws(
+    () => createPlanImplementContract(
+      approved,
+      canonicalPlanArtifact(),
+      { title: requirementSnapshot.title, body: "changed after approval" },
+    ),
+    /requirementSnapshot digest mismatch; re-plan required/,
+  );
 });
 
 test("source workflow/run/SHA/default HEAD가 exact approval과 다르면 fail-closed 한다", () => {
@@ -149,23 +168,23 @@ test("PLAN_AUTHORIZE artifact 위변조를 digest 검증에서 거부한다", ()
 test("production handoff는 bare payload나 malformed canonical wrapper를 거부한다", () => {
   const approved = authorization();
   assert.throws(
-    () => createPlanImplementContract(approved, readyPlan),
+    () => createPlanImplementContract(approved, readyPlan, requirementSnapshot),
     /wrapper shape/,
   );
   assert.throws(
-    () => createPlanImplementContract(approved, { ...canonicalPlanArtifact(), plan: undefined }),
+    () => createPlanImplementContract(approved, { ...canonicalPlanArtifact(), plan: undefined }, requirementSnapshot),
     /plan is invalid/,
   );
   assert.throws(
-    () => createPlanImplementContract(approved, canonicalPlanArtifact(readyPlan, { repository: "other/repo" })),
+    () => createPlanImplementContract(approved, canonicalPlanArtifact(readyPlan, { repository: "other/repo" }), requirementSnapshot),
     /repository mismatch/,
   );
   assert.throws(
-    () => createPlanImplementContract(approved, canonicalPlanArtifact(readyPlan, { sha: "e".repeat(40) })),
+    () => createPlanImplementContract(approved, canonicalPlanArtifact(readyPlan, { sha: "e".repeat(40) }), requirementSnapshot),
     /SHA mismatch/,
   );
   assert.throws(
-    () => createPlanImplementContract(approved, { ...canonicalPlanArtifact(), extra: true }),
+    () => createPlanImplementContract(approved, { ...canonicalPlanArtifact(), extra: true }, requirementSnapshot),
     /wrapper shape/,
   );
 });
@@ -176,11 +195,12 @@ test("ready=false, blocking question, unsafe scope와 비허용 검증 명령은
     () => createPlanImplementContract(
       approved,
       canonicalPlanArtifact({ ...readyPlan, implementationScope: { ...readyPlan.implementationScope, ready: false } }),
+      requirementSnapshot,
     ),
     /not ready/,
   );
   assert.throws(
-    () => createPlanImplementContract(approved, canonicalPlanArtifact({ ...readyPlan, questions: ["결정 필요"] })),
+    () => createPlanImplementContract(approved, canonicalPlanArtifact({ ...readyPlan, questions: ["결정 필요"] }), requirementSnapshot),
     /blocking questions/,
   );
   assert.throws(
@@ -190,6 +210,7 @@ test("ready=false, blocking question, unsafe scope와 비허용 검증 명령은
         ...readyPlan,
         implementationScope: { ...readyPlan.implementationScope, allowedPaths: ["../secret"] },
       }),
+      requirementSnapshot,
     ),
     /unsafe approved PLAN path/,
   );
@@ -200,6 +221,7 @@ test("ready=false, blocking question, unsafe scope와 비허용 검증 명령은
         ...readyPlan,
         implementationScope: { ...readyPlan.implementationScope, contextPaths: ["../secret"] },
       }),
+      requirementSnapshot,
     ),
     /unsafe approved PLAN path/,
   );
@@ -210,6 +232,7 @@ test("ready=false, blocking question, unsafe scope와 비허용 검증 명령은
         ...readyPlan,
         implementationScope: { ...readyPlan.implementationScope, validationCommands: ["npm install"] },
       }),
+      requirementSnapshot,
     ),
     /untrusted approved validation command/,
   );
@@ -217,7 +240,7 @@ test("ready=false, blocking question, unsafe scope와 비허용 검증 명령은
 
 test("handoff identity는 approval, Contract, Context digest에 결합된다", () => {
   const approved = authorization();
-  const contract = createPlanImplementContract(approved, canonicalPlanArtifact());
+  const contract = createPlanImplementContract(approved, canonicalPlanArtifact(), requirementSnapshot);
   const sourceArtifact = {
     name: "plan-authorize-issue-83-plan-34727609462-attempt-2-approval-5649698571-run-34728260819-attempt-1",
     id: 10309140730,
