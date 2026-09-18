@@ -70,6 +70,7 @@ const readyPlan = {
       ".github/workflows/plan.yml",
       "test/human-status.test.ts",
     ],
+    contextPaths: ["src/self-improvement/implement-contract.ts"],
     requiredChanges: [
       "6개 HumanStatus의 현재 상황과 다음 행동을 한국어로 반환한다",
       "PLAN 출력에 사람용 상태 요약을 연결한다",
@@ -114,6 +115,7 @@ test("canonical PLAN.json wrapper와 ready scope를 deterministic ImplementContr
   assert.equal(contract.approvedPlan.runAttempt, 2);
   assert.equal(contract.approval.commentId, 5649698571);
   assert.equal(contract.scope.maxFilesChanged, 3);
+  assert.deepEqual(contract.scope.contextPaths, ["src/self-improvement/implement-contract.ts"]);
   assert.equal(contract.scope.maxContextBytes, PLAN_IMPLEMENT_MAX_CONTEXT_BYTES);
   assert.equal(contract.scope.maxPatchBytes, PLAN_IMPLEMENT_MAX_PATCH_BYTES);
   assert.deepEqual(contract.scope.requiredChanges, readyPlan.implementationScope.requiredChanges);
@@ -187,6 +189,16 @@ test("ready=false, blocking question, unsafe scope와 비허용 검증 명령은
       canonicalPlanArtifact({
         ...readyPlan,
         implementationScope: { ...readyPlan.implementationScope, allowedPaths: ["../secret"] },
+      }),
+    ),
+    /unsafe approved PLAN path/,
+  );
+  assert.throws(
+    () => createPlanImplementContract(
+      approved,
+      canonicalPlanArtifact({
+        ...readyPlan,
+        implementationScope: { ...readyPlan.implementationScope, contextPaths: ["../secret"] },
       }),
     ),
     /unsafe approved PLAN path/,
