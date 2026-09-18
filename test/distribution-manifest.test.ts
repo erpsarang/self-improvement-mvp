@@ -239,6 +239,55 @@ test('unsafe source and target paths, duplicate mappings, and prefix collisions 
   ] }));
 });
 
+test('Unicode line separators cannot hide forbidden characters or dot segments', () => {
+  const payload = fixedPayload();
+  for (const separator of ['\u2028', '\u2029']) {
+    assert.doesNotThrow(() => assertSafeRelativePath(`safe${separator}/file.txt`));
+    for (const suffix of ['/../../escape.txt', '/../escape.txt', '/./file.txt', '/..', '/.', '/bad:part', '/bad\\part', '/bad\u0000part', '/bad part', '/bad\npart']) {
+      const path = `safe${separator}${suffix}`;
+      assert.throws(() => assertSafeRelativePath(path), /path has an invalid value/);
+      for (const field of ['sourcePath', 'targetPath'] as const) {
+        const entries = [{ ...payload.entries[0]!, [field]: path }];
+        assert.throws(() => createDistributionManifest({ ...payload, entries }), /path has an invalid value/);
+        const trusted = {
+          schemaVersion: 1, sourceRepository: REPOSITORY,
+          entries: entries.map(({ sourcePath, targetPath, classification }) => ({ sourcePath, targetPath, classification })),
+        };
+        assert.throws(() => assertTrustedOwnershipList(trusted), /path has an invalid value/);
+        for (const schema of [distributionManifestSchema, trustedOwnershipListSchema]) {
+          assert.equal(new RegExp(schema.properties.entries.items.properties[field].pattern, 'u').test(path), false);
+        }
+      }
+    }
+  }
+});
+
+test('verifier rejects Unicode-hidden traversal even with matching trusted inventory and digest', () => {
+  withFixture(fixture => {
+    for (const separator of ['\u2028', '\u2029']) {
+      for (const field of ['sourcePath', 'targetPath'] as const) {
+        const payload = {
+          ...fixture.payload,
+          entries: fixture.payload.entries.map(entry => ({ ...entry, [field]: `safe${separator}/../../${entry.sourcePath}` })),
+        };
+        // Build the hostile input independently, bypassing the validating constructor.
+        const manifestDigest = createHash('sha256').update(JSON.stringify({
+          schemaVersion: payload.schemaVersion, releaseLine: payload.releaseLine,
+          sourceRepository: payload.sourceRepository, sourceSha: payload.sourceSha, entries: payload.entries,
+        }), 'utf8').digest('hex');
+        const trusted = {
+          ...fixture.trusted,
+          entries: payload.entries.map(({ sourcePath, targetPath, classification }) => ({ sourcePath, targetPath, classification })),
+        };
+        assert.throws(() => verifyDistributionManifest({
+          manifest: { ...payload, manifestDigest }, trustedOwnershipList: trusted,
+          sourceRoot: fixture.root, expectedSourceRepository: REPOSITORY,
+        }), /path has an invalid value/);
+      }
+    }
+  });
+});
+
 test('verifies exact binary and empty bytes without changing the checkout or Git metadata', () => {
   withFixture(fixture => {
     const before = snapshot(fixture.root);

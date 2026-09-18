@@ -31,7 +31,8 @@ export interface DistributionManifest extends DistributionManifestPayload {
   readonly manifestDigest: string;
 }
 
-const PATH_PATTERN = '^(?!/)(?!.*[\\\\:\\u0000-\\u0020\\u007f-\\u009f])(?!.*(?:^|/)[.]{1,2}(?:/|$))[^/]+(?:/[^/]+)*$';
+// Scan across Unicode line separators as well as ordinary path characters.
+const PATH_PATTERN = '^(?!/)(?![\\s\\S]*[\\\\:\\u0000-\\u0020\\u007f-\\u009f])(?![\\s\\S]*(?:^|/)[.]{1,2}(?:/|$))[^/]+(?:/[^/]+)*$';
 const REPOSITORY_PATTERN = '^\\S(?:[^\\u0000-\\u001f\\u007f-\\u009f]*\\S)?$';
 const RELEASE_LINE_PATTERN = '^v(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$';
 const SHA_PATTERN = '^(?:[0-9a-f]{40}|[0-9a-f]{64})$';
