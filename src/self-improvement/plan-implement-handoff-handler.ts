@@ -179,8 +179,20 @@ async function prepare(): Promise<void> {
   assertExactArtifact(exactPlan[0], authorization.plan.artifact, "approved PLAN");
   assertExactArtifact(exactProvenance[0], authorization.plan.provenanceArtifact, "approved PLAN provenance");
 
+  const requirementIssue = await api<any>(`/repos/${owner}/${repo}/issues/${authorization.requirement.issueNumber}`);
+  if (requirementIssue.pull_request || typeof requirementIssue.title !== "string" || !requirementIssue.title.trim()) {
+    throw new Error("approved Requirement Issue snapshot is invalid");
+  }
+  if (requirementIssue.body !== null && typeof requirementIssue.body !== "string") {
+    throw new Error("approved Requirement Issue body is invalid");
+  }
+  const requirementSnapshot = {
+    title: requirementIssue.title,
+    body: requirementIssue.body ?? null,
+  };
+
   const planJson = await readArtifactJson(authorization.plan.artifact.id, "PLAN.json");
-  const contract = createPlanImplementContract(authorization, planJson);
+  const contract = createPlanImplementContract(authorization, planJson, requirementSnapshot);
   verifyImplementContract(contract);
 
   const sourceRecord: SourceRecord = { authorization, sourceArtifact };
