@@ -40,6 +40,7 @@ test("PLAN prompt keeps questions blocking-only and preserves fail-closed ready 
       implementationScope: {
         ready: true,
         allowedPaths: [context.files[0]!.path],
+        contextPaths: [],
         requiredChanges: ["집계 로직을 추가한다"],
         forbiddenChanges: [],
         validationCommands: ["npm test"],

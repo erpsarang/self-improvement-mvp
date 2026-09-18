@@ -111,15 +111,19 @@ export function createImplementContextPack(
   if (observedBaseSha !== contract.baseSha) throw new Error("Context Pack base SHA mismatch");
 
   const root = assertTargetRoot(targetRoot);
-  const allowedPaths = [...contract.scope.allowedPaths].sort((a, b) => a.localeCompare(b));
-  if (allowedPaths.length === 0 || new Set(allowedPaths).size !== allowedPaths.length) {
-    throw new Error("Context Pack requires unique allowedPaths");
+  const readOnlyContextPaths = new Set(contract.scope.contextPaths);
+  const contextPaths = [...new Set([...contract.scope.allowedPaths, ...contract.scope.contextPaths])].sort();
+  if (contextPaths.length === 0) {
+    throw new Error("Context Pack requires at least one allowed or context path");
   }
 
   const files: ContextFile[] = [];
   let totalContextBytes = 0;
-  for (const path of allowedPaths) {
+  for (const path of contextPaths) {
     const file = readContextFile(root, path);
+    if (readOnlyContextPaths.has(path) && file.state === "missing") {
+      throw new Error(`read-only contextPath must exist at frozen base SHA: ${path}`);
+    }
     totalContextBytes += file.byteLength;
     if (totalContextBytes > contract.scope.maxContextBytes) throw new Error("Context Pack exceeds maxContextBytes");
     files.push(file);
@@ -148,16 +152,18 @@ export function verifyImplementContextPack(pack: ImplementContextPack, contract:
     throw new Error("Context Pack contract identity mismatch");
   }
 
-  const expectedPaths = [...contract.scope.allowedPaths].sort((a, b) => a.localeCompare(b));
+  const expectedPaths = [...new Set([...contract.scope.allowedPaths, ...contract.scope.contextPaths])].sort();
   const actualPaths = pack.files.map(({ path }) => path);
   if (new Set(actualPaths).size !== actualPaths.length || JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
-    throw new Error("Context Pack files must exactly match allowedPaths");
+    throw new Error("Context Pack files must exactly match allowedPaths plus contextPaths");
   }
 
+  const readOnlyContextPaths = new Set(contract.scope.contextPaths);
   let total = 0;
   for (const file of pack.files) {
     if (file.state === "missing") {
       if (file.byteLength !== 0) throw new Error("missing Context Pack file must have zero bytes");
+      if (readOnlyContextPaths.has(file.path)) throw new Error(`read-only contextPath cannot be missing: ${file.path}`);
       continue;
     }
     const bytes = Buffer.from(file.content, "utf8");

@@ -29,6 +29,7 @@ export interface ApprovedPlanIdentity {
 
 export interface ImplementScope {
   readonly allowedPaths: readonly string[];
+  readonly contextPaths?: readonly string[];
   readonly requiredChanges: readonly string[];
   readonly forbiddenChanges: readonly string[];
   readonly validationCommands: readonly string[];
@@ -47,6 +48,7 @@ export interface ImplementContractPayload {
   readonly approval: ApprovedPlanIdentity["approval"];
   readonly scope: {
     readonly allowedPaths: readonly string[];
+    readonly contextPaths: readonly string[];
     readonly requiredChanges: readonly string[];
     readonly forbiddenChanges: readonly string[];
     readonly validationCommands: readonly string[];
@@ -76,17 +78,18 @@ function assertDigest(name: string, value: string): void {
   if (!SHA256.test(value)) throw new Error(`${name} must be a lowercase SHA-256 hex digest`);
 }
 
-function normalizePaths(paths: readonly string[]): string[] {
-  if (paths.length === 0) throw new Error("allowedPaths must not be empty");
+function normalizePaths(name: "allowedPaths" | "contextPaths", paths: readonly string[], allowEmpty: boolean): string[] {
+  if (!allowEmpty && paths.length === 0) throw new Error(`${name} must not be empty`);
   const normalized = paths.map((path) => {
-    assertNonempty("allowed path", path);
+    const label = name === "allowedPaths" ? "allowed path" : "context path";
+    assertNonempty(label, path);
     if (path.startsWith("/") || path.includes("\\") || path.split("/").some((segment) => segment === ".." || segment === "")) {
-      throw new Error(`unsafe allowed path: ${path}`);
+      throw new Error(`unsafe ${label}: ${path}`);
     }
     return path;
   });
-  if (new Set(normalized).size !== normalized.length) throw new Error("allowedPaths must be unique");
-  return [...normalized].sort((a, b) => a.localeCompare(b));
+  if (new Set(normalized).size !== normalized.length) throw new Error(`${name} must be unique`);
+  return [...normalized].sort();
 }
 
 function normalizeNonemptyList(name: string, values: readonly string[], allowEmpty = false): string[] {
@@ -124,7 +127,8 @@ export function implementContractArtifactName(identity: ApprovedPlanIdentity): s
 
 export function createImplementContract(identity: ApprovedPlanIdentity, scope: ImplementScope): ImplementContract {
   validateApprovedPlanIdentity(identity);
-  const allowedPaths = normalizePaths(scope.allowedPaths);
+  const allowedPaths = normalizePaths("allowedPaths", scope.allowedPaths, false);
+  const contextPaths = normalizePaths("contextPaths", scope.contextPaths ?? [], true);
   const requiredChanges = normalizeNonemptyList("requiredChanges", scope.requiredChanges);
   const forbiddenChanges = normalizeNonemptyList("forbiddenChanges", scope.forbiddenChanges, true);
   const validationCommands = normalizeNonemptyList("validationCommands", scope.validationCommands);
@@ -148,6 +152,7 @@ export function createImplementContract(identity: ApprovedPlanIdentity, scope: I
     approval: { ...identity.approval },
     scope: {
       allowedPaths,
+      contextPaths,
       requiredChanges,
       forbiddenChanges,
       validationCommands,
