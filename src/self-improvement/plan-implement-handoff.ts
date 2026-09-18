@@ -3,6 +3,7 @@ import {
   createImplementContract,
   validateApprovedPlanIdentity,
   type ImplementContract,
+  type ApprovedRequirementSnapshot,
 } from "./implement-contract.js";
 import {
   toApprovedPlanIdentity,
@@ -257,6 +258,7 @@ function extractCanonicalPlanDocument(
 export function createPlanImplementContract(
   authorization: PlanAuthorizeArtifact,
   planValue: unknown,
+  requirementSnapshot: ApprovedRequirementSnapshot,
 ): ImplementContract {
   const trustedAuthorization = verifyPlanAuthorizeArtifact(authorization);
   const plan = extractCanonicalPlanDocument(planValue, trustedAuthorization);
@@ -270,7 +272,7 @@ export function createPlanImplementContract(
     maxFilesChanged: scope.allowedPaths.length,
     maxContextBytes: PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
     maxPatchBytes: PLAN_IMPLEMENT_MAX_PATCH_BYTES,
-  });
+  }, requirementSnapshot);
 }
 
 export function planImplementHandoffArtifactName(authorization: PlanAuthorizeArtifact): string {

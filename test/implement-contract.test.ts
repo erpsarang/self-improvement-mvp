@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createImplementContract,
   implementContractArtifactName,
+  requirementSnapshotDigest,
   verifyImplementContract,
   type ApprovedPlanIdentity,
 } from "../src/self-improvement/implement-contract.js";
@@ -18,6 +19,16 @@ const identity: ApprovedPlanIdentity = {
     provenanceArtifact: { name: "plan-issue-62-1234-attempt-2-provenance", id: 78, digest: "d".repeat(64) },
   },
   approval: { commentId: 9001, approverUserId: 8370921 },
+};
+
+
+const requirementSnapshot = {
+  title: "정확한 Requirement snapshot",
+  body: "approved body",
+} as const;
+const snapshotIdentity: ApprovedPlanIdentity = {
+  ...identity,
+  requirement: { ...identity.requirement, digest: requirementSnapshotDigest(requirementSnapshot) },
 };
 
 const scope = {
@@ -43,6 +54,27 @@ test("approved PLAN identity와 frozen SHA를 deterministic IMPLEMENT contract�
   assert.equal(first.scope.maxContextBytes, 120000);
   assert.match(first.contractDigest, /^[0-9a-f]{64}$/);
   assert.doesNotThrow(() => verifyImplementContract(first));
+});
+
+
+test("approved Requirement snapshot은 digest와 contract identity에 결합된다", () => {
+  const first = createImplementContract(snapshotIdentity, scope, requirementSnapshot);
+  const second = createImplementContract(snapshotIdentity, scope, requirementSnapshot);
+  assert.deepEqual(first, second);
+  assert.deepEqual(first.requirementSnapshot, requirementSnapshot);
+  assert.doesNotThrow(() => verifyImplementContract(first));
+
+  const changed = createImplementContract(
+    { ...snapshotIdentity, requirement: { ...snapshotIdentity.requirement, digest: requirementSnapshotDigest({ ...requirementSnapshot, body: "changed" }) } },
+    scope,
+    { ...requirementSnapshot, body: "changed" },
+  );
+  assert.notEqual(first.contractDigest, changed.contractDigest);
+
+  assert.throws(
+    () => createImplementContract(snapshotIdentity, scope, { ...requirementSnapshot, body: "tampered" }),
+    /requirementSnapshot digest mismatch; re-plan required/,
+  );
 });
 
 test("PLAN identity 또는 scope가 바뀌면 contract digest가 달라진다", () => {

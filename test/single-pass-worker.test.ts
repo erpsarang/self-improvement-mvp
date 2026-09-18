@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createImplementContextPack } from "../src/self-improvement/context-pack.js";
-import { createImplementContract, type ApprovedPlanIdentity } from "../src/self-improvement/implement-contract.js";
+import { createImplementContract, requirementSnapshotDigest, type ApprovedPlanIdentity } from "../src/self-improvement/implement-contract.js";
 import {
   createCandidateChangeSet,
   createSinglePassPrompt,
@@ -13,8 +13,13 @@ import {
   type CandidateChangeSet,
 } from "../src/self-improvement/single-pass-worker.js";
 
+const requirementSnapshot = {
+  title: "canonical inventory exact 목록으로 bundle을 생성한다",
+  body: "이 Requirement는 Worker가 읽을 승인된 업무 문맥이다.",
+} as const;
+
 const identity: ApprovedPlanIdentity = {
-  requirement: { issueNumber: 72, digest: "a".repeat(64) },
+  requirement: { issueNumber: 72, digest: requirementSnapshotDigest(requirementSnapshot) },
   repository: "erpsarang/self-improvement-mvp",
   targetSha: "b".repeat(40),
   plan: {
@@ -36,7 +41,7 @@ function makeContract(overrides: Partial<{ maxFilesChanged: number; maxPatchByte
     maxFilesChanged: overrides.maxFilesChanged ?? 2,
     maxContextBytes: 4096,
     maxPatchBytes: overrides.maxPatchBytes ?? 4096,
-  });
+  }, requirementSnapshot);
 }
 
 function fixture() {
@@ -58,6 +63,9 @@ test("Contract + Context Pack만으로 single-pass prompt와 bounded candidate�
     assert.match(prompt, /한 번의 후보 변경안만/);
     assert.match(prompt, /repository, GitHub, 파일시스템, 네트워크를 탐색/);
     assert.match(prompt, /contextPaths는 읽기 전용/);
+    assert.match(prompt, /requirementSnapshot/);
+    assert.match(prompt, /write authority는 오직 CONTRACT\.scope\.allowedPaths/);
+    assert.match(prompt, /canonical inventory exact 목록/);
     assert.match(prompt, new RegExp(contract.contractDigest));
     assert.match(prompt, new RegExp(contextPack.contextDigest));
 
