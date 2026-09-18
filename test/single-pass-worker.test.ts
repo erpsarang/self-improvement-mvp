@@ -29,6 +29,7 @@ const identity: ApprovedPlanIdentity = {
 function makeContract(overrides: Partial<{ maxFilesChanged: number; maxPatchBytes: number }> = {}) {
   return createImplementContract(identity, {
     allowedPaths: ["src/a.ts", "src/new.ts"],
+    contextPaths: ["src/reference.ts"],
     requiredChanges: ["기존 파일을 수정하고 필요한 신규 파일만 생성한다"],
     forbiddenChanges: ["repository-wide 탐색 금지", "Auto Merge 금지"],
     validationCommands: ["npm test"],
@@ -42,6 +43,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "single-pass-worker-"));
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src/a.ts"), "export const a = 1;\n", "utf8");
+  writeFileSync(join(root, "src/reference.ts"), "export const reference = 1;\n", "utf8");
   const contract = makeContract();
   const contextPack = createImplementContextPack(contract, root, identity.targetSha);
   const present = contextPack.files.find(({ path }) => path === "src/a.ts");
@@ -55,6 +57,7 @@ test("Contract + Context Pack만으로 single-pass prompt와 bounded candidate�
     const prompt = createSinglePassPrompt(contract, contextPack);
     assert.match(prompt, /한 번의 후보 변경안만/);
     assert.match(prompt, /repository, GitHub, 파일시스템, 네트워크를 탐색/);
+    assert.match(prompt, /contextPaths는 읽기 전용/);
     assert.match(prompt, new RegExp(contract.contractDigest));
     assert.match(prompt, new RegExp(contextPack.contextDigest));
 
@@ -76,12 +79,19 @@ test("Contract + Context Pack만으로 single-pass prompt와 bounded candidate�
   }
 });
 
-test("allowedPaths 밖 변경과 duplicate path를 거부한다", () => {
+test("allowedPaths 밖 변경, context-only 변경과 duplicate path를 거부한다", () => {
   const { root, contract, contextPack, present } = fixture();
   try {
     assert.throws(() => createCandidateChangeSet(contract, contextPack, {
       summary: "범위 밖",
       changes: [{ path: "secret.txt", operation: "create", baseContentDigest: null, content: "x" }],
+    }), /outside allowedPaths/);
+
+    const reference = contextPack.files.find(({ path }) => path === "src/reference.ts");
+    if (!reference || reference.state !== "present") throw new Error("reference context missing");
+    assert.throws(() => createCandidateChangeSet(contract, contextPack, {
+      summary: "읽기 전용 문맥 수정 시도",
+      changes: [{ path: "src/reference.ts", operation: "modify", baseContentDigest: reference.contentDigest, content: "changed\n" }],
     }), /outside allowedPaths/);
 
     assert.throws(() => createCandidateChangeSet(contract, contextPack, {
@@ -123,6 +133,7 @@ test("파일 수와 output byte budget을 Worker 밖 Trusted validator가 강제
   try {
     mkdirSync(join(root, "src"));
     writeFileSync(join(root, "src/a.ts"), "a\n", "utf8");
+    writeFileSync(join(root, "src/reference.ts"), "ref\n", "utf8");
 
     const oneFileContract = makeContract({ maxFilesChanged: 1 });
     const context = createImplementContextPack(oneFileContract, root, identity.targetSha);
