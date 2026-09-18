@@ -436,10 +436,10 @@ function validateImplementationScope(value: unknown, target: string, context: Pl
   if (allowedPaths.length > 8 || contextPaths.length > 8 || requiredChanges.length > 8 || forbiddenChanges.length > 8 || validationCommands.length > 2) throw new Error("implementationScope exceeds budget");
   if (new Set(allowedPaths).size !== allowedPaths.length) throw new Error("Duplicate implementation scope path");
   if (new Set(contextPaths).size !== contextPaths.length) throw new Error("Duplicate context scope path");
-  const contextPaths = new Set(context.files.map((file) => file.path));
+  const planContextPaths = new Set(context.files.map((file) => file.path));
   for (const path of allowedPaths) {
     assertSafePlanPath(path);
-    if (existsSync(join(target, path)) && !contextPaths.has(path)) {
+    if (existsSync(join(target, path)) && !planContextPaths.has(path)) {
       throw new Error(`Existing implementation scope path is outside bounded PLAN context: ${path}`);
     }
   }
