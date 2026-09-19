@@ -30,13 +30,17 @@ test("source run / default SHA / artifact identity를 exact하게 고정한다",
   assert.match(workflow, /\^sha256:\[0-9a-f\]\{64\}\$/);
 });
 
-test("producer는 AI 호출, workflow dispatch, repository write를 수행하지 않는다", () => {
+test("source producer는 AI/repository write를 하지 않고 별도 job이 LEARN만 dispatch한다", () => {
   assert.doesNotMatch(workflow, /openai\/codex-action/);
-  assert.doesNotMatch(workflow, /createWorkflowDispatch/);
   assert.doesNotMatch(workflow, /git push/);
   assert.doesNotMatch(workflow, /pulls\.create|issues\.create|issues\.createComment/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /\n  dispatch_learn:\n/);
+  assert.match(workflow, /needs: source/);
+  assert.match(workflow, /actions: write/);
+  assert.match(workflow, /workflow_id: 'learn\.yml'/);
+  assert.doesNotMatch(workflow, /workflow_id: 'plan\.yml'|workflow_id: 'implement\.yml'/);
 });
 
 test("Completed Cycle과 LEARN Input Pack을 같은 successful source run artifact로 업로드한다", () => {
