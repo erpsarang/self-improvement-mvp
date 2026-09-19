@@ -76,15 +76,27 @@ jobs:
             const sourceRunId = positive('source_run_id', process.env.SOURCE_RUN_ID);
             const sourceRunAttempt = positive('source_run_attempt', process.env.SOURCE_RUN_ATTEMPT);
 
-            const exactSuccessfulRun = async (runId, attempt, label) => {
-              const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
-              if (run.run_attempt !== attempt || run.status !== 'completed' || run.conclusion !== 'success') {
-                throw new Error(`${label} must be exact completed success: actual attempt=${run.run_attempt}, status=${run.status}, conclusion=${run.conclusion}`);
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const exactSuccessfulRun = async (runId, attempt, label, expectedPath) => {
+              let run;
+              for (let poll = 0; poll < 12; poll += 1) {
+                ({ data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId }));
+                if (run.run_attempt !== attempt) {
+                  throw new Error(`${label} attempt mismatch: expected=${attempt}, actual=${run.run_attempt}`);
+                }
+                if (run.status === 'completed') break;
+                await sleep(5000);
+              }
+              if (!run || run.status !== 'completed' || run.conclusion !== 'success') {
+                throw new Error(`${label} must reach exact completed success within bounded wait: status=${run?.status}, conclusion=${run?.conclusion}`);
+              }
+              if (run.path !== expectedPath || run.head_branch !== context.payload.repository.default_branch) {
+                throw new Error(`${label} workflow/default-branch identity mismatch`);
               }
               return run;
             };
-            await exactSuccessfulRun(learnRunId, learnRunAttempt, 'LEARN run');
-            await exactSuccessfulRun(sourceRunId, sourceRunAttempt, 'source run');
+            await exactSuccessfulRun(learnRunId, learnRunAttempt, 'LEARN run', '.github/workflows/learn.yml');
+            await exactSuccessfulRun(sourceRunId, sourceRunAttempt, 'source run', '.github/workflows/learn-source.yml');
 
             const exactArtifact = async (runId, name, label) => {
               const { data } = await github.rest.actions.listWorkflowRunArtifacts({ ...context.repo, run_id: runId, per_page: 100 });
