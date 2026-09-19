@@ -106,7 +106,7 @@ jobs:
         timeout-minutes: 3
         uses: openai/codex-action@v1
         with:
-          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           working-directory: ${{ runner.temp }}/plan-neutral
