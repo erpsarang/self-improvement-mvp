@@ -141,7 +141,7 @@ jobs:
         id: codex
         uses: openai/codex-action@v1
         with:
-          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
           permission-profile: ":workspace"
           prompt-file: codex-prompt.txt
           effort: medium
