@@ -61,6 +61,8 @@ Bounded Untrusted IMPLEMENT
 6. **최종 Merge는 항상 Human-only다.**
 7. **모든 반복은 bounded이며, 반복 실패 시 STOP한다.**
 8. **Framework 결함을 Framework가 재귀적으로 무한 수정하지 않는다.**
+9. **AI 비용도 Trust Boundary의 일부다. 동일 입력의 성공 AI 작업을 불필요하게 재호출하지 않는다.**
+10. **Framework와 App은 OpenAI Project/API Key를 분리해 사용량·비용 provenance를 구분한다.**
 
 Auto Merge는 설계 목표가 아니다.
 
@@ -100,7 +102,33 @@ Self-Improvement가 직접 할 수 없는 일:
 
 즉 **Self-Improvement = autonomous self-modification이 아니라 evidence-grounded improvement proposal**이다.
 
-## 4. STOP은 실패가 아니라 정상 상태다
+## 4. AI 비용 경계
+
+AI 호출 비용은 운영 부가 정보가 아니라 Framework가 통제해야 하는 실행 자원이다.
+
+기본 배치는 다음과 같다.
+
+```text
+self-improvement-mvp
+  → OpenAI Project: framework-dev
+  → GitHub Secret: FRAMEWORK_CODEX_API_KEY
+
+dogfood / 실제 App repo
+  → App별 OpenAI Project
+  → GitHub Secret: APP_CODEX_API_KEY
+```
+
+원칙:
+
+- Framework와 App이 동일 API Key를 공유하지 않는다.
+- 가능하면 Project-scoped API Key 또는 해당 Project의 service account key를 사용한다.
+- 동일 Requirement/Handoff/Context/Prompt/실행정책의 성공 AI call은 artifact 재사용을 우선한다.
+- retry/repair는 단계별 bounded budget을 가진다.
+- Usage Dashboard의 Project budget은 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
+- Framework 내부 Cost Gate가 호출 횟수·token ledger·중복 호출을 별도로 통제한다.
+- 비용 경계 위반 또는 정해진 budget 초과는 fail-open하지 않고 STOP/ON_HOLD 후보가 된다.
+
+## 5. STOP은 실패가 아니라 정상 상태다
 
 다음 조건에서는 자동화를 더 진행하지 않는다.
 
@@ -118,7 +146,7 @@ OR 정해진 비용·시간 budget 초과
 
 Framework의 품질은 모든 문제를 자동으로 해결하는 능력이 아니라, **언제 자동화를 멈춰야 하는지 정확히 아는 능력**도 포함한다.
 
-## 5. 계층 구조
+## 6. 계층 구조
 
 ```text
 AI Development Framework
@@ -146,7 +174,7 @@ AI Development Framework
 
 GRAPH와 LOOP는 위 Trust Boundary를 우회하는 별도 authority가 아니다. 실행 순서와 bounded repetition을 표현하는 메커니즘일 뿐이다.
 
-## 6. 우리가 만들지 않는 것
+## 7. 우리가 만들지 않는 것
 
 ```text
 ✗ 완전자율 개발 AI
@@ -158,11 +186,11 @@ GRAPH와 LOOP는 위 Trust Boundary를 우회하는 별도 authority가 아니�
 ✗ 모든 예외를 Framework가 스스로 해결하는 시스템
 ```
 
-## 7. 한 문장 정의
+## 8. 한 문장 정의
 
 > **AI Development Framework는 사람이 통제권을 유지하면서, untrusted AI가 수행한 개발 작업을 trusted evidence와 검증 절차를 통해 안전한 software change로 바꾸는 프레임워크다.**
 
-## 8. Canonical 변경 규칙
+## 9. Canonical 변경 규칙
 
 이 문서는 프로젝트의 **상위 설계 authority**다.
 

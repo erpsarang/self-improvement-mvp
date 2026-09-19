@@ -125,13 +125,14 @@ v0.2는 신뢰 가능한 **수직 개발 루프**를 증명한 MVP입니다. 다
 - durable / append-only 장기 provenance store
 - 운영 UI와 관측성 개선
 - 비용·시간 최적화
+- Framework/App별 OpenAI Project·API Key 분리와 AI call dedup / budget guardrail
 
 Auto Merge는 향후 목표가 아니며, 최종 Merge는 계속 Human-only입니다.
 
 ## 문서
 
 - [`docs/usage.md`](docs/usage.md) — v0.2 실제 사용 흐름
-- [`docs/architecture.md`](docs/architecture.md) — Trust Boundary와 provenance 구조
+- [`docs/architecture.md`](docs/architecture.md) — Trust Boundary, provenance, 비용 경계 구조
 - [`docs/roadmap.md`](docs/roadmap.md) — 현재 검증 위치와 다음 확장 방향
 - [`docs/phase-5-review.md`](docs/phase-5-review.md) — Semantic REVIEW 설계
 - [`docs/phase-6-orchestrator.md`](docs/phase-6-orchestrator.md) — Embedded Orchestrator 설계
