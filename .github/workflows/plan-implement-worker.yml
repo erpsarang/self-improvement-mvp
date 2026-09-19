@@ -154,7 +154,7 @@ jobs:
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
         with:
-          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           working-directory: ${{ runner.temp }}/worker-neutral
@@ -315,7 +315,7 @@ jobs:
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
         with:
-          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           working-directory: ${{ runner.temp }}/worker-neutral-repair-1
@@ -474,7 +474,7 @@ jobs:
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
         with:
-          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           working-directory: ${{ runner.temp }}/worker-neutral-repair-2
