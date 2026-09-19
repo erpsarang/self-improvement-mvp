@@ -11,6 +11,7 @@ import {
   type PlanContextPack,
   type PlanContextPackPayload,
 } from "./planner.js";
+import { needsHumanOutputPlanContext } from "./plan-context-policy.js";
 
 const HUMAN_OUTPUT_SURFACE_MAX_FILES = 2;
 const HUMAN_OUTPUT_SURFACE_MAX_BYTES = 6_000;
@@ -29,12 +30,6 @@ const LIFECYCLE_SUPPORT_FILES = [
   { path: "src/self-improvement/implement-contract.ts", focus: "ImplementContract" },
   { path: "package.json", focus: "scripts" },
 ] as const;
-
-function needsHumanOutputSurface(requirement: string): boolean {
-  const lower = requirement.toLowerCase();
-  if (["사람", "사용자", "표시", "요약", "다음 행동", "문구", "상태"].some((signal) => lower.includes(signal))) return true;
-  return /\b(issue|pull request|pr|comment|status|summary|human|user)\b/.test(lower);
-}
 
 function runtimeSurfacePath(path: string): boolean {
   const lower = path.toLowerCase();
@@ -327,7 +322,7 @@ export function augmentPlanContextWithHumanOutputSurfaces(
   context: PlanContextPack,
 ): PlanContextPack {
   verifyPlanContextPack(context);
-  if (!needsHumanOutputSurface(requirement)) return context;
+  if (!needsHumanOutputPlanContext(requirement)) return context;
 
   const candidates = uniqueCandidates([
     lifecycleCandidates(requirement, target),
