@@ -1,7 +1,16 @@
 export function needsHumanOutputPlanContext(requirement: string): boolean {
   const lower = requirement.toLowerCase();
-  if (["사람", "사용자", "표시", "다음 행동", "문구"].some((signal) => lower.includes(signal))) return true;
-  return /\b(issue|pull request|pr|comment|human|user)\b/.test(lower);
+
+  const koreanOutputIntent =
+    /(표시|보여주|안내|문구|메시지|댓글)/.test(requirement);
+  const koreanCommentIntent =
+    /(?:이슈|issue|pr|pull request).{0,30}(?:코멘트|댓글)|(?:코멘트|댓글).{0,30}(?:남기|작성|게시|등록)/i.test(requirement);
+  const englishOutputIntent =
+    /\b(user-facing|human-facing|display|show|render|message|next action)\b/.test(lower);
+  const englishCommentIntent =
+    /\b(issue|pull request|pr)\b.{0,30}\bcomment\b|\b(add|post|write|publish)\b.{0,20}\bcomment\b/.test(lower);
+
+  return koreanOutputIntent || koreanCommentIntent || englishOutputIntent || englishCommentIntent;
 }
 
 export function planImpactTestScopeGuidance(): string {
