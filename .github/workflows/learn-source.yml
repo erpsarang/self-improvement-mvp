@@ -233,3 +233,36 @@ jobs:
           name: ${{ steps.build.outputs.learn_input_artifact_name }}
           path: ${{ runner.temp }}/learn-source/output/learn-input/learn-input-pack.json
           if-no-files-found: error
+
+  dispatch_learn:
+    name: completed source boundary → Read-only AI LEARN dispatch
+    needs: source
+    if: needs.source.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Read-only AI LEARN 자동 시작
+        uses: actions/github-script@v7
+        env:
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          COMPLETED_CYCLE_ARTIFACT_NAME: ${{ needs.source.outputs.completed_cycle_artifact_name }}
+          LEARN_INPUT_ARTIFACT_NAME: ${{ needs.source.outputs.learn_input_artifact_name }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'learn.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                source_run_id: process.env.SOURCE_RUN_ID,
+                source_run_attempt: process.env.SOURCE_RUN_ATTEMPT,
+                completed_cycle_artifact_name: process.env.COMPLETED_CYCLE_ARTIFACT_NAME,
+                learn_input_artifact_name: process.env.LEARN_INPUT_ARTIFACT_NAME,
+              },
+            });
+            core.info('Read-only AI LEARN을 자동 dispatch했습니다');

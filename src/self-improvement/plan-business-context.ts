@@ -240,16 +240,19 @@ function businessRelationCandidates(
   requirement: string,
   target: string,
   contextPaths: ReadonlySet<string>,
+  maxFiles: number,
   maxFileBytes: number,
 ): PlanContextFile[] {
   const terms = requirementTerms(requirement);
-  const tests = walkFiles(target, "test")
+  const allTests = walkFiles(target, "test")
     .filter(isTestLike)
     .map((path) => {
       const text = decodeText(join(target, path));
       return text === null ? null : { path, text, score: relevanceScore(path, text, terms) };
     })
-    .filter((entry): entry is { path: string; text: string; score: number } => entry !== null && entry.score > 0)
+    .filter((entry): entry is { path: string; text: string; score: number } => entry !== null);
+  const tests = allTests
+    .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   if (tests.length === 0) return [];
 
@@ -263,6 +266,45 @@ function businessRelationCandidates(
   })));
   if (relations.length === 0) return [];
 
+  const expandOneHop = (
+    sourcePath: string,
+    primaryTest: { path: string; text: string; score: number },
+  ): PlanContextFile[] => {
+    const selected: PlanContextFile[] = [];
+    const selectedPaths = new Set<string>();
+    const addPath = (path: string, evidenceTerms: readonly string[]): void => {
+      if (selected.length >= maxFiles || selectedPaths.has(path)) return;
+      const file = contextFile(target, path, evidenceTerms, maxFileBytes);
+      if (!file) return;
+      selected.push(file);
+      selectedPaths.add(path);
+    };
+
+    addPath(sourcePath, []);
+    addPath(primaryTest.path, terms);
+    if (selected.length >= maxFiles || isFrameworkSource(sourcePath)) return selected;
+
+    const sourceText = decodeText(join(target, sourcePath));
+    if (sourceText === null) return selected;
+    const dependencies = importedRuntimeSources(sourcePath, sourceText, sourcePaths)
+      .filter((path) => path !== sourcePath && !isFrameworkSource(path));
+
+    for (const dependency of dependencies) {
+      if (selected.length >= maxFiles) break;
+      addPath(dependency, []);
+      if (selected.length >= maxFiles) break;
+
+      const directTests = allTests
+        .filter((test) => importedRuntimeSources(test.path, test.text, sourcePaths).includes(dependency))
+        .sort((a, b) =>
+          sourceAffinity(b.path, dependency) - sourceAffinity(a.path, dependency)
+          || b.score - a.score
+          || a.path.localeCompare(b.path));
+      if (directTests[0]) addPath(directTests[0].path, terms);
+    }
+    return selected;
+  };
+
   const runtimeHints = requirementRuntimePathHints(requirement, sourcePaths, contextPaths);
   const hintedSource = runtimeHints.find((path) => relations.some((relation) => relation.sourcePath === path));
   if (hintedSource) {
@@ -274,9 +316,7 @@ function businessRelationCandidates(
         || a.sourceRank - b.sourceRank
         || a.test.path.localeCompare(b.test.path));
     const best = hintedRelations[0]!;
-    const source = contextFile(target, hintedSource, [], maxFileBytes);
-    const test = contextFile(target, best.test.path, terms, maxFileBytes);
-    return source && test ? [source, test] : [];
+    return expandOneHop(hintedSource, best.test);
   }
   if (runtimeHints.length > 0) return [];
 
@@ -290,9 +330,7 @@ function businessRelationCandidates(
     || a.sourcePath.localeCompare(b.sourcePath));
   const best = pool[0]!;
 
-  const source = contextFile(target, best.sourcePath, [], maxFileBytes);
-  const test = contextFile(target, best.test.path, terms, maxFileBytes);
-  return source && test ? [source, test] : [];
+  return expandOneHop(best.sourcePath, best.test);
 }
 
 export function augmentPlanContextWithBusinessRelations(
@@ -310,7 +348,7 @@ export function augmentPlanContextWithBusinessRelations(
   }
 
   const contextPaths = new Set(context.files.map((file) => file.path));
-  const candidates = businessRelationCandidates(requirement, target, contextPaths, maxFileBytes).slice(0, maxFiles);
+  const candidates = businessRelationCandidates(requirement, target, contextPaths, maxFiles, maxFileBytes).slice(0, maxFiles);
   if (candidates.length < 2) return context;
 
   const candidatePaths = new Set(candidates.map((file) => file.path));

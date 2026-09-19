@@ -28,12 +28,14 @@ test("AI Learner는 neutral workspace의 exact Input Pack만 보고 read-only로
   assert.doesNotMatch(workflow, /permissions:\s*\n\s*(?:issues|pull-requests|workflows|checks|statuses):\s*write/);
 });
 
-test("LEARN workflow는 AI output을 바로 authority로 쓰지 않고 trusted finalize 후 artifact만 저장한다", () => {
+test("LEARN workflow는 trusted finalize 뒤 Candidate만 dispatch하고 authority를 확장하지 않는다", () => {
   assert.match(workflow, /untrusted Learner output 저장/);
   assert.match(workflow, /evidence grounding 검증 및 LEARN report finalize/);
   assert.match(workflow, /validated untrusted LEARN report 저장/);
+  assert.match(workflow, /\n  dispatch_candidate:\n/);
+  assert.match(workflow, /workflow_id: 'improvement-candidate\.yml'/);
+  assert.doesNotMatch(workflow, /workflow_id: 'plan\.yml'|workflow_id: 'implement\.yml'/);
   assert.doesNotMatch(workflow, /issues\.create/);
   assert.doesNotMatch(workflow, /pulls\.create/);
-  assert.doesNotMatch(workflow, /createWorkflowDispatch/);
-  assert.doesNotMatch(workflow, /mergePullRequest/);
+  assert.doesNotMatch(workflow, /mergePullRequest|pulls\.merge|enablePullRequestAutoMerge/);
 });

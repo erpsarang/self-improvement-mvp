@@ -77,13 +77,28 @@ jobs:
             }
             const runId = Number(runIdRaw);
             const runAttempt = Number(attemptRaw);
-            const { data: run } = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId,
-            });
-            if (run.run_attempt !== runAttempt || run.status !== 'completed' || run.conclusion !== 'success') {
-              core.setFailed(`source run must be exact completed success: actual attempt=${run.run_attempt}, status=${run.status}, conclusion=${run.conclusion}`);
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            let run;
+            for (let poll = 0; poll < 12; poll += 1) {
+              ({ data: run } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              }));
+              if (run.run_attempt !== runAttempt) {
+                core.setFailed(`source run attempt mismatch: expected=${runAttempt}, actual=${run.run_attempt}`);
+                return;
+              }
+              if (run.status === 'completed') break;
+              await sleep(5000);
+            }
+            if (!run || run.status !== 'completed' || run.conclusion !== 'success') {
+              core.setFailed(`source run must reach exact completed success within bounded wait: status=${run?.status}, conclusion=${run?.conclusion}`);
+              return;
+            }
+            if (run.path !== '.github/workflows/learn-source.yml' ||
+                run.head_branch !== context.payload.repository.default_branch) {
+              core.setFailed('source run workflow/default-branch identity mismatch');
               return;
             }
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
@@ -239,6 +254,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+    outputs:
+      report_artifact_name: ${{ steps.finalize.outputs.report_artifact_name }}
     steps:
       - name: trusted LEARN control-plane checkout
         uses: actions/checkout@v4
@@ -361,3 +378,40 @@ jobs:
           name: ${{ steps.finalize.outputs.report_artifact_name }}
           path: ${{ runner.temp }}/learn-final/learn-report.json
           if-no-files-found: error
+
+  dispatch_candidate:
+    name: validated LEARN boundary → Trusted Improvement Candidate dispatch
+    needs: [prepare, finalize]
+    if: needs.prepare.result == 'success' && needs.finalize.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Trusted Improvement Candidate 자동 시작
+        uses: actions/github-script@v7
+        env:
+          LEARN_RUN_ID: ${{ github.run_id }}
+          LEARN_RUN_ATTEMPT: ${{ github.run_attempt }}
+          LEARN_REPORT_ARTIFACT_NAME: ${{ needs.finalize.outputs.report_artifact_name }}
+          SOURCE_RUN_ID: ${{ needs.prepare.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.prepare.outputs.source_run_attempt }}
+          LEARN_INPUT_ARTIFACT_NAME: ${{ needs.prepare.outputs.input_artifact_name }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'improvement-candidate.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                learn_run_id: process.env.LEARN_RUN_ID,
+                learn_run_attempt: process.env.LEARN_RUN_ATTEMPT,
+                learn_report_artifact_name: process.env.LEARN_REPORT_ARTIFACT_NAME,
+                source_run_id: process.env.SOURCE_RUN_ID,
+                source_run_attempt: process.env.SOURCE_RUN_ATTEMPT,
+                learn_input_artifact_name: process.env.LEARN_INPUT_ARTIFACT_NAME,
+              },
+            });
+            core.info('Trusted Improvement Candidate를 자동 dispatch했습니다');

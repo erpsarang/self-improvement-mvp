@@ -54,3 +54,27 @@ test("PLAN guidance allows only actually impacted existing tests into write scop
   assert.match(guidance, /allowedPaths/);
   assert.match(guidance, /무관한 테스트로 범위를 넓히지 마세요/);
 });
+
+
+test("provenance의 사용자/Human/Issue 문구만으로 human-output context를 활성화하지 않는다", () => {
+  const requirement = [
+    "## 사용자 요구",
+    "주문마다 주문 아이템, 수량, 예상금액, 납기일, 거래처, 주문 코멘트를 명확하게 입력하고 확인할 수 있어야 한다.",
+    "Human이 Improvement Candidate를 채택하여 실제 App Requirement로 승격한다.",
+    "이 Issue는 새로운 User Requirement다.",
+    "다음 단계는 Read-only AI PLAN이다.",
+    "PLAN 이후 Human exact PLAN-승인을 거친다.",
+  ].join("\n");
+
+  assert.equal(needsHumanOutputPlanContext(requirement), false);
+});
+
+test("실제 human-facing 출력 동사가 있을 때만 human-output context를 활성화한다", () => {
+  assert.equal(needsHumanOutputPlanContext("사용자에게 현재 처리 상태를 표시한다."), true);
+  assert.equal(needsHumanOutputPlanContext("사람이 이해할 수 있도록 다음 행동을 안내한다."), true);
+  assert.equal(needsHumanOutputPlanContext("Issue에 승인 결과 코멘트를 남긴다."), true);
+  assert.equal(needsHumanOutputPlanContext("Add a human-facing message with the next action."), true);
+  assert.equal(needsHumanOutputPlanContext("The Issue stores status and summary fields."), false);
+  assert.equal(needsHumanOutputPlanContext("주문 코멘트를 데이터 모델에 보존한다."), false);
+  assert.equal(needsHumanOutputPlanContext("Preserve the order comment field in the model."), false);
+});
