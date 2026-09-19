@@ -23,7 +23,40 @@
 - main 직접 push 금지
 ```
 
-## 2. v0.2 기본 흐름
+## 2. OpenAI API 비용 경계 준비
+
+Framework와 실제 App의 API 비용을 구분하기 위해 OpenAI Project와 API Key를 분리한다.
+
+권장 배치는 다음과 같다.
+
+```text
+Framework repo: self-improvement-mvp
+OpenAI Project: framework-dev
+GitHub Secret: FRAMEWORK_CODEX_API_KEY
+
+App repo: sales-order-exception-analyzer
+OpenAI Project: sales-order-app
+GitHub Secret: APP_CODEX_API_KEY
+```
+
+운영 절차:
+
+1. OpenAI API Platform에서 Framework용 Project를 만든다.
+2. 해당 Project 전용 API Key를 만든다.
+3. `self-improvement-mvp` repository secret에 `FRAMEWORK_CODEX_API_KEY`로 등록한다.
+4. App별로 별도 OpenAI Project와 별도 API Key를 만든다.
+5. 각 App repository에는 `APP_CODEX_API_KEY`로 등록한다.
+6. Usage Dashboard에서 Project별 사용량을 별도로 확인한다.
+7. 기존 공용 `CODEX_API_KEY`는 각 repo의 cutover PR이 merge되고 새 secret 동작이 검증된 뒤 폐기한다.
+
+주의:
+
+- secret 값은 repository나 문서에 기록하지 않는다.
+- 두 repo에서 같은 API Key를 재사용하지 않는다.
+- OpenAI Project의 spend limit은 알림/모니터링 경계로 취급하고, 실행을 강제로 막는 hard cap으로 가정하지 않는다.
+- Framework의 중복 AI call 방지, bounded retry, token ledger는 별도 runtime guardrail로 유지한다.
+
+## 3. v0.2 기본 흐름
 
 ```text
 User Requirement
@@ -52,7 +85,7 @@ User Requirement
 2. **최종 Merge** — 검증·리뷰된 exact 결과를 사람이 Merge
 3. **개선 후보 선택** — LEARN이 만든 후보 중 다음 cycle로 보낼 항목을 사람이 선택
 
-## 3. read-only AI PLAN
+## 4. read-only AI PLAN
 
 Requirement가 준비되면 Planner가 repository의 bounded Context를 읽고 PLAN을 만듭니다.
 
@@ -69,7 +102,7 @@ Planner는 repository를 수정하지 않으며 PLAN 자체도 authority가 아�
 
 `ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
 
-## 4. Human `PLAN-승인`
+## 5. Human `PLAN-승인`
 
 PLAN을 확인한 뒤 승인하려면 Requirement Issue에 정확히 다음 댓글을 남깁니다.
 
@@ -88,7 +121,7 @@ Trusted `PLAN_AUTHORIZE`는 댓글 문자열만 믿지 않고 다음 identity를
 
 Requirement나 target SHA가 PLAN 이후 바뀌었다면 silent substitution하지 않고 fail-closed합니다. 이 경우 새 PLAN이 필요합니다.
 
-## 5. Trusted Handoff와 bounded IMPLEMENT
+## 6. Trusted Handoff와 bounded IMPLEMENT
 
 승인된 PLAN의 structured scope는 Trusted control-plane에서 그대로 `ImplementContract`로 변환됩니다. 자연어를 다시 자의적으로 해석하지 않습니다.
 
@@ -104,7 +137,7 @@ IMPLEMENT Worker는 다음 제한을 가집니다.
 
 Worker가 만든 candidate는 clean exact-base checkout에서 deterministic validation을 통과해야 canonical PLAN Bridge가 됩니다.
 
-## 6. Trusted Rail
+## 7. Trusted Rail
 
 canonical PLAN Bridge가 만들어지면 Trusted Rail이 시작됩니다.
 
@@ -137,7 +170,7 @@ branch 이름이 아니라 exact `publishedHeadSha`를 checkout하여 기계 검
 | `LOCAL_FIX` | 제한된 수정으로 해결 가능 | bounded FIX loop |
 | `STRUCTURAL_CHANGE` | 범위를 넘는 재설계 필요 | `STOPPED` / Human 판단 |
 
-## 7. LOCAL_FIX
+## 8. LOCAL_FIX
 
 `LOCAL_FIX`라고 해서 사람이 Codex에 자유형 수정 명령을 다시 주는 것이 아닙니다.
 
@@ -153,7 +186,7 @@ FIX Worker 역시 write credential을 받지 않고 candidate만 만듭니다. �
 
 반복 횟수와 실행 예산은 Framework가 제한하며 한도를 넘으면 사람이 판단하도록 중단합니다.
 
-## 8. PASS와 Human Merge
+## 9. PASS와 Human Merge
 
 `PASS`에서만 Framework가 `MERGE_READY` Human Merge PR을 만듭니다.
 
@@ -168,7 +201,7 @@ FIX Worker 역시 write credential을 받지 않고 candidate만 만듭니다. �
 
 **Auto Merge는 사용하지 않습니다.**
 
-## 9. Human Merge 이후 LEARN
+## 10. Human Merge 이후 LEARN
 
 LEARN은 open PR이나 MERGE_READY를 완료된 사실로 취급하지 않습니다. 실제 Human Merge가 끝난 cycle만 학습 대상으로 사용합니다.
 
@@ -185,7 +218,7 @@ Trusted LEARN Source가 다음을 exact provenance로 고정합니다.
 
 Learner는 GitHub 최신 상태나 repository 전체를 다시 탐색하지 않습니다.
 
-## 10. Improvement Candidate와 Human-selected LOOP
+## 11. Improvement Candidate와 Human-selected LOOP
 
 LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candidate Pack`으로 구조화됩니다.
 
@@ -201,7 +234,7 @@ LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candi
 
 즉 Self-Improvement도 자기 승인 구조가 아닙니다.
 
-## 11. v0.2에서 실제 증명한 dogfood
+## 12. v0.2에서 실제 증명한 dogfood
 
 `erpsarang/sales-order-exception-analyzer` Issue #8을 실제 업무 요구로 사용했습니다.
 
@@ -226,7 +259,7 @@ Issue #8
 
 최신 replay에서는 별도 `test-execution` evidence로 `npm test / PASS / exitCode 0 / signal null`을 검증했습니다.
 
-## 12. 현재 한계
+## 13. 현재 한계
 
 v0.2는 GitHub + Node 기반 실제 프로젝트에서 신뢰 가능한 수직 루프를 검증한 MVP입니다.
 
