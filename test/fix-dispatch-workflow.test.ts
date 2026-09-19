@@ -88,7 +88,7 @@ test("untrusted FIX Worker에는 write credential과 push/Merge 경로가 없다
   assert.match(workerJob, /^        uses: openai\/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1\.11; exact pin$/m);
   assert.match(workerJob, /permission-profile: ":workspace"/);
   assert.doesNotMatch(workerJob, /contents: write|actions: write|pull-requests: write|issues: write|git push|gh pr|mergePullRequest/);
-  assert.doesNotMatch(workerJob, /github\.token|secrets\.(?!CODEX_API_KEY\b)|github-token:|\btoken:/);
+  assert.doesNotMatch(workerJob, /github\.token|secrets\.(?!FRAMEWORK_CODEX_API_KEY\b)|github-token:|\btoken:/);
 });
 
 test("untrusted FIX Codex는 exact SHA만 사용하고 해당 단계에 4분 timeout을 둔다", () => {
