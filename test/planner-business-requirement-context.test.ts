@@ -140,3 +140,84 @@ test("exact runtime hint가 있으면 더 높은 lexical relevance의 다른 app
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("선택된 business runtime의 직접 App import와 각 direct test를 one-hop으로 함께 보존한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-business-direct-imports-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "test"));
+
+    writeFileSync(
+      join(root, "src", "app-evidence.ts"),
+      [
+        "import { analyzeOrderBatch } from './batch-order-analysis.js';",
+        "import type { OrderInput } from './order-analysis.js';",
+        "export function createEvidence(order: OrderInput) { return analyzeOrderBatch([order]); }",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "src", "batch-order-analysis.ts"),
+      [
+        "import { analyzeOrder, type OrderInput } from './order-analysis.js';",
+        "export function analyzeOrderBatch(orders: OrderInput[]) { return orders.map(analyzeOrder); }",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "src", "order-analysis.ts"),
+      [
+        "export interface OrderInput { orderId: string; customerId: string; materialId: string; orderQuantity: number; }",
+        "export function analyzeOrder(order: OrderInput) { return { orderId: order.orderId, status: 'SHIP_READY' }; }",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "test", "app-evidence.test.ts"),
+      [
+        "import { createEvidence } from '../src/app-evidence.js';",
+        "const requirement = '주문 상세 정보를 실제 업무 수준으로 입력하고 확인한다 주문 아이템 수량 거래처 예상금액 납기일 주문 코멘트';",
+        "test('runtime evidence', () => { void createEvidence; void requirement; });",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "test", "batch-order-analysis.test.ts"),
+      [
+        "import { analyzeOrderBatch } from '../src/batch-order-analysis.js';",
+        "test('batch direct test', () => { void analyzeOrderBatch; });",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "test", "order-analysis.test.ts"),
+      [
+        "import { analyzeOrder } from '../src/order-analysis.js';",
+        "test('order direct test', () => { void analyzeOrder; });",
+        "",
+      ].join("\n"),
+    );
+
+    const requirement = [
+      "주문 상세 정보를 실제 업무 수준으로 입력하고 확인하고 싶다.",
+      "주문 아이템, 수량, 예상금액, 납기일, 거래처, 주문 코멘트를 명확하게 다룬다.",
+      "기존 예외 판정 의미는 바꾸지 않는다.",
+    ].join(" ");
+    const options = { maxFiles: 8, maxBytes: 40_000, maxFileBytes: 8_000 };
+    const selected = selectPlanContext(requirement, root, "example/orders", "c".repeat(40), options);
+    const augmented = augmentPlanContextWithBusinessRelations(requirement, root, selected, options);
+    const paths = augmented.files.map((file) => file.path);
+
+    assert.ok(paths.includes("src/app-evidence.ts"), `missing selected business runtime: ${paths.join(", ")}`);
+    assert.ok(paths.includes("test/app-evidence.test.ts"), `missing selected business direct test: ${paths.join(", ")}`);
+    assert.ok(paths.includes("src/batch-order-analysis.ts"), `missing direct runtime dependency: ${paths.join(", ")}`);
+    assert.ok(paths.includes("test/batch-order-analysis.test.ts"), `missing dependency direct test: ${paths.join(", ")}`);
+    assert.ok(paths.includes("src/order-analysis.ts"), `missing direct runtime dependency: ${paths.join(", ")}`);
+    assert.ok(paths.includes("test/order-analysis.test.ts"), `missing dependency direct test: ${paths.join(", ")}`);
+    assert.ok(paths.length <= 8);
+    assert.ok(augmented.totalBytes <= 40_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
