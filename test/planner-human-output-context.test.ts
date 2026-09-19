@@ -184,3 +184,36 @@ test("non human-facing requirement keeps the primary PLAN context unchanged", ()
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("사용자/Human provenance만 있는 business requirement는 Human Output surface를 추가하지 않는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-human-output-provenance-off-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+
+    writeFileSync(join(root, "src", "order-analysis.ts"), "export interface OrderInput { orderId: string }\n");
+    writeFileSync(
+      join(root, ".github", "workflows", "plan.yml"),
+      "script: |\n  await github.rest.issues.createComment({ body: 'PLAN 제안' });\n",
+    );
+
+    const requirement = [
+      "사용자 요구: 주문 상세 정보를 실제 업무 수준으로 입력하고 확인하고 싶다.",
+      "Human이 Improvement Candidate를 채택하여 실제 App Requirement로 승격한다.",
+      "이 Issue는 새로운 User Requirement다.",
+      "PLAN 이후 Human exact PLAN-승인을 거친다.",
+    ].join("\n");
+
+    const initial = selectPlanContext(requirement, root, "example/orders", "e".repeat(40), {
+      maxFiles: 2,
+      maxBytes: 8_000,
+      maxFileBytes: 4_000,
+    });
+    const augmented = augmentPlanContextWithHumanOutputSurfaces(requirement, root, initial);
+
+    assert.deepEqual(augmented, initial);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
