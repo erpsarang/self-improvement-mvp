@@ -29,12 +29,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: .framework-runtime/package-lock.json
 
-      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Trusted PLAN approval validation
         id: authorize
-        run: node --import tsx src/self-improvement/plan-authorize-handler.ts
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-authorize-handler.ts
         env:
           GITHUB_TOKEN: ${{ github.token }}
 

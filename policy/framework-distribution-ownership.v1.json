@@ -18,6 +18,8 @@
     { "sourcePath": ".github/workflows/semantic-review.yml", "targetPath": ".github/workflows/semantic-review.yml", "classification": "required" },
     { "sourcePath": ".github/workflows/trusted-rail.yml", "targetPath": ".github/workflows/trusted-rail.yml", "classification": "required" },
     { "sourcePath": "policy/framework-distribution-ownership.v1.json", "targetPath": "policy/framework-distribution-ownership.v1.json", "classification": "required" },
+    { "sourcePath": "package.json", "targetPath": ".framework-runtime/package.json", "classification": "required" },
+    { "sourcePath": "package-lock.json", "targetPath": ".framework-runtime/package-lock.json", "classification": "required" },
     { "sourcePath": "src/self-improvement/authorization.ts", "targetPath": "src/self-improvement/authorization.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/completed-cycle.ts", "targetPath": "src/self-improvement/completed-cycle.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/context-pack.ts", "targetPath": "src/self-improvement/context-pack.ts", "classification": "required" },

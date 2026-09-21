@@ -101,10 +101,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: .framework-runtime/package-lock.json
 
       - name: Trusted dependencies 설치
         if: steps.source.outputs.should_run == 'true'
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: PLAN_AUTHORIZE artifact 다운로드
         if: steps.source.outputs.should_run == 'true'
@@ -131,7 +132,7 @@ jobs:
       - name: stale PLAN 분류 및 fresh PLAN 자동 복구
         if: steps.source.outputs.should_run == 'true'
         id: recover
-        run: node --import tsx src/self-improvement/plan-recovery-handler.ts
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-recovery-handler.ts
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

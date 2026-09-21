@@ -170,12 +170,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: control-prep/package-lock.json
+          cache-dependency-path: control-prep/.framework-runtime/package-lock.json
 
       - name: Trusted preparation dependencies 설치
         if: steps.source.outputs.should_run == 'true'
         working-directory: control-prep
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Trusted handoff artifact 다운로드
         if: steps.source.outputs.should_run == 'true'
@@ -191,7 +191,7 @@ jobs:
         if: steps.source.outputs.should_run == 'true'
         id: prepare
         working-directory: control-prep
-        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts prepare
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -327,7 +327,7 @@ jobs:
       - name: Trusted validation dependencies 설치 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Trusted handoff artifact 재다운로드 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
@@ -342,7 +342,7 @@ jobs:
       - name: Trusted candidate 검증 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
-        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -402,7 +402,7 @@ jobs:
           GITHUB_TOKEN: ""
           NODE_AUTH_TOKEN: ""
           NPM_TOKEN: ""
-        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
       - name: attempt 0 state 정리
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true' && steps.ci0.outcome == 'success'
@@ -489,11 +489,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: control-validate-retry/package-lock.json
+          cache-dependency-path: control-validate-retry/.framework-runtime/package-lock.json
 
       - name: Trusted validation dependencies 설치 retry
         working-directory: control-validate-retry
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Trusted handoff artifact 재다운로드 retry
         uses: actions/download-artifact@v4
@@ -506,7 +506,7 @@ jobs:
 
       - name: Trusted candidate 검증 retry
         working-directory: control-validate-retry
-        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -562,7 +562,7 @@ jobs:
           GITHUB_TOKEN: ""
           NODE_AUTH_TOKEN: ""
           NPM_TOKEN: ""
-        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
       - name: timeout retry state 정리
         if: steps.ci0_retry.outcome == 'success'
@@ -747,11 +747,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: control-validate-1/package-lock.json
+          cache-dependency-path: control-validate-1/.framework-runtime/package-lock.json
 
       - name: Trusted validation dependencies 설치 1
         working-directory: control-validate-1
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Trusted handoff artifact 재다운로드 1
         uses: actions/download-artifact@v4
@@ -764,7 +764,7 @@ jobs:
 
       - name: Trusted candidate 검증 1
         working-directory: control-validate-1
-        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -820,7 +820,7 @@ jobs:
           GITHUB_TOKEN: ""
           NODE_AUTH_TOKEN: ""
           NPM_TOKEN: ""
-        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
       - name: attempt 1 state 정리
         if: steps.ci1.outcome == 'success'
@@ -912,11 +912,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: control-validate-2/package-lock.json
+          cache-dependency-path: control-validate-2/.framework-runtime/package-lock.json
 
       - name: Trusted validation dependencies 설치 2
         working-directory: control-validate-2
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Trusted handoff artifact 재다운로드 2
         uses: actions/download-artifact@v4
@@ -929,7 +929,7 @@ jobs:
 
       - name: Trusted candidate 검증 2
         working-directory: control-validate-2
-        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -983,7 +983,7 @@ jobs:
           GITHUB_TOKEN: ""
           NODE_AUTH_TOKEN: ""
           NPM_TOKEN: ""
-        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
       - name: attempt 2 state 정리
         if: steps.ci2.outcome == 'success'

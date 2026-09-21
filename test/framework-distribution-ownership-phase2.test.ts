@@ -35,11 +35,16 @@ test('production ownership is exactly the reviewed full bundle, with no digests 
     ...workflows.map(name => `.github/workflows/${name}.yml`),
     ...runtime.map(name => `src/self-improvement/${name}.ts`),
     'policy/framework-distribution-ownership.v1.json',
+    'package.json',
+    'package-lock.json',
   ].sort();
-  assert.equal(expected.length, 68);
+  assert.equal(expected.length, 70);
   assert.deepEqual(value.entries.map(entry => entry.sourcePath).sort(), expected);
   for (const entry of value.entries) {
-    assert.equal(entry.targetPath, entry.sourcePath);
+    const expectedTarget = entry.sourcePath === 'package.json' || entry.sourcePath === 'package-lock.json'
+      ? `.framework-runtime/${entry.sourcePath}`
+      : entry.sourcePath;
+    assert.equal(entry.targetPath, expectedTarget);
     assert.equal(entry.classification, 'required');
     assert.deepEqual(Object.keys(entry).sort(), ['classification', 'sourcePath', 'targetPath']);
   }

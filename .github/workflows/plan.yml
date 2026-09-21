@@ -47,7 +47,7 @@ jobs:
 
       - name: Install Framework dependencies
         working-directory: planner-control
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Freeze user requirement and target SHA
         id: input
@@ -95,7 +95,7 @@ jobs:
 
       - name: Prepare bounded PLAN Context Pack
         working-directory: planner-control
-        run: node --import tsx src/self-improvement/planner-handler.ts prepare
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/planner-handler.ts prepare
         env:
           PLAN_TARGET: ${{ github.workspace }}/plan-target
           PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
@@ -150,11 +150,11 @@ jobs:
 
       - name: Install Framework dependencies for validation
         working-directory: planner-control-validation
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: Validate bounded PLAN against fresh exact SHA
         working-directory: planner-control-validation
-        run: node --import tsx src/self-improvement/planner-handler.ts artifact
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/planner-handler.ts artifact
         env:
           PLAN_TARGET: ${{ github.workspace }}/plan-target-validation
           PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
