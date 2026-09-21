@@ -13,6 +13,7 @@
     { "sourcePath": ".github/workflows/plan-implement-handoff.yml", "targetPath": ".github/workflows/plan-implement-handoff.yml", "classification": "required" },
     { "sourcePath": ".github/workflows/plan-implement-worker.yml", "targetPath": ".github/workflows/plan-implement-worker.yml", "classification": "required" },
     { "sourcePath": ".github/workflows/plan-recovery.yml", "targetPath": ".github/workflows/plan-recovery.yml", "classification": "required" },
+    { "sourcePath": ".github/workflows/plan-worker-recovery-preflight.yml", "targetPath": ".github/workflows/plan-worker-recovery-preflight.yml", "classification": "required" },
     { "sourcePath": ".github/workflows/plan.yml", "targetPath": ".github/workflows/plan.yml", "classification": "required" },
     { "sourcePath": ".github/workflows/semantic-review.yml", "targetPath": ".github/workflows/semantic-review.yml", "classification": "required" },
     { "sourcePath": ".github/workflows/trusted-rail.yml", "targetPath": ".github/workflows/trusted-rail.yml", "classification": "required" },
