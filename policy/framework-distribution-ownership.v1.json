@@ -55,6 +55,7 @@
     { "sourcePath": "src/self-improvement/planner.ts", "targetPath": "src/self-improvement/planner.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/publish-handler.ts", "targetPath": "src/self-improvement/publish-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/publish.ts", "targetPath": "src/self-improvement/publish.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/repair-policy.ts", "targetPath": "src/self-improvement/repair-policy.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/review-decision.ts", "targetPath": "src/self-improvement/review-decision.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/review-handler.ts", "targetPath": "src/self-improvement/review-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/review.ts", "targetPath": "src/self-improvement/review.ts", "classification": "required" },
