@@ -54,6 +54,7 @@ export interface PlanCandidateWorkerSourceRun {
 export interface TrustedRecoveryCompareGuard {
   readonly kind: "trusted-recovery-compare-v1";
   readonly baseSha: string;
+  readonly workerHeadSha?: string;
   readonly currentDefaultSha: string;
 }
 
@@ -173,6 +174,9 @@ export function validateBridgeTrustedCodeIdentity(input: {
     throw new Error("bridge recovery guard kind mismatch");
   }
   assertSha("bridge recovery base SHA", input.recoveryGuard.baseSha);
+  if (input.recoveryGuard.workerHeadSha !== undefined) {
+    assertSha("bridge recovery Worker head SHA", input.recoveryGuard.workerHeadSha);
+  }
   assertSha("bridge recovery current default SHA", input.recoveryGuard.currentDefaultSha);
   if (
     input.recoveryGuard.baseSha !== input.baseSha ||
@@ -267,15 +271,19 @@ export function validatePlanCandidateWorkerSource(
   if (source.id !== provenance.worker.runId || source.runAttempt !== provenance.worker.runAttempt) {
     throw new Error("Worker source run identity mismatch");
   }
-  if (source.headSha !== provenance.baseSha) throw new Error("Worker source head SHA mismatch");
-  if (source.currentDefaultSha !== provenance.baseSha) {
-    if (
-      recoveryGuard?.kind !== "trusted-recovery-compare-v1" ||
-      recoveryGuard.baseSha !== provenance.baseSha ||
-      recoveryGuard.currentDefaultSha !== source.currentDefaultSha
-    ) {
-      throw new Error("default branch moved after Worker; re-plan required");
-    }
+  const recoveryGuardMatches =
+    recoveryGuard?.kind === "trusted-recovery-compare-v1" &&
+    recoveryGuard.baseSha === provenance.baseSha &&
+    recoveryGuard.currentDefaultSha === source.currentDefaultSha &&
+    (
+      recoveryGuard.workerHeadSha === source.headSha ||
+      (recoveryGuard.workerHeadSha === undefined && source.headSha === provenance.baseSha)
+    );
+  if (source.headSha !== provenance.baseSha && !recoveryGuardMatches) {
+    throw new Error("Worker source head SHA mismatch");
+  }
+  if (source.currentDefaultSha !== provenance.baseSha && !recoveryGuardMatches) {
+    throw new Error("default branch moved after Worker; re-plan required");
   }
 
   const pattern = new RegExp(

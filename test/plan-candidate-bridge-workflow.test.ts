@@ -15,12 +15,18 @@ test("bridge는 자동 workflow_run과 명시적 bounded recovery만 받는다",
   assert.match(bridgeSection, /github\.event_name == 'workflow_dispatch'/);
 });
 
-test("자동 경로는 기존 성공 bounded Worker workflow_run 계약을 유지한다", () => {
+test("자동 경로는 Worker artifact의 exact Handoff identity로 recovery 여부를 판정한다", () => {
   assert.match(workflow, /run\.path !== '\.github\/workflows\/plan-implement-worker\.yml'/);
   assert.match(workflow, /run\.event !== 'workflow_run'/);
   assert.match(workflow, /run\.conclusion !== 'success'/);
   assert.match(workflow, /bounded-worker-candidate-issue-/);
   assert.match(workflow, /expected exactly one bounded Worker candidate artifact/);
+  assert.match(bridgeSection, /const explicitRecovery = context\.eventName === 'workflow_dispatch'/);
+  assert.equal(bridgeSection.includes("handoff-(\\\\d+)-attempt-(\\\\d+)-worker-"), true);
+  assert.match(bridgeSection, /Trusted PLAN IMPLEMENT Handoff/);
+  assert.match(bridgeSection, /const approvedBaseSha = handoff\.head_sha/);
+  assert.match(bridgeSection, /const recovery = explicitRecovery \|\| run\.head_sha !== approvedBaseSha/);
+  assert.match(bridgeSection, /core\.setOutput\('worker_head_sha', run\.head_sha\)/);
 });
 
 test("recovery는 source Worker run과 exact artifact를 fail-closed 재검증한다", () => {
@@ -37,8 +43,11 @@ test("recovery default 이동은 bounded Framework-only compare에만 trusted gu
   assert.match(bridgeSection, /github\.rest\.repos\.getBranch/);
   assert.match(bridgeSection, /currentDefaultSha = branch\.commit\.sha/);
   assert.match(bridgeSection, /context\.ref !== `refs\/heads\/\$\{defaultBranch\}` \|\| context\.sha !== currentDefaultSha/);
+  assert.match(bridgeSection, /basehead: `\$\{base\}\.\.\.\$\{workerHead\}`/);
+  assert.match(bridgeSection, /basehead: `\$\{workerHead\}\.\.\.\$\{currentDefaultSha\}`/);
   assert.match(bridgeSection, /basehead: `\$\{base\}\.\.\.\$\{currentDefaultSha\}`/);
   assert.match(bridgeSection, /compareCommitsWithBasehead/);
+  assert.match(bridgeSection, /recovery Worker is outside approved-base\/current-default lineage/);
   assert.match(bridgeSection, /!\['ahead', 'identical'\]\.includes\(data\.status\)/);
   assert.match(bridgeSection, /files\.length > 50/);
   assert.match(bridgeSection, /!\['added', 'modified'\]\.includes\(file\.status\)/);
@@ -52,13 +61,16 @@ test("recovery default 이동은 bounded Framework-only compare에만 trusted gu
   assert.match(bridgeSection, /'test\/fix-dispatch-workflow\.test\.ts'/);
   assert.match(bridgeSection, /'test\/plan-candidate-bridge-recovery-finalize\.test\.ts'/);
   assert.match(bridgeSection, /'test\/plan-candidate-bridge-recovery-provenance\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-implement-worker-workflow\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-implement-worker\.test\.ts'/);
+  assert.match(bridgeSection, /'test\/plan-worker-recovery-preflight-workflow\.test\.ts'/);
   assert.match(bridgeSection, /'test\/plan-trusted-rail-recovery-source\.test\.ts'/);
   assert.match(bridgeSection, /'test\/seal-workflow\.test\.ts'/);
   assert.match(bridgeSection, /path\.startsWith\('test\/self-improvement\/'\) \|\| frameworkRootTests\.has\(path\)/);
   assert.doesNotMatch(bridgeSection, /path\.startsWith\('test\/'\)\s*\|\|/);
   assert.doesNotMatch(bridgeSection, /\(\?:plan-\|bounded-\|single-pass-/);
   assert.doesNotMatch(bridgeSection, /data\.head_commit/);
-  assert.match(bridgeSection, /data\.merge_base_commit\.sha === base \? currentDefaultSha : 'invalid'/);
+  assert.match(bridgeSection, /core\.setOutput\('default_sha', currentDefaultSha\)/);
   assert.match(bridgeSection, /recovery compare failed/);
   assert.match(bridgeSection, /recovery requires re-plan; ambiguous or application changes/);
 });
@@ -68,6 +80,7 @@ test("trusted recovery guard는 workflow 산출 SHA에 바인딩되어 모든 �
   assert.match(bridgeSection, /core\.setOutput\('base_sha', base\)/);
   assert.match(bridgeSection, /TRUSTED_RECOVERY_GUARD_KIND: \$\{\{ steps\.recovery_guard\.outputs\.kind \}\}/);
   assert.match(bridgeSection, /TRUSTED_RECOVERY_BASE_SHA: \$\{\{ steps\.recovery_guard\.outputs\.base_sha \}\}/);
+  assert.match(bridgeSection, /TRUSTED_RECOVERY_WORKER_SHA: \$\{\{ steps\.recovery_guard\.outputs\.worker_head_sha \}\}/);
   assert.match(bridgeSection, /TRUSTED_RECOVERY_DEFAULT_SHA: \$\{\{ steps\.recovery_guard\.outputs\.default_sha \}\}/);
 });
 

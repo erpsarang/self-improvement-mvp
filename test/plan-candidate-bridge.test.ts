@@ -298,6 +298,47 @@ test("Worker workflow/path/default branch drift는 fail-closed 한다", () => {
   ), /re-plan required/);
 });
 
+test("Recovery Worker head가 approved base와 달라도 exact recovery guard가 세 SHA를 모두 고정하면 허용한다", () => {
+  const f = fixture();
+  const workerHeadSha = "7".repeat(40);
+  const currentDefaultSha = "9".repeat(40);
+  const movedWorker = {
+    ...f.workerSource,
+    headSha: workerHeadSha,
+    currentDefaultSha,
+  };
+
+  assert.throws(() => validatePlanCandidateWorkerSource(
+    f.workerProvenance,
+    movedWorker,
+    f.workerArtifact,
+  ), /Worker source head SHA mismatch/);
+
+  assert.doesNotThrow(() => validatePlanCandidateWorkerSource(
+    f.workerProvenance,
+    movedWorker,
+    f.workerArtifact,
+    {
+      kind: "trusted-recovery-compare-v1",
+      baseSha: f.workerProvenance.baseSha,
+      workerHeadSha,
+      currentDefaultSha,
+    },
+  ));
+
+  assert.throws(() => validatePlanCandidateWorkerSource(
+    f.workerProvenance,
+    movedWorker,
+    f.workerArtifact,
+    {
+      kind: "trusted-recovery-compare-v1",
+      baseSha: f.workerProvenance.baseSha,
+      workerHeadSha: "8".repeat(40),
+      currentDefaultSha,
+    },
+  ), /Worker source head SHA mismatch/);
+});
+
 test("Issue title/body가 승인 digest에서 바뀌면 frozen requirement를 만들지 않는다", () => {
   const f = fixture();
   assert.throws(() => freezePlanRequirement(f.authorization, `${title} 변경`, body), /re-plan required/);

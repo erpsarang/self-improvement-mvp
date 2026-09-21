@@ -48,11 +48,11 @@ jobs:
           RECOVERY_SOURCE_ARTIFACT: ${{ inputs.source_candidate_artifact_name }}
         with:
           script: |
-            const recovery = context.eventName === 'workflow_dispatch';
+            const explicitRecovery = context.eventName === 'workflow_dispatch';
             let run;
             let requestedArtifact = null;
 
-            if (recovery) {
+            if (explicitRecovery) {
               const runId = Number(process.env.RECOVERY_SOURCE_RUN_ID);
               const runAttempt = Number(process.env.RECOVERY_SOURCE_RUN_ATTEMPT);
               requestedArtifact = process.env.RECOVERY_SOURCE_ARTIFACT;
@@ -97,9 +97,9 @@ jobs:
             }
 
             const pattern = new RegExp(
-              `^bounded-worker-candidate-issue-\\d+-plan-\\d+-approval-\\d+-handoff-\\d+-attempt-\\d+-worker-${run.id}-attempt-${run.run_attempt}$`,
+              `^bounded-worker-candidate-issue-\\d+-plan-\\d+-approval-\\d+-handoff-(\\d+)-attempt-(\\d+)-worker-${run.id}-attempt-${run.run_attempt}$`,
             );
-            if (recovery && !pattern.test(requestedArtifact)) {
+            if (explicitRecovery && !pattern.test(requestedArtifact)) {
               core.setFailed(`unexpected recovery candidate artifact: ${requestedArtifact}`);
               return;
             }
@@ -111,7 +111,7 @@ jobs:
               per_page: 100,
             });
             const matches = data.artifacts.filter((artifact) => !artifact.expired && pattern.test(artifact.name));
-            const exact = recovery
+            const exact = explicitRecovery
               ? matches.filter((artifact) => artifact.name === requestedArtifact)
               : matches;
             if (matches.length !== 1 || exact.length !== 1) {
@@ -121,6 +121,34 @@ jobs:
               return;
             }
             const artifact = exact[0];
+            const identity = pattern.exec(artifact.name);
+            if (!identity) {
+              core.setFailed('bounded Worker candidate artifact identity parse failed');
+              return;
+            }
+            const handoffRunId = Number(identity[1]);
+            const handoffRunAttempt = Number(identity[2]);
+            const { data: handoff } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: handoffRunId,
+            });
+            if (
+              handoff.name !== 'Trusted PLAN IMPLEMENT Handoff' ||
+              handoff.path !== '.github/workflows/plan-implement-handoff.yml' ||
+              handoff.event !== 'workflow_run' ||
+              handoff.status !== 'completed' ||
+              handoff.conclusion !== 'success' ||
+              handoff.run_attempt !== handoffRunAttempt ||
+              handoff.head_branch !== context.payload.repository.default_branch ||
+              !/^[0-9a-f]{40,64}$/.test(handoff.head_sha || '')
+            ) {
+              core.setFailed('candidate source Handoff identity mismatch');
+              return;
+            }
+            const approvedBaseSha = handoff.head_sha;
+            const recovery = explicitRecovery || run.head_sha !== approvedBaseSha;
+
             core.setOutput('name', artifact.name);
             core.setOutput('id', String(artifact.id));
             core.setOutput('digest', artifact.digest ?? '');
@@ -128,20 +156,25 @@ jobs:
             core.setOutput('run_attempt', String(run.run_attempt));
             core.setOutput('bridge_control_plane_sha', recovery ? context.sha : run.head_sha);
             core.setOutput('recovery', recovery ? 'true' : 'false');
-            core.setOutput('worker_base_sha', run.head_sha);
+            core.setOutput('approved_base_sha', approvedBaseSha);
+            core.setOutput('worker_head_sha', run.head_sha);
 
       - name: recovery default 이동 trusted compare guard
         id: recovery_guard
         if: steps.candidate_artifact.outputs.recovery == 'true'
         uses: actions/github-script@v7
         env:
-          WORKER_BASE_SHA: ${{ steps.candidate_artifact.outputs.worker_base_sha }}
+          APPROVED_BASE_SHA: ${{ steps.candidate_artifact.outputs.approved_base_sha }}
+          WORKER_HEAD_SHA: ${{ steps.candidate_artifact.outputs.worker_head_sha }}
         with:
           script: |
-            const base = process.env.WORKER_BASE_SHA;
+            const base = process.env.APPROVED_BASE_SHA;
+            const workerHead = process.env.WORKER_HEAD_SHA;
             const defaultBranch = context.payload.repository.default_branch;
             let currentDefaultSha;
             let comparison;
+            let baseToWorker;
+            let workerToCurrent;
             try {
               const { data: branch } = await github.rest.repos.getBranch({
                 owner: context.repo.owner,
@@ -155,19 +188,50 @@ jobs:
                 );
                 return;
               }
-              comparison = await github.rest.repos.compareCommitsWithBasehead({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                basehead: `${base}...${currentDefaultSha}`,
-                per_page: 100,
-              });
+              const [baseToWorkerResponse, workerToCurrentResponse, comparisonResponse] = await Promise.all([
+                github.rest.repos.compareCommitsWithBasehead({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  basehead: `${base}...${workerHead}`,
+                  per_page: 100,
+                }),
+                github.rest.repos.compareCommitsWithBasehead({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  basehead: `${workerHead}...${currentDefaultSha}`,
+                  per_page: 100,
+                }),
+                github.rest.repos.compareCommitsWithBasehead({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  basehead: `${base}...${currentDefaultSha}`,
+                  per_page: 100,
+                }),
+              ]);
+              baseToWorker = baseToWorkerResponse.data;
+              workerToCurrent = workerToCurrentResponse.data;
+              comparison = comparisonResponse.data;
             } catch (error) {
               core.setFailed(`recovery compare failed: ${error.message}`);
               return;
             }
-            const data = comparison.data;
+            if (
+              !['ahead', 'identical'].includes(baseToWorker.status) ||
+              baseToWorker.merge_base_commit.sha !== base ||
+              !['ahead', 'identical'].includes(workerToCurrent.status) ||
+              workerToCurrent.merge_base_commit.sha !== workerHead
+            ) {
+              core.setFailed('recovery Worker is outside approved-base/current-default lineage');
+              return;
+            }
+            const data = comparison;
             const files = data.files;
-            if (!['ahead', 'identical'].includes(data.status) || !Array.isArray(files) || files.length > 50) {
+            if (
+              !['ahead', 'identical'].includes(data.status) ||
+              data.merge_base_commit.sha !== base ||
+              !Array.isArray(files) ||
+              files.length > 50
+            ) {
               core.setFailed(`recovery compare is not a bounded ancestor diff: status=${data.status}, files=${files?.length}`);
               return;
             }
@@ -178,6 +242,9 @@ jobs:
               'test/fix-dispatch-workflow.test.ts',
               'test/plan-candidate-bridge-recovery-finalize.test.ts',
               'test/plan-candidate-bridge-recovery-provenance.test.ts',
+              'test/plan-implement-worker-workflow.test.ts',
+              'test/plan-implement-worker.test.ts',
+              'test/plan-worker-recovery-preflight-workflow.test.ts',
               'test/plan-trusted-rail-recovery-source.test.ts',
               'test/seal-workflow.test.ts',
             ]);
@@ -196,7 +263,8 @@ jobs:
             }
             core.setOutput('kind', 'trusted-recovery-compare-v1');
             core.setOutput('base_sha', base);
-            core.setOutput('default_sha', data.merge_base_commit.sha === base ? currentDefaultSha : 'invalid');
+            core.setOutput('worker_head_sha', workerHead);
+            core.setOutput('default_sha', currentDefaultSha);
 
       - name: Trusted bridge control-plane checkout
         uses: actions/checkout@v4
@@ -242,6 +310,7 @@ jobs:
           BRIDGE_RUN_ATTEMPT: ${{ github.run_attempt }}
           TRUSTED_RECOVERY_GUARD_KIND: ${{ steps.recovery_guard.outputs.kind }}
           TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
+          TRUSTED_RECOVERY_WORKER_SHA: ${{ steps.recovery_guard.outputs.worker_head_sha }}
           TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
 
       - name: exact Handoff artifact 다운로드
@@ -302,6 +371,7 @@ jobs:
           STATE_DIRECTORY: ${{ runner.temp }}/plan-bridge-state
           TRUSTED_RECOVERY_GUARD_KIND: ${{ steps.recovery_guard.outputs.kind }}
           TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
+          TRUSTED_RECOVERY_WORKER_SHA: ${{ steps.recovery_guard.outputs.worker_head_sha }}
           TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
         run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts validate
 
@@ -326,6 +396,7 @@ jobs:
           BRIDGE_TRUSTED_CODE_SHA: ${{ steps.candidate_artifact.outputs.bridge_control_plane_sha }}
           TRUSTED_RECOVERY_GUARD_KIND: ${{ steps.recovery_guard.outputs.kind }}
           TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
+          TRUSTED_RECOVERY_WORKER_SHA: ${{ steps.recovery_guard.outputs.worker_head_sha }}
           TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
         run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts finalize
 
