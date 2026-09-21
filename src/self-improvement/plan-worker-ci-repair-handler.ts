@@ -14,6 +14,7 @@ import {
   verifyCandidateChangeSet,
   type CandidateChangeSet,
 } from "./single-pass-worker.js";
+import { classifyRepairEligibility } from "./repair-policy.js";
 
 const HANDOFF_FILES = [
   "context.json",
@@ -123,6 +124,14 @@ async function check(): Promise<void> {
   const attempt = nextRepairAttempt();
   if (attempt === null) {
     output("repair_ready", "false");
+    return;
+  }
+
+  const eligibility = classifyRepairEligibility(bundle.contract.scope.allowedPaths, validation);
+  output("repair_blocked_reason", eligibility.allowed ? "" : eligibility.reason);
+  if (!eligibility.allowed) {
+    output("repair_ready", "false");
+    output("repair_blocked_paths", eligibility.sourcePaths.join(","));
     return;
   }
 

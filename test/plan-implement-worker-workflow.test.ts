@@ -56,6 +56,15 @@ test("initial Worker와 두 repair는 각각 fresh Job에서 Codex를 정확히 
   assert.doesNotMatch(workflow, /openai\/codex-action@v1(?:\s|$)/);
 });
 
+test("out-of-scope 경계 실패는 AI repair를 시작하지 않고 fail-closed 한다", () => {
+  assert.match(workflow, /repair_ready: \${\{ steps\.ci0\.outputs\.repair_ready \}\}/);
+  assert.match(workflow, /repair_ready: \${\{ steps\.ci1\.outputs\.repair_ready \}\}/);
+  assert.match(workflow, /needs\.attempt0\.outputs\.repair_ready == 'true'/);
+  assert.match(workflow, /needs\.repair1\.outputs\.repair_ready == 'true'/);
+  assert.match(workflow, /out-of-scope boundary repair 차단 시 fail-closed/);
+  assert.match(workflow, /AI repair blocked by deterministic repair policy/);
+});
+
 test("각 untrusted Job은 repository 없이 neutral input만 보고 drop-sudo read-only로 실행한다", () => {
   assert.match(workflow, /Worker 실행 전 repository와 trusted source 제거/);
   assert.match(workflow, /repair 1 untrusted input 격리/);

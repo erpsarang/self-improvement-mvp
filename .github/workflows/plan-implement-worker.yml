@@ -26,6 +26,8 @@ jobs:
       base_sha: ${{ steps.base.outputs.sha }}
       candidate_artifact_name: ${{ steps.prepare.outputs.candidate_artifact_name }}
       ci_status: ${{ steps.ci0.outputs.status }}
+      repair_ready: ${{ steps.ci0.outputs.repair_ready }}
+      repair_blocked_reason: ${{ steps.ci0.outputs.repair_blocked_reason }}
 
     steps:
       - name: Trusted handoff artifact exact 선택
@@ -264,7 +266,7 @@ jobs:
           cp "$RUNNER_TEMP/validated-candidate-0/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
           cp "$RUNNER_TEMP/validated-candidate-0/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
           cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
-          if [ "${{ steps.ci0.outputs.status }}" = "FAIL" ]; then
+          if [ "${{ steps.ci0.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci0.outputs.repair_ready }}" = "true" ]; then
             mkdir -p "$RUNNER_TEMP/worker-state-0/repair-input"
             cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md"
             cp "$RUNNER_TEMP/repair-input-1/schema.json" "$RUNNER_TEMP/worker-state-0/repair-input/schema.json"
@@ -280,7 +282,9 @@ jobs:
 
   repair1:
     needs: attempt0
-    if: needs.attempt0.outputs.ci_status == 'FAIL'
+    if: >-
+      needs.attempt0.outputs.ci_status == 'FAIL' &&
+      needs.attempt0.outputs.repair_ready == 'true'
     permissions:
       contents: read
       actions: read
@@ -288,6 +292,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       ci_status: ${{ steps.ci1.outputs.status }}
+      repair_ready: ${{ steps.ci1.outputs.repair_ready }}
+      repair_blocked_reason: ${{ steps.ci1.outputs.repair_blocked_reason }}
 
     steps:
       - name: attempt 0 state 다운로드
@@ -423,7 +429,7 @@ jobs:
           cp "$RUNNER_TEMP/validated-candidate-1/candidate.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate.json"
           cp "$RUNNER_TEMP/validated-candidate-1/candidate-provenance.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate-provenance.json"
           cp "$RUNNER_TEMP/worker-ci-1/validation.json" "$RUNNER_TEMP/worker-state-1/evidence/validation-1.json"
-          if [ "${{ steps.ci1.outputs.status }}" = "FAIL" ]; then
+          if [ "${{ steps.ci1.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci1.outputs.repair_ready }}" = "true" ]; then
             mkdir -p "$RUNNER_TEMP/worker-state-1/repair-input"
             cp "$RUNNER_TEMP/repair-input-2/prompt.md" "$RUNNER_TEMP/worker-state-1/repair-input/prompt.md"
             cp "$RUNNER_TEMP/repair-input-2/schema.json" "$RUNNER_TEMP/worker-state-1/repair-input/schema.json"
@@ -439,7 +445,9 @@ jobs:
 
   repair2:
     needs: [attempt0, repair1]
-    if: needs.repair1.outputs.ci_status == 'FAIL'
+    if: >-
+      needs.repair1.outputs.ci_status == 'FAIL' &&
+      needs.repair1.outputs.repair_ready == 'true'
     permissions:
       contents: read
       actions: read
@@ -665,6 +673,20 @@ jobs:
           name: bounded-worker-ci-evidence-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/worker-ci-evidence/*.json
           if-no-files-found: error
+
+      - name: out-of-scope boundary repair 차단 시 fail-closed
+        if: >-
+          (needs.attempt0.outputs.ci_status == 'FAIL' &&
+           needs.attempt0.outputs.repair_ready == 'false') ||
+          (needs.repair1.outputs.ci_status == 'FAIL' &&
+           needs.repair1.outputs.repair_ready == 'false')
+        shell: bash
+        env:
+          ATTEMPT0_REASON: ${{ needs.attempt0.outputs.repair_blocked_reason }}
+          ATTEMPT1_REASON: ${{ needs.repair1.outputs.repair_blocked_reason }}
+        run: |
+          echo "AI repair blocked by deterministic repair policy: attempt0=${ATTEMPT0_REASON}, attempt1=${ATTEMPT1_REASON}" >&2
+          exit 1
 
       - name: upstream infrastructure failure 시 fail-closed
         if: >-
