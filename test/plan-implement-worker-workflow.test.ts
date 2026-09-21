@@ -29,12 +29,21 @@ test("production Worker는 Trusted PLAN IMPLEMENT Handoff 성공 run만 입력�
   assert.match(workflow, /run\.path !== '\.github\/workflows\/plan-implement-handoff\.yml'/);
 });
 
-test("모든 job 권한은 read-only이고 repository/PR/Issue write 권한을 갖지 않는다", () => {
+test("AI/검증 job 권한은 read-only이고, Issue write는 AI도 checkout도 없는 finalize에만 있다", () => {
   assert.match(workflow, /permissions: \{\}/);
   assert.ok((workflow.match(/contents: read/g) ?? []).length >= 3);
   assert.ok((workflow.match(/actions: read/g) ?? []).length >= 4);
-  assert.doesNotMatch(workflow, /contents: write|actions: write|issues: write|pull-requests: write/);
+  assert.doesNotMatch(workflow, /contents: write|actions: write|pull-requests: write/);
   assert.doesNotMatch(workflow, /git push|gh pr|createPullRequest|enable_auto_merge/i);
+
+  // STALLED marker 기록을 위한 issues: write는 finalize job 하나뿐이다.
+  assert.equal((workflow.match(/issues: write/g) ?? []).length, 1);
+  for (const name of ["attempt0", "timeout_retry", "attempt0_result", "repair1", "repair2"] as const) {
+    assert.doesNotMatch(jobBlock(name), /issues: write/, name);
+  }
+  const finalize = jobBlock("finalize");
+  assert.match(finalize, /permissions:\n\s+actions: read\n\s+issues: write\n/);
+  assert.doesNotMatch(finalize, /actions\/checkout@|openai\/codex-action@|npm |node --import/);
 });
 
 test("initial Worker, timeout retry, 두 repair는 각각 fresh Job에서 Codex를 정확히 한 번만 실행한다", () => {
@@ -183,4 +192,23 @@ test("timeout 경계 failure만 fresh runner에서 1회 bounded 자동 재시도
   assert.match(attempt0Result, /RETRY_RESULT: \$\{\{ needs\.timeout_retry\.result \}\}/);
   assert.match(attempt0Result, /infrastructure_failed=true/);
   assert.match(workflow, /needs\.attempt0_result\.outputs\.infrastructure_failed == 'true'/);
+});
+
+test("INFRA_FAILURE는 exact stalled marker로만 기록하고 자동 Resume하지 않는다", () => {
+  const finalize = jobBlock("finalize");
+  assert.match(workflow, /source_run_id: \$\{\{ steps\.source\.outputs\.run_id \}\}/);
+  assert.match(workflow, /source_run_attempt: \$\{\{ steps\.source\.outputs\.run_attempt \}\}/);
+  assert.match(workflow, /source_run_id: \$\{\{ steps\.effective\.outputs\.source_run_id \}\}/);
+
+  assert.match(finalize, /name: INFRA_FAILURE stalled cycle 기록\n\s+if: needs\.attempt0_result\.outputs\.infrastructure_failed == 'true'/);
+  assert.match(finalize, /ai-dev-framework:STALLED_WORKER issue=\$\{issueNumber\} handoff-run=\$\{handoffRunId\} handoff-attempt=\$\{handoffRunAttempt\} artifact=\$\{artifact\} base-sha=\$\{baseSha\} worker-run=\$\{workerRunId\} worker-attempt=\$\{workerRunAttempt\} reason=INFRA_FAILURE/);
+  // marker identity는 trusted job output에서만 오고 형식 검증 후에만 기록한다.
+  assert.match(finalize, /\^plan-implement-handoff-issue-\(\\d\+\)-plan-\\d\+-attempt-\\d\+-approval-\\d\+\$/);
+  assert.match(finalize, /invalid stalled cycle identity/);
+  assert.match(finalize, /exact STALLED_WORKER marker already exists/);
+  assert.match(finalize, /자동 Resume은 아직 수행하지 않습니다/);
+
+  // marker 뒤에도 infrastructure failure는 fail-closed 한다.
+  assert.ok(finalize.indexOf("INFRA_FAILURE stalled cycle 기록") < finalize.indexOf("upstream infrastructure failure 시 fail-closed"));
+  assert.doesNotMatch(workflow, /createWorkflowDispatch|workflow_id: 'plan-implement-worker\.yml'/);
 });
