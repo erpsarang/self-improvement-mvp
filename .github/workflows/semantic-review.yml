@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       issue_number: ${{ steps.prepare_review.outputs.issue_number }}
+      base_sha: ${{ steps.review_source.outputs.base_sha }}
       verified_head_sha: ${{ steps.prepare_review.outputs.verified_head_sha }}
       verify_artifact_name: ${{ steps.prepare_review.outputs.verify_artifact_name }}
       authority_kind: ${{ steps.prepare_review.outputs.authority_kind }}
@@ -215,7 +216,7 @@ jobs:
         with:
           ref: ${{ needs.review_prepare.outputs.verified_head_sha }}
           path: review-target
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
 
       - name: exact checkout SHA 확인
@@ -252,7 +253,59 @@ jobs:
               exit 1
             fi
           done
-          mkdir -p review-neutral "${RUNNER_TEMP}/reviewer"
+          mkdir -p review-neutral/review-context "${RUNNER_TEMP}/reviewer"
+
+      - name: bounded REVIEW patch 생성 및 full checkout 폐기
+        shell: bash
+        env:
+          BASE_SHA: ${{ needs.review_prepare.outputs.base_sha }}
+          VERIFIED_SHA: ${{ needs.review_prepare.outputs.verified_head_sha }}
+          MAX_CHANGED_FILES: "12"
+          MAX_PATCH_BYTES: "65536"
+        run: |
+          set -euo pipefail
+          cd review-target
+
+          if ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            echo "semantic review base SHA is unavailable: ${BASE_SHA}" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$VERIFIED_SHA" ]; then
+            echo "semantic review verified SHA changed before context build" >&2
+            exit 1
+          fi
+
+          mapfile -d '' -t changed_files < <(
+            git diff --name-only -z --diff-filter=ACDMRT "$BASE_SHA" "$VERIFIED_SHA" --
+          )
+          changed_count="${#changed_files[@]}"
+          if [ "$changed_count" -eq 0 ] || [ "$changed_count" -gt "$MAX_CHANGED_FILES" ]; then
+            echo "semantic review changed-file budget exceeded: actual=${changed_count}, max=${MAX_CHANGED_FILES}" >&2
+            exit 1
+          fi
+
+          if git diff --numstat "$BASE_SHA" "$VERIFIED_SHA" -- |
+            awk '$1 == "-" || $2 == "-" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "semantic review refuses binary diffs before AI invocation" >&2
+            exit 1
+          fi
+
+          printf '%s\n' "${changed_files[@]}" > ../review-neutral/review-context/changed-files.txt
+          # package-lock.json은 trusted deterministic step이 생성하고 VERIFY의 `npm ci`가 기계적으로 검증한다.
+          # AI Reviewer에게 줄 patch에서만 제외한다 (changed-files.txt에는 그대로 남는다). repository root의 exact path만 제외.
+          git diff --no-ext-diff --no-color --unified=80 "$BASE_SHA" "$VERIFIED_SHA" -- . ':(top,exclude,literal)package-lock.json' \
+            > ../review-neutral/review-context/patch.diff
+
+          patch_bytes="$(wc -c < ../review-neutral/review-context/patch.diff | tr -d '[:space:]')"
+          if [ "$patch_bytes" -eq 0 ] || [ "$patch_bytes" -gt "$MAX_PATCH_BYTES" ]; then
+            echo "semantic review patch budget exceeded: actual=${patch_bytes}, max=${MAX_PATCH_BYTES}" >&2
+            exit 1
+          fi
+
+          cd ..
+          rm -rf review-target
+          test ! -e review-target
+          echo "bounded semantic review context: files=${changed_count}, patch_bytes=${patch_bytes}"
 
       - name: Untrusted read-only Semantic Reviewer
         id: semantic_reviewer
@@ -268,7 +321,7 @@ jobs:
           prompt-file: ${{ runner.temp }}/review-input/review-prompt.md
           output-schema-file: ${{ runner.temp }}/review-input/review-output.schema.json
           output-file: ${{ runner.temp }}/reviewer/reviewer.json
-          effort: high
+          effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
       - name: Reviewer output 최소 구조 확인

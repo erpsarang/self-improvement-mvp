@@ -7,6 +7,7 @@ import {
 } from "../src/self-improvement/authorization.js";
 import type { PublishProvenance } from "../src/self-improvement/publish.js";
 import {
+  createSemanticReviewPrompt,
   createSemanticReviewProvenance,
   validateSemanticReviewerOutput,
   validateVerifiedCandidateForReview,
@@ -115,6 +116,22 @@ const passOutput = {
     },
   ],
 } as const;
+
+test("Semantic Reviewer prompt는 full repo 대신 bounded patch만 코드 근거로 사용한다", () => {
+  const prompt = createSemanticReviewPrompt({
+    repository,
+    issueNumber,
+    baseSha,
+    verifiedHeadSha: publishedHeadSha,
+    requirements,
+  });
+  assert.match(prompt, /review-context\/patch\.diff/);
+  assert.match(prompt, /review-context\/changed-files\.txt/);
+  assert.match(prompt, /전체 repository는 제공되지 않습니다/);
+  assert.match(prompt, /patch 밖의 사실은 추정하지 마세요/);
+  assert.doesNotMatch(prompt, /\.\.\/review-target/);
+  assert.doesNotMatch(prompt, /git diff\/show/);
+});
 
 test("REVIEW는 VERIFY provenance와 원본 AUTHORIZE 요구사항 snapshot을 exact binding한다", () => {
   const validated = validateVerifiedCandidateForReview({
