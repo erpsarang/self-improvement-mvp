@@ -20,13 +20,48 @@ function jobBlock(name: WorkerJob): string {
   return workflow.slice(start, end);
 }
 
-test("production Worker는 Trusted PLAN IMPLEMENT Handoff 성공 run만 입력으로 받는다", () => {
-  assert.match(workflow, /workflows: \["Trusted PLAN IMPLEMENT Handoff"\]/);
+test("production Worker는 Trusted Handoff 성공 run 또는 Trusted Recovery Preflight 성공 run만 입력으로 받는다", () => {
+  assert.match(workflow, /workflows: \["Trusted PLAN IMPLEMENT Handoff", "Trusted Worker Recovery Preflight"\]/);
   assert.match(workflow, /types: \[completed\]/);
   assert.match(workflow, /workflow_run\.conclusion == 'success'/);
-  assert.match(workflow, /workflow_run\.event == 'workflow_run'/);
-  assert.match(workflow, /run\.name !== 'Trusted PLAN IMPLEMENT Handoff'/);
-  assert.match(workflow, /run\.path !== '\.github\/workflows\/plan-implement-handoff\.yml'/);
+  assert.match(workflow, /workflow_run\.head_branch == github\.event\.repository\.default_branch/);
+  // source event 검증은 job-level if에서 source별 exact 검증으로 이동했다: Handoff는 workflow_run, Preflight는 workflow_dispatch만.
+  assert.match(
+    workflow,
+    /run\.name !== 'Trusted PLAN IMPLEMENT Handoff' \|\| run\.path !== '\.github\/workflows\/plan-implement-handoff\.yml' \|\| run\.event !== 'workflow_run'/,
+  );
+  assert.match(
+    workflow,
+    /run\.name === 'Trusted Worker Recovery Preflight' &&\s+run\.path === '\.github\/workflows\/plan-worker-recovery-preflight\.yml' &&\s+run\.event === 'workflow_dispatch'/,
+  );
+});
+
+test("RECOVERY_READY는 exact provenance 검증 후 기존 승인 Handoff source로만 Worker에 재진입한다", () => {
+  const attempt0 = jobBlock("attempt0");
+  assert.match(attempt0, /name: RECOVERY_READY artifact 다운로드\n\s+if: github\.event\.workflow_run\.name == 'Trusted Worker Recovery Preflight'/);
+  assert.match(attempt0, /name: RECOVERY_READY artifact 다운로드[\s\S]*?run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.match(attempt0, /expected exactly one RECOVERY_READY payload/);
+  assert.match(attempt0, /recovery\.kind === 'trusted-worker-recovery-ready'/);
+  assert.match(attempt0, /recovery\.repository === `\$\{context\.repo\.owner\}\/\$\{context\.repo\.repo\}`/);
+  assert.match(attempt0, /recovery\.currentDefaultSha === run\.head_sha/);
+  assert.match(attempt0, /branch\.commit\.sha === run\.head_sha/);
+  assert.match(attempt0, /recovery\.preflight\?\.workflowPath === '\.github\/workflows\/plan-worker-recovery-preflight\.yml'/);
+  assert.match(attempt0, /recovery\.preflight\?\.runId === run\.id/);
+  assert.match(attempt0, /recovery\.preflight\?\.runAttempt === run\.run_attempt/);
+  assert.match(attempt0, /recovery\.preflight\?\.trustedCodeSha === run\.head_sha/);
+  assert.match(attempt0, /\^sha256:\[0-9a-f\]\{64\}\$/);
+  assert.match(attempt0, /invalid RECOVERY_READY provenance/);
+  assert.match(attempt0, /recovery_kind', 'trusted-recovery-compare-v1'/);
+
+  // 재진입 후에는 모든 validation이 event run이 아니라 원래 Handoff run을 source로 다시 받는다.
+  assert.doesNotMatch(workflow, /SOURCE_RUN_ID: \$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.match(workflow, /run-id: \$\{\{ steps\.source\.outputs\.run_id \}\}/);
+  assert.match(workflow, /run-id: \$\{\{ needs\.attempt0\.outputs\.source_run_id \}\}/);
+  assert.match(workflow, /run-id: \$\{\{ needs\.attempt0_result\.outputs\.source_run_id \}\}/);
+  assert.equal((workflow.match(/RECOVERY_GUARD_KIND: /g) ?? []).length, 6);
+
+  // Worker 자신은 어떤 workflow도 dispatch하지 않는다.
+  assert.doesNotMatch(workflow, /createWorkflowDispatch|workflow_id: 'plan-implement-worker\.yml'/);
 });
 
 test("AI/검증 job 권한은 read-only이고, Issue write는 AI도 checkout도 없는 finalize에만 있다", () => {
@@ -122,7 +157,11 @@ test("attempt 간 상태는 GitHub artifact로만 전달한다", () => {
   assert.match(workflow, /attempt 1 state artifact 저장/);
   assert.match(workflow, /attempt 1 state 다운로드/);
   assert.match(workflow, /attempt 2 state artifact 저장/);
-  assert.doesNotMatch(workflow, /repository_dispatch|workflow_dispatch/);
+  // Worker 자신은 dispatch trigger를 갖지 않는다. 'workflow_dispatch'는 Preflight source event exact 검증에만 등장한다.
+  const triggers = workflow.slice(0, workflow.indexOf("\npermissions: {}"));
+  assert.doesNotMatch(triggers, /repository_dispatch|workflow_dispatch/);
+  assert.equal((workflow.match(/repository_dispatch|workflow_dispatch/g) ?? []).length, 1);
+  assert.match(workflow, /run\.event === 'workflow_dispatch'/);
 });
 
 test("candidate는 exact approved base에서 deterministic CI를 통과해야 최종 artifact가 된다", () => {
@@ -194,7 +233,7 @@ test("timeout 경계 failure만 fresh runner에서 1회 bounded 자동 재시도
   assert.match(workflow, /needs\.attempt0_result\.outputs\.infrastructure_failed == 'true'/);
 });
 
-test("INFRA_FAILURE는 exact stalled marker로만 기록하고 자동 Resume하지 않는다", () => {
+test("INFRA_FAILURE는 exact stalled marker로만 기록하고 Worker 스스로 Resume하지 않는다", () => {
   const finalize = jobBlock("finalize");
   assert.match(workflow, /source_run_id: \$\{\{ steps\.source\.outputs\.run_id \}\}/);
   assert.match(workflow, /source_run_attempt: \$\{\{ steps\.source\.outputs\.run_attempt \}\}/);
@@ -206,7 +245,7 @@ test("INFRA_FAILURE는 exact stalled marker로만 기록하고 자동 Resume하�
   assert.match(finalize, /\^plan-implement-handoff-issue-\(\\d\+\)-plan-\\d\+-attempt-\\d\+-approval-\\d\+\$/);
   assert.match(finalize, /invalid stalled cycle identity/);
   assert.match(finalize, /exact STALLED_WORKER marker already exists/);
-  assert.match(finalize, /자동 Resume은 아직 수행하지 않습니다/);
+  assert.match(finalize, /Trusted Recovery Preflight가 PASS하면 Worker가 자동 재진입합니다/);
 
   // marker 뒤에도 infrastructure failure는 fail-closed 한다.
   assert.ok(finalize.indexOf("INFRA_FAILURE stalled cycle 기록") < finalize.indexOf("upstream infrastructure failure 시 fail-closed"));

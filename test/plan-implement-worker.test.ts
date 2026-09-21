@@ -208,6 +208,47 @@ test("validated candidate provenance는 source handoff/Worker attempt/exact dige
   assert.match(provenance.provenanceDigest, /^[0-9a-f]{64}$/);
 });
 
+test("recovery candidate provenance도 exact trusted recovery guard를 유지한다", () => {
+  const { bundle, context, approved } = fixture();
+  const file = context.files[0]!;
+  assert.equal(file.state, "present");
+  const candidate = createCandidateChangeSet(bundle.contract, bundle.context, {
+    summary: "README 상태 설명 추가",
+    changes: [{
+      path: "README.md",
+      operation: "modify",
+      baseContentDigest: file.contentDigest,
+      content: `${file.content}\n상태 설명\n`,
+    }],
+  });
+  const artifact = handoffArtifact(approved);
+  const movedDefaultSha = "9".repeat(40);
+  const movedSource = sourceRun({ currentDefaultSha: movedDefaultSha });
+
+  assert.throws(() => createWorkerCandidateProvenance({
+    bundle,
+    source: movedSource,
+    sourceArtifact: artifact,
+    workerRunId: 34740000001,
+    workerRunAttempt: 1,
+    candidate,
+  }), /re-plan required/);
+
+  assert.doesNotThrow(() => createWorkerCandidateProvenance({
+    bundle,
+    source: movedSource,
+    sourceArtifact: artifact,
+    recoveryGuard: {
+      kind: "trusted-recovery-compare-v1",
+      baseSha: targetSha,
+      currentDefaultSha: movedDefaultSha,
+    },
+    workerRunId: 34740000001,
+    workerRunAttempt: 1,
+    candidate,
+  }));
+});
+
 test("candidate artifact 이름은 source handoff와 Worker run attempt를 모두 고정한다", () => {
   const { bundle } = fixture();
   assert.equal(
