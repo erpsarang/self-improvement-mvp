@@ -2,7 +2,7 @@ name: PLAN Bounded IMPLEMENT Worker
 
 on:
   workflow_run:
-    workflows: ["Trusted PLAN IMPLEMENT Handoff"]
+    workflows: ["Trusted PLAN IMPLEMENT Handoff", "Trusted Worker Recovery Preflight"]
     types: [completed]
 
 permissions: {}
@@ -11,8 +11,7 @@ jobs:
   attempt0:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
-      github.event.workflow_run.event == 'workflow_run'
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
     permissions:
       contents: read
       actions: read
@@ -25,6 +24,9 @@ jobs:
       source_digest: ${{ steps.source.outputs.digest }}
       source_run_id: ${{ steps.source.outputs.run_id }}
       source_run_attempt: ${{ steps.source.outputs.run_attempt }}
+      recovery_guard_kind: ${{ steps.source.outputs.recovery_kind }}
+      recovery_base_sha: ${{ steps.source.outputs.recovery_base_sha }}
+      recovery_current_sha: ${{ steps.source.outputs.recovery_current_sha }}
       base_sha: ${{ steps.base.outputs.sha }}
       candidate_artifact_name: ${{ steps.prepare.outputs.candidate_artifact_name }}
       ci_status: ${{ steps.ci0.outputs.status }}
@@ -33,13 +35,85 @@ jobs:
       retry_required: ${{ steps.timeout0.outputs.retry }}
 
     steps:
+      - name: RECOVERY_READY artifact 다운로드
+        if: github.event.workflow_run.name == 'Trusted Worker Recovery Preflight'
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/worker-recovery-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
       - name: Trusted handoff artifact exact 선택
         id: source
         uses: actions/github-script@v7
         with:
           script: |
             const run = context.payload.workflow_run;
-            if (run.name !== 'Trusted PLAN IMPLEMENT Handoff' || run.path !== '.github/workflows/plan-implement-handoff.yml') {
+            if (
+              run.name === 'Trusted Worker Recovery Preflight' &&
+              run.path === '.github/workflows/plan-worker-recovery-preflight.yml' &&
+              run.event === 'workflow_dispatch'
+            ) {
+              const fs = require('fs');
+              const path = require('path');
+              const root = process.env.RUNNER_TEMP + '/worker-recovery-source';
+              const found = [];
+              const walk = (dir) => {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                  const full = path.join(dir, entry.name);
+                  if (entry.isDirectory()) walk(full);
+                  else if (entry.isFile() && entry.name === 'recovery.json') found.push(full);
+                }
+              };
+              if (fs.existsSync(root)) walk(root);
+              if (found.length !== 1) {
+                core.setFailed(`expected exactly one RECOVERY_READY payload; actual=${found.length}`);
+                return;
+              }
+
+              const recovery = JSON.parse(fs.readFileSync(found[0], 'utf8'));
+              const defaultBranch = context.payload.repository.default_branch;
+              const { data: branch } = await github.rest.repos.getBranch({
+                ...context.repo,
+                branch: defaultBranch,
+              });
+              const handoff = recovery.sourceHandoff;
+              const artifact = handoff?.artifact;
+              const valid =
+                recovery.schemaVersion === 1 &&
+                recovery.kind === 'trusted-worker-recovery-ready' &&
+                recovery.repository === `${context.repo.owner}/${context.repo.repo}` &&
+                Number.isSafeInteger(recovery.issueNumber) && recovery.issueNumber > 0 &&
+                /^[0-9a-f]{40,64}$/.test(recovery.approvedBaseSha || '') &&
+                recovery.currentDefaultSha === run.head_sha &&
+                branch.commit.sha === run.head_sha &&
+                recovery.preflight?.workflowPath === '.github/workflows/plan-worker-recovery-preflight.yml' &&
+                recovery.preflight?.runId === run.id &&
+                recovery.preflight?.runAttempt === run.run_attempt &&
+                recovery.preflight?.trustedCodeSha === run.head_sha &&
+                Number.isSafeInteger(handoff?.runId) && handoff.runId > 0 &&
+                Number.isSafeInteger(handoff?.runAttempt) && handoff.runAttempt > 0 &&
+                Number.isSafeInteger(artifact?.id) && artifact.id > 0 &&
+                /^plan-implement-handoff-issue-\d+-plan-\d+-attempt-\d+-approval-\d+$/.test(artifact?.name || '') &&
+                /^sha256:[0-9a-f]{64}$/.test(artifact?.digest || '');
+              if (!valid) {
+                core.setFailed('invalid RECOVERY_READY provenance');
+                return;
+              }
+
+              core.setOutput('should_run', 'true');
+              core.setOutput('name', artifact.name);
+              core.setOutput('id', String(artifact.id));
+              core.setOutput('digest', artifact.digest);
+              core.setOutput('run_id', String(handoff.runId));
+              core.setOutput('run_attempt', String(handoff.runAttempt));
+              core.setOutput('recovery_kind', 'trusted-recovery-compare-v1');
+              core.setOutput('recovery_base_sha', recovery.approvedBaseSha);
+              core.setOutput('recovery_current_sha', recovery.currentDefaultSha);
+              return;
+            }
+            if (run.name !== 'Trusted PLAN IMPLEMENT Handoff' || run.path !== '.github/workflows/plan-implement-handoff.yml' || run.event !== 'workflow_run') {
               core.setFailed(`unexpected source handoff workflow: ${run.name} ${run.path}`);
               return;
             }
@@ -111,7 +185,7 @@ jobs:
           path: ${{ runner.temp }}/plan-worker-source
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.source.outputs.run_id }}
 
       - name: Trusted Worker input 검증 및 준비
         if: steps.source.outputs.should_run == 'true'
@@ -121,11 +195,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
           SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
           SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
           SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          RECOVERY_GUARD_KIND: ${{ steps.source.outputs.recovery_kind }}
+          RECOVERY_BASE_SHA: ${{ steps.source.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ steps.source.outputs.recovery_current_sha }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source
@@ -260,7 +337,7 @@ jobs:
           path: ${{ runner.temp }}/plan-worker-source-validate-0
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.source.outputs.run_id }}
 
       - name: Trusted candidate 검증 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
@@ -269,11 +346,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
           SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
           SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
           SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          RECOVERY_GUARD_KIND: ${{ steps.source.outputs.recovery_kind }}
+          RECOVERY_BASE_SHA: ${{ steps.source.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ steps.source.outputs.recovery_current_sha }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-0
@@ -422,7 +502,7 @@ jobs:
           path: ${{ runner.temp }}/plan-worker-source-validate-retry
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ needs.attempt0.outputs.source_run_id }}
 
       - name: Trusted candidate 검증 retry
         working-directory: control-validate-retry
@@ -430,11 +510,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ needs.attempt0.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.attempt0.outputs.source_run_attempt }}
           SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
           SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
           SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
+          RECOVERY_GUARD_KIND: ${{ needs.attempt0.outputs.recovery_guard_kind }}
+          RECOVERY_BASE_SHA: ${{ needs.attempt0.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ needs.attempt0.outputs.recovery_current_sha }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-retry
@@ -520,6 +603,9 @@ jobs:
       source_digest: ${{ steps.effective.outputs.source_digest }}
       source_run_id: ${{ steps.effective.outputs.source_run_id }}
       source_run_attempt: ${{ steps.effective.outputs.source_run_attempt }}
+      recovery_guard_kind: ${{ steps.effective.outputs.recovery_guard_kind }}
+      recovery_base_sha: ${{ steps.effective.outputs.recovery_base_sha }}
+      recovery_current_sha: ${{ steps.effective.outputs.recovery_current_sha }}
       base_sha: ${{ steps.effective.outputs.base_sha }}
       candidate_artifact_name: ${{ steps.effective.outputs.candidate_artifact_name }}
 
@@ -543,6 +629,9 @@ jobs:
           SOURCE_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
           SOURCE_RUN_ID: ${{ needs.attempt0.outputs.source_run_id }}
           SOURCE_RUN_ATTEMPT: ${{ needs.attempt0.outputs.source_run_attempt }}
+          RECOVERY_GUARD_KIND: ${{ needs.attempt0.outputs.recovery_guard_kind }}
+          RECOVERY_BASE_SHA: ${{ needs.attempt0.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ needs.attempt0.outputs.recovery_current_sha }}
           BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
           CANDIDATE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.candidate_artifact_name }}
         run: |
@@ -581,6 +670,9 @@ jobs:
             echo "source_digest=$SOURCE_DIGEST"
             echo "source_run_id=$SOURCE_RUN_ID"
             echo "source_run_attempt=$SOURCE_RUN_ATTEMPT"
+            echo "recovery_guard_kind=$RECOVERY_GUARD_KIND"
+            echo "recovery_base_sha=$RECOVERY_BASE_SHA"
+            echo "recovery_current_sha=$RECOVERY_CURRENT_SHA"
             echo "base_sha=$BASE_SHA"
             echo "candidate_artifact_name=$CANDIDATE_ARTIFACT_NAME"
           } >> "$GITHUB_OUTPUT"
@@ -668,7 +760,7 @@ jobs:
           path: ${{ runner.temp }}/plan-worker-source-validate-1
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ needs.attempt0_result.outputs.source_run_id }}
 
       - name: Trusted candidate 검증 1
         working-directory: control-validate-1
@@ -676,11 +768,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ needs.attempt0_result.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.attempt0_result.outputs.source_run_attempt }}
           SOURCE_ARTIFACT_NAME: ${{ needs.attempt0_result.outputs.source_name }}
           SOURCE_ARTIFACT_ID: ${{ needs.attempt0_result.outputs.source_id }}
           SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0_result.outputs.source_digest }}
+          RECOVERY_GUARD_KIND: ${{ needs.attempt0_result.outputs.recovery_guard_kind }}
+          RECOVERY_BASE_SHA: ${{ needs.attempt0_result.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ needs.attempt0_result.outputs.recovery_current_sha }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
@@ -830,7 +925,7 @@ jobs:
           path: ${{ runner.temp }}/plan-worker-source-validate-2
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ needs.attempt0_result.outputs.source_run_id }}
 
       - name: Trusted candidate 검증 2
         working-directory: control-validate-2
@@ -838,11 +933,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ needs.attempt0_result.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.attempt0_result.outputs.source_run_attempt }}
           SOURCE_ARTIFACT_NAME: ${{ needs.attempt0_result.outputs.source_name }}
           SOURCE_ARTIFACT_ID: ${{ needs.attempt0_result.outputs.source_id }}
           SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0_result.outputs.source_digest }}
+          RECOVERY_GUARD_KIND: ${{ needs.attempt0_result.outputs.recovery_guard_kind }}
+          RECOVERY_BASE_SHA: ${{ needs.attempt0_result.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ needs.attempt0_result.outputs.recovery_current_sha }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
@@ -1050,7 +1148,7 @@ jobs:
                 marker,
                 '## Worker 일시 중단 — INFRA_FAILURE',
                 '업무 candidate가 생성되기 전에 infrastructure failure로 중단되었습니다.',
-                '자동 Resume은 아직 수행하지 않습니다.',
+                'Trusted Recovery Preflight가 PASS하면 Worker가 자동 재진입합니다.',
               ].join('\n\n'),
             });
 
