@@ -136,9 +136,11 @@ function trustedRecoveryGuard(): TrustedRecoveryCompareGuard | undefined {
   const kind = process.env.TRUSTED_RECOVERY_GUARD_KIND;
   if (!kind) return undefined;
   if (kind !== "trusted-recovery-compare-v1") throw new Error("invalid trusted recovery guard kind");
+  const workerHeadSha = process.env.TRUSTED_RECOVERY_WORKER_SHA?.trim();
   return {
     kind,
     baseSha: required("TRUSTED_RECOVERY_BASE_SHA"),
+    ...(workerHeadSha ? { workerHeadSha } : {}),
     currentDefaultSha: required("TRUSTED_RECOVERY_DEFAULT_SHA"),
   };
 }
