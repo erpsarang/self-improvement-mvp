@@ -45,6 +45,7 @@ export interface PlanImplementationScopeInput {
 
 export interface ApprovedPlanDocument {
   readonly questions: readonly string[];
+  readonly approach: readonly string[];
   readonly implementationScope: PlanImplementationScopeInput;
 }
 
@@ -190,6 +191,7 @@ export function validateApprovedPlanDocument(value: unknown): ApprovedPlanDocume
     throw new Error("approved PLAN questions are invalid");
   }
   if (value.questions.length !== 0) throw new Error("approved PLAN still has blocking questions");
+  const approach = exactArray("approach", value.approach, 8, false);
   if (!record(value.implementationScope)) throw new Error("approved PLAN implementationScope missing");
 
   const scope = value.implementationScope;
@@ -214,6 +216,7 @@ export function validateApprovedPlanDocument(value: unknown): ApprovedPlanDocume
 
   return {
     questions: [],
+    approach,
     implementationScope: {
       ready: true,
       allowedPaths,
@@ -266,7 +269,10 @@ export function createPlanImplementContract(
   return createImplementContract(toApprovedPlanIdentity(trustedAuthorization), {
     allowedPaths: scope.allowedPaths,
     contextPaths: scope.contextPaths,
-    requiredChanges: scope.requiredChanges,
+    requiredChanges: [
+      ...scope.requiredChanges,
+      ...plan.approach.map((item) => `승인된 PLAN approach: ${item}`),
+    ],
     forbiddenChanges: scope.forbiddenChanges,
     validationCommands: scope.validationCommands,
     maxFilesChanged: scope.allowedPaths.length,

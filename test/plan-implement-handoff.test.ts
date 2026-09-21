@@ -68,6 +68,10 @@ function source(overrides: Partial<PlanAuthorizeSourceRun> = {}): PlanAuthorizeS
 
 const readyPlan = {
   questions: [],
+  approach: [
+    "HumanStatus별 고정 한국어 문구를 사용한다",
+    "PLAN 출력에는 승인된 문구만 연결한다",
+  ],
   implementationScope: {
     ready: true,
     allowedPaths: [
@@ -124,7 +128,10 @@ test("canonical PLAN.json wrapper와 ready scope를 deterministic ImplementContr
   assert.deepEqual(contract.scope.contextPaths, ["src/self-improvement/implement-contract.ts"]);
   assert.equal(contract.scope.maxContextBytes, PLAN_IMPLEMENT_MAX_CONTEXT_BYTES);
   assert.equal(contract.scope.maxPatchBytes, PLAN_IMPLEMENT_MAX_PATCH_BYTES);
-  assert.deepEqual(contract.scope.requiredChanges, readyPlan.implementationScope.requiredChanges);
+  assert.deepEqual(contract.scope.requiredChanges, [
+    ...readyPlan.implementationScope.requiredChanges,
+    ...readyPlan.approach.map((item) => `승인된 PLAN approach: ${item}`),
+  ]);
   assert.deepEqual(contract.scope.forbiddenChanges, readyPlan.implementationScope.forbiddenChanges);
   assert.deepEqual(contract.scope.validationCommands, ["npm test"]);
   assert.match(contract.contractDigest, /^[0-9a-f]{64}$/);
@@ -186,6 +193,34 @@ test("production handoff는 bare payload나 malformed canonical wrapper를 거�
   assert.throws(
     () => createPlanImplementContract(approved, { ...canonicalPlanArtifact(), extra: true }, requirementSnapshot),
     /wrapper shape/,
+  );
+});
+
+test("approved PLAN approach는 bounded 문자열 배열만 handoff한다", () => {
+  const approved = authorization();
+  assert.throws(
+    () => createPlanImplementContract(
+      approved,
+      canonicalPlanArtifact({ ...readyPlan, approach: undefined }),
+      requirementSnapshot,
+    ),
+    /invalid approach/,
+  );
+  assert.throws(
+    () => createPlanImplementContract(
+      approved,
+      canonicalPlanArtifact({ ...readyPlan, approach: ["정상 지침", 1] }),
+      requirementSnapshot,
+    ),
+    /invalid approach/,
+  );
+  assert.throws(
+    () => createPlanImplementContract(
+      approved,
+      canonicalPlanArtifact({ ...readyPlan, approach: Array.from({ length: 9 }, (_, index) => `지침-${index}`) }),
+      requirementSnapshot,
+    ),
+    /approach exceeds/,
   );
 });
 
