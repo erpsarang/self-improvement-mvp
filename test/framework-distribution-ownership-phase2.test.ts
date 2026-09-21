@@ -15,7 +15,7 @@ const runtime = [
   'improvement-candidate-handler', 'improvement-candidate', 'learn-handler',
   'learn-input-pack', 'learn-report', 'learn-source-handler', 'learn-source',
   'orchestrator-handler', 'orchestrator', 'plan-authorization', 'plan-authorize-handler',
-  'plan-business-context', 'plan-candidate-bridge-handler', 'plan-candidate-bridge',
+  'plan-bridge-patch', 'plan-business-context', 'plan-candidate-bridge-handler', 'plan-candidate-bridge',
   'plan-context-policy', 'plan-explicit-path-context', 'plan-human-output-context',
   'plan-implement-handoff-handler', 'plan-implement-handoff',
   'plan-implement-worker-handler', 'plan-implement-worker', 'plan-recovery-handler', 'plan-recovery',
@@ -36,7 +36,7 @@ test('production ownership is exactly the reviewed full bundle, with no digests 
     ...runtime.map(name => `src/self-improvement/${name}.ts`),
     'policy/framework-distribution-ownership.v1.json',
   ].sort();
-  assert.equal(expected.length, 66);
+  assert.equal(expected.length, 67);
   assert.deepEqual(value.entries.map(entry => entry.sourcePath).sort(), expected);
   for (const entry of value.entries) {
     assert.equal(entry.targetPath, entry.sourcePath);

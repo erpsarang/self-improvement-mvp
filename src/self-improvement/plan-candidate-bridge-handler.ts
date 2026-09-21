@@ -1,14 +1,11 @@
-import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createCanonicalCandidatePatch } from "./plan-bridge-patch.js";
 import {
   runDeterministicValidation,
   verifyDeterministicValidationResult,
@@ -284,60 +281,6 @@ async function validateAllLiveInputs(input: {
   return { candidate, provenance, bundle, workerSource, handoffSource, handoffArtifact, requirement };
 }
 
-function git(args: readonly string[], cwd?: string): string {
-  const result = spawnSync("git", [...args], {
-    cwd,
-    encoding: "utf8",
-    shell: false,
-    env: { ...process.env, GH_TOKEN: "", GITHUB_TOKEN: "" },
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
-  }
-  return result.stdout;
-}
-
-function worktreeStatusPaths(targetDirectory: string): string[] {
-  const raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], targetDirectory);
-  if (!raw) return [];
-  return raw.split("\0").filter(Boolean).map((entry) => {
-    if (entry.length < 4) throw new Error(`unexpected git status entry: ${entry}`);
-    return entry.slice(3);
-  }).sort((a, b) => a.localeCompare(b));
-}
-
-function createPatch(targetDirectory: string, baseSha: string, expectedPaths: readonly string[]): Buffer {
-  const before = worktreeStatusPaths(targetDirectory);
-  const expected = [...expectedPaths].sort((a, b) => a.localeCompare(b));
-  if (JSON.stringify(before) !== JSON.stringify(expected)) {
-    throw new Error(`validation worktree paths mismatch: actual=${before.join(",")} expected=${expected.join(",")}`);
-  }
-
-  git(["add", "-N", "--", ...expected], targetDirectory);
-  const names = git(["diff", "--name-only", "--no-ext-diff", "HEAD", "--", ...expected], targetDirectory)
-    .split("\n").filter(Boolean).sort((a, b) => a.localeCompare(b));
-  if (JSON.stringify(names) !== JSON.stringify(expected)) {
-    throw new Error(`candidate patch paths mismatch: actual=${names.join(",")} expected=${expected.join(",")}`);
-  }
-  const patchText = git(["diff", "--binary", "--full-index", "--no-ext-diff", "HEAD", "--", ...expected], targetDirectory);
-  const patch = Buffer.from(patchText, "utf8");
-  if (patch.length === 0) throw new Error("generated candidate patch is empty");
-
-  const checkRoot = mkdtempSync(join(tmpdir(), "plan-bridge-patch-check-"));
-  const checkDir = join(checkRoot, "worktree");
-  try {
-    git(["worktree", "add", "--detach", checkDir, baseSha], targetDirectory);
-    const patchFile = join(checkRoot, "candidate.patch.check");
-    writeFileSync(patchFile, patch);
-    git(["apply", "--check", "--binary", patchFile], checkDir);
-  } finally {
-    try { git(["worktree", "remove", "--force", checkDir], targetDirectory); } catch { /* best-effort cleanup below */ }
-    rmSync(checkRoot, { recursive: true, force: true });
-  }
-  return patch;
-}
-
 async function prepare(): Promise<void> {
   const candidateDirectory = required("SOURCE_CANDIDATE_DIRECTORY");
   const workerArtifact = selectedWorkerArtifact();
@@ -403,8 +346,16 @@ async function finalize(): Promise<void> {
   const frozen = JSON.parse(readFileSync(join(stateDirectory, "requirement.json"), "utf8")) as FrozenPlanRequirement;
   if (JSON.stringify(frozen) !== JSON.stringify(live.requirement)) throw new Error("frozen requirement changed between validation and finalize");
 
-  const expectedPaths = live.candidate.changes.map(({ path }) => path).sort((a, b) => a.localeCompare(b));
-  const patch = createPatch(targetDirectory, observedBaseSha, expectedPaths);
+  // canonical patch는 candidate의 exact approved paths만 대상으로 만든다.
+  // candidate 밖 tracked 변경은 fail-closed, candidate 밖 untracked build artifact는 patch/provenance에서 제외한다.
+  const { patch, classification } = createCanonicalCandidatePatch(
+    targetDirectory,
+    observedBaseSha,
+    live.candidate.changes.map(({ path, content }) => ({ path, content })),
+  );
+  if (classification.excludedUntrackedPaths.length > 0) {
+    console.log(`canonical patch excludes ${classification.excludedUntrackedPaths.length} untracked validation artifact(s) outside the candidate`);
+  }
   const bridgeRunId = positiveInteger("BRIDGE_RUN_ID");
   const bridgeRunAttempt = positiveInteger("BRIDGE_RUN_ATTEMPT");
   const trustedCodeSha = required("BRIDGE_TRUSTED_CODE_SHA");

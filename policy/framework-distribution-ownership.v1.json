@@ -41,6 +41,7 @@
     { "sourcePath": "src/self-improvement/orchestrator.ts", "targetPath": "src/self-improvement/orchestrator.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-authorization.ts", "targetPath": "src/self-improvement/plan-authorization.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-authorize-handler.ts", "targetPath": "src/self-improvement/plan-authorize-handler.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/plan-bridge-patch.ts", "targetPath": "src/self-improvement/plan-bridge-patch.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-business-context.ts", "targetPath": "src/self-improvement/plan-business-context.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-candidate-bridge-handler.ts", "targetPath": "src/self-improvement/plan-candidate-bridge-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-candidate-bridge.ts", "targetPath": "src/self-improvement/plan-candidate-bridge.ts", "classification": "required" },
