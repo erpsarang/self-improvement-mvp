@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/plan-authorize.yml", "utf8");
+const handler = readFileSync("src/self-improvement/plan-authorize-handler.ts", "utf8");
 
 test("PLAN_AUTHORIZE는 exact Human PLAN-승인 Issue comment에서만 시작한다", () => {
   assert.match(workflow, /issue_comment:/);
@@ -31,4 +32,12 @@ test("PLAN_AUTHORIZE artifact와 human-readable pointer를 남긴다", () => {
   assert.match(workflow, /plan-authorize\.json/);
   assert.match(workflow, /self-improvement:PLAN_AUTHORIZE/);
   assert.match(workflow, /approval-comment=/);
+});
+
+
+test("PLAN_AUTHORIZE는 수동 PLAN과 자동 issues PLAN만 provenance 후보로 허용한다", () => {
+  assert.match(handler, /\["workflow_dispatch", "issues"\]\.includes\(run\.event\)/);
+  assert.match(handler, /run\.name !== "Read-only AI PLAN"/);
+  assert.match(handler, /run\.conclusion !== "success"/);
+  assert.doesNotMatch(handler, /\["workflow_dispatch", "issues", "schedule"/);
 });

@@ -159,7 +159,7 @@ async function prepare(): Promise<void> {
   if (
     planRun.name !== "Read-only AI PLAN" ||
     planRun.path !== PLAN_WORKFLOW_PATH ||
-    planRun.event !== "workflow_dispatch" ||
+    !["workflow_dispatch", "issues"].includes(planRun.event) ||
     planRun.status !== "completed" ||
     planRun.conclusion !== "success" ||
     Number(planRun.run_attempt) !== authorization.plan.runAttempt ||

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/plan-implement-handoff.yml", "utf8");
+const handler = readFileSync("src/self-improvement/plan-implement-handoff-handler.ts", "utf8");
 
 test("handoff는 Trusted PLAN_AUTHORIZE만 source로 사용한다", () => {
   assert.match(workflow, /workflows:\s*\["Trusted PLAN_AUTHORIZE"\]/);
@@ -35,4 +36,13 @@ test("production artifact에는 Contract, Context, Worker input과 provenance ma
   }
   assert.match(workflow, /exact approved base SHA checkout/);
   assert.match(workflow, /OBSERVED_BASE_SHA/);
+});
+
+
+test("handoff는 수동 PLAN과 자동 issues PLAN만 승인 PLAN identity로 허용한다", () => {
+  assert.match(handler, /\["workflow_dispatch", "issues"\]\.includes\(planRun\.event\)/);
+  assert.match(handler, /planRun\.name !== "Read-only AI PLAN"/);
+  assert.match(handler, /planRun\.path !== PLAN_WORKFLOW_PATH/);
+  assert.match(handler, /planRun\.conclusion !== "success"/);
+  assert.doesNotMatch(handler, /\["workflow_dispatch", "issues", "schedule"/);
 });
