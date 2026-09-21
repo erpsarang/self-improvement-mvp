@@ -104,7 +104,9 @@ jobs:
       - name: Trusted dependencies 설치
         if: steps.source.outputs.should_run == 'true'
         working-directory: control
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: PLAN_AUTHORIZE artifact 다운로드
         if: steps.source.outputs.should_run == 'true'
