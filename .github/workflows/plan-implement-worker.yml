@@ -23,6 +23,8 @@ jobs:
       source_name: ${{ steps.source.outputs.name }}
       source_id: ${{ steps.source.outputs.id }}
       source_digest: ${{ steps.source.outputs.digest }}
+      source_run_id: ${{ steps.source.outputs.run_id }}
+      source_run_attempt: ${{ steps.source.outputs.run_attempt }}
       base_sha: ${{ steps.base.outputs.sha }}
       candidate_artifact_name: ${{ steps.prepare.outputs.candidate_artifact_name }}
       ci_status: ${{ steps.ci0.outputs.status }}
@@ -57,6 +59,8 @@ jobs:
               core.setOutput('name', artifact.name);
               core.setOutput('id', String(artifact.id));
               core.setOutput('digest', artifact.digest ?? '');
+              core.setOutput('run_id', String(run.id));
+              core.setOutput('run_attempt', String(run.run_attempt));
               return;
             }
 
@@ -514,6 +518,8 @@ jobs:
       source_name: ${{ steps.effective.outputs.source_name }}
       source_id: ${{ steps.effective.outputs.source_id }}
       source_digest: ${{ steps.effective.outputs.source_digest }}
+      source_run_id: ${{ steps.effective.outputs.source_run_id }}
+      source_run_attempt: ${{ steps.effective.outputs.source_run_attempt }}
       base_sha: ${{ steps.effective.outputs.base_sha }}
       candidate_artifact_name: ${{ steps.effective.outputs.candidate_artifact_name }}
 
@@ -535,6 +541,8 @@ jobs:
           SOURCE_NAME: ${{ needs.attempt0.outputs.source_name }}
           SOURCE_ID: ${{ needs.attempt0.outputs.source_id }}
           SOURCE_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
+          SOURCE_RUN_ID: ${{ needs.attempt0.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.attempt0.outputs.source_run_attempt }}
           BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
           CANDIDATE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.candidate_artifact_name }}
         run: |
@@ -571,6 +579,8 @@ jobs:
             echo "source_name=$SOURCE_NAME"
             echo "source_id=$SOURCE_ID"
             echo "source_digest=$SOURCE_DIGEST"
+            echo "source_run_id=$SOURCE_RUN_ID"
+            echo "source_run_attempt=$SOURCE_RUN_ATTEMPT"
             echo "base_sha=$BASE_SHA"
             echo "candidate_artifact_name=$CANDIDATE_ARTIFACT_NAME"
           } >> "$GITHUB_OUTPUT"
@@ -900,6 +910,7 @@ jobs:
     if: always() && needs.attempt0_result.outputs.should_run == 'true'
     permissions:
       actions: read
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -985,6 +996,63 @@ jobs:
         run: |
           echo "AI repair blocked by deterministic repair policy: attempt0=${ATTEMPT0_REASON}, attempt1=${ATTEMPT1_REASON}" >&2
           exit 1
+
+      - name: INFRA_FAILURE stalled cycle 기록
+        if: needs.attempt0_result.outputs.infrastructure_failed == 'true'
+        uses: actions/github-script@v7
+        env:
+          SOURCE_HANDOFF_RUN_ID: ${{ needs.attempt0_result.outputs.source_run_id }}
+          SOURCE_HANDOFF_RUN_ATTEMPT: ${{ needs.attempt0_result.outputs.source_run_attempt }}
+          SOURCE_HANDOFF_ARTIFACT: ${{ needs.attempt0_result.outputs.source_name }}
+          APPROVED_BASE_SHA: ${{ needs.attempt0_result.outputs.base_sha }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const artifact = process.env.SOURCE_HANDOFF_ARTIFACT || '';
+            const match = /^plan-implement-handoff-issue-(\d+)-plan-\d+-attempt-\d+-approval-\d+$/.exec(artifact);
+            if (!match) {
+              core.setFailed(`cannot derive issue from Handoff artifact: ${artifact}`);
+              return;
+            }
+
+            const issueNumber = Number(match[1]);
+            const handoffRunId = Number(process.env.SOURCE_HANDOFF_RUN_ID);
+            const handoffRunAttempt = Number(process.env.SOURCE_HANDOFF_RUN_ATTEMPT);
+            const workerRunId = Number(process.env.WORKER_RUN_ID);
+            const workerRunAttempt = Number(process.env.WORKER_RUN_ATTEMPT);
+            const baseSha = process.env.APPROVED_BASE_SHA || '';
+            if (
+              ![issueNumber, handoffRunId, handoffRunAttempt, workerRunId, workerRunAttempt]
+                .every((value) => Number.isSafeInteger(value) && value > 0) ||
+              !/^[0-9a-f]{40,64}$/.test(baseSha)
+            ) {
+              core.setFailed('invalid stalled cycle identity');
+              return;
+            }
+
+            const marker =
+              `<!-- ai-dev-framework:STALLED_WORKER issue=${issueNumber} handoff-run=${handoffRunId} handoff-attempt=${handoffRunAttempt} artifact=${artifact} base-sha=${baseSha} worker-run=${workerRunId} worker-attempt=${workerRunAttempt} reason=INFRA_FAILURE -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            if (comments.some((comment) => (comment.body || '').includes(marker))) {
+              core.info('exact STALLED_WORKER marker already exists');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                marker,
+                '## Worker 일시 중단 — INFRA_FAILURE',
+                '업무 candidate가 생성되기 전에 infrastructure failure로 중단되었습니다.',
+                '자동 Resume은 아직 수행하지 않습니다.',
+              ].join('\n\n'),
+            });
 
       - name: upstream infrastructure failure 시 fail-closed
         if: >-
