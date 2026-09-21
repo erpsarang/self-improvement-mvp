@@ -150,6 +150,57 @@ test("approved Requirement snapshot이 digest와 다르면 re-plan required로 f
   );
 });
 
+test("package.json 변경 승인에는 package-lock.json을 deterministic companion으로 결합한다", () => {
+  const approved = authorization();
+  const webPlan = {
+    ...readyPlan,
+    approach: ["Vite 기반 Web 화면을 추가한다"],
+    implementationScope: {
+      ...readyPlan.implementationScope,
+      allowedPaths: ["package.json", "src/web/main.ts"],
+      requiredChanges: ["Vite 개발 의존성과 Web 진입점을 추가한다"],
+      validationCommands: ["npm test", "npm run build"],
+    },
+  };
+
+  const contract = createPlanImplementContract(approved, canonicalPlanArtifact(webPlan), requirementSnapshot);
+
+  assert.deepEqual(contract.scope.allowedPaths, [
+    "package-lock.json",
+    "package.json",
+    "src/web/main.ts",
+  ]);
+  assert.equal(contract.scope.maxFilesChanged, 3);
+  assert.ok(contract.scope.requiredChanges.includes(
+    "package.json을 변경하더라도 package-lock.json은 작성하지 않는다. package-lock.json은 trusted deterministic step이 생성해 같은 candidate에 포함한다. 의존성은 npm registry의 semver 버전으로만 지정한다.",
+  ));
+});
+
+test("package.json companion이 8-file bounded scope를 넘기면 fail-closed 한다", () => {
+  const approved = authorization();
+  const saturatedPlan = {
+    ...readyPlan,
+    implementationScope: {
+      ...readyPlan.implementationScope,
+      allowedPaths: [
+        "package.json",
+        "src/a.ts",
+        "src/b.ts",
+        "src/c.ts",
+        "src/d.ts",
+        "src/e.ts",
+        "src/f.ts",
+        "src/g.ts",
+      ],
+    },
+  };
+
+  assert.throws(
+    () => createPlanImplementContract(approved, canonicalPlanArtifact(saturatedPlan), requirementSnapshot),
+    /package-lock\.json within bounded scope/,
+  );
+});
+
 test("source workflow/run/SHA/default HEAD가 exact approval과 다르면 fail-closed 한다", () => {
   const approved = authorization();
   assert.throws(

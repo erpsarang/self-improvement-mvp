@@ -9,6 +9,13 @@ import {
   type ImplementContract,
 } from "./implement-contract.js";
 
+/**
+ * package-lock.json은 AI가 아니라 trusted deterministic step(trusted-lockfile.ts)이 생성한다.
+ * 따라서 untrusted patch budget(maxPatchBytes)에는 넣지 않고, 별도의 trusted 상한으로 묶는다.
+ */
+export const TRUSTED_LOCKFILE_PATH = "package-lock.json" as const;
+export const TRUSTED_LOCKFILE_MAX_BYTES = 512 * 1024;
+
 export interface WorkerChangeProposal {
   readonly path: string;
   readonly operation: "modify" | "create";
@@ -152,7 +159,11 @@ export function createCandidateChangeSet(
   changes.sort((a, b) => a.path.localeCompare(b.path));
 
   const outputBytes = changes.reduce((sum, change) => sum + Buffer.byteLength(change.content, "utf8"), 0);
-  if (outputBytes > contract.scope.maxPatchBytes) throw new Error("worker proposal exceeds maxPatchBytes");
+  const trustedLockfileBytes = changes
+    .filter((change) => change.path === TRUSTED_LOCKFILE_PATH)
+    .reduce((sum, change) => sum + Buffer.byteLength(change.content, "utf8"), 0);
+  if (trustedLockfileBytes > TRUSTED_LOCKFILE_MAX_BYTES) throw new Error("package-lock.json exceeds trusted lockfile size bound");
+  if (outputBytes - trustedLockfileBytes > contract.scope.maxPatchBytes) throw new Error("worker proposal exceeds maxPatchBytes");
 
   const payload: CandidateChangeSetPayload = {
     schemaVersion: 1,

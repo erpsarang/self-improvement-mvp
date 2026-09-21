@@ -4,6 +4,7 @@ import {
   createCandidateChangeSet,
   type WorkerProposal,
 } from "./single-pass-worker.js";
+import { applyTrustedLockfile } from "./trusted-lockfile.js";
 import {
   createWorkerCandidateProvenance,
   validatePlanImplementWorkerSource,
@@ -180,7 +181,11 @@ async function validate(): Promise<void> {
   const workerRunId = positiveInteger("WORKER_RUN_ID");
   const workerRunAttempt = positiveInteger("WORKER_RUN_ATTEMPT");
 
-  const proposal = JSON.parse(readFileSync(rawProposalPath, "utf8")) as WorkerProposal;
+  const rawProposal = JSON.parse(readFileSync(rawProposalPath, "utf8")) as WorkerProposal;
+  // package-lock.json은 AI가 아니라 trusted deterministic step이 생성한다 (AI가 제안한 lock은 버린다).
+  const lockfile = applyTrustedLockfile(bundle.contract, bundle.context, rawProposal);
+  console.log(`trusted package-lock.json: ${lockfile.status}${lockfile.droppedUntrustedLockfile ? " (untrusted lockfile proposal dropped)" : ""}`);
+  const proposal = lockfile.proposal;
   const candidate = createCandidateChangeSet(bundle.contract, bundle.context, proposal);
   const provenance = createWorkerCandidateProvenance({
     bundle,

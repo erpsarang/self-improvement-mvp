@@ -104,6 +104,7 @@ test("validationCommands를 순서 보존된 argv plan으로 만든다", () => {
   const { root, contract } = fixture(["npm test", "npm run build"]);
   try {
     assert.deepEqual(createValidationPlan(contract), [
+      { raw: "npm ci --ignore-scripts", executable: "npm", args: ["ci", "--ignore-scripts"] },
       { raw: "npm test", executable: "npm", args: ["test"] },
       { raw: "npm run build", executable: "npm", args: ["run", "build"] },
     ]);
@@ -125,11 +126,57 @@ test("CI PASS를 구조화하고 provenance digest로 봉인한다", () => {
     });
 
     assert.equal(result.status, "PASS");
-    assert.equal(result.commands.length, 2);
+    assert.equal(result.commands.length, 3);
     assert.deepEqual(result.appliedPaths, ["src/a.ts", "src/new.ts"]);
     assert.match(result.evidenceDigest, /^[0-9a-f]{64}$/);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.doesNotThrow(() => verifyDeterministicValidationResult(result));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("candidate 적용 뒤 dependency preflight를 가장 먼저 실행한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "deterministic-ci-package-"));
+  try {
+    writeFileSync(join(root, "package.json"), "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\"\n}\n", "utf8");
+    const contract = createImplementContract(identity, {
+      allowedPaths: ["package.json"],
+      requiredChanges: ["dependency 변경"],
+      forbiddenChanges: [],
+      validationCommands: ["npm test"],
+      maxFilesChanged: 1,
+      maxContextBytes: 4096,
+      maxPatchBytes: 4096,
+    });
+    const contextPack = createImplementContextPack(contract, root, identity.targetSha);
+    const present = contextPack.files.find(({ path }) => path === "package.json");
+    if (!present || present.state !== "present") throw new Error("package.json context missing");
+    const candidate = createCandidateChangeSet(contract, contextPack, {
+      summary: "Vite dependency 추가",
+      changes: [{
+        path: "package.json",
+        operation: "modify",
+        baseContentDigest: present.contentDigest,
+        content: "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\",\n  \"devDependencies\": { \"vite\": \"^6.0.0\" }\n}\n",
+      }],
+    });
+
+    let calls = 0;
+    const result = runDeterministicValidation(contract, contextPack, candidate, root, identity.targetSha, {
+      executor: (executable, args, cwd) => {
+        calls += 1;
+        assert.equal(readFileSync(join(cwd, "package.json"), "utf8").includes("\"vite\""), true);
+        assert.equal(executable, "npm");
+        assert.deepEqual(args, ["ci", "--ignore-scripts"]);
+        return { status: 1, signal: null, stdout: "", stderr: "lock mismatch" };
+      },
+    });
+
+    assert.equal(result.status, "FAIL");
+    assert.equal(result.commands.length, 1);
+    assert.equal(result.commands[0]?.raw, "npm ci --ignore-scripts");
+    assert.equal(calls, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
