@@ -46,6 +46,14 @@ test("explicit human-facing requirement still activates human-output context", (
   assert.equal(needsHumanOutputPlanContext("실행 상태를 사람이 이해하기 쉽게 표시하고 다음 행동을 안내한다."), true);
   assert.equal(needsHumanOutputPlanContext("Add a user-facing issue comment with the next action."), true);
 });
+test("브라우저 App UI 표시 요구는 Framework human-output context를 활성화하지 않는다", () => {
+  const requirement = [
+    "브라우저에서 주문 CSV 파일을 올리고 분석 결과를 화면에 표시하고 싶다.",
+    "잘못된 CSV 입력이면 사용자가 이해할 수 있는 오류 메시지를 화면에 표시한다.",
+    "기존 CLI의 JSON/CSV 입력 기능은 그대로 유지한다.",
+  ].join("\n");
+  assert.equal(needsHumanOutputPlanContext(requirement), false);
+});
 
 test("PLAN guidance allows only actually impacted existing tests into write scope", () => {
   const guidance = planImpactTestScopeGuidance();
