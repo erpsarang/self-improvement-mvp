@@ -31,7 +31,9 @@ jobs:
           cache: npm
           cache-dependency-path: .framework-runtime/package-lock.json
 
-      - run: npm ci --ignore-scripts --prefix .framework-runtime
+      - run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted PLAN approval validation
         id: authorize

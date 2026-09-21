@@ -175,7 +175,9 @@ jobs:
       - name: Trusted preparation dependencies 설치
         if: steps.source.outputs.should_run == 'true'
         working-directory: control-prep
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted handoff artifact 다운로드
         if: steps.source.outputs.should_run == 'true'
@@ -327,7 +329,9 @@ jobs:
       - name: Trusted validation dependencies 설치 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted handoff artifact 재다운로드 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
@@ -493,7 +497,9 @@ jobs:
 
       - name: Trusted validation dependencies 설치 retry
         working-directory: control-validate-retry
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted handoff artifact 재다운로드 retry
         uses: actions/download-artifact@v4
@@ -751,7 +757,9 @@ jobs:
 
       - name: Trusted validation dependencies 설치 1
         working-directory: control-validate-1
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted handoff artifact 재다운로드 1
         uses: actions/download-artifact@v4
@@ -916,7 +924,9 @@ jobs:
 
       - name: Trusted validation dependencies 설치 2
         working-directory: control-validate-2
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted handoff artifact 재다운로드 2
         uses: actions/download-artifact@v4

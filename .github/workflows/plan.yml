@@ -47,7 +47,9 @@ jobs:
 
       - name: Install Framework dependencies
         working-directory: planner-control
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Freeze user requirement and target SHA
         id: input
@@ -150,7 +152,9 @@ jobs:
 
       - name: Install Framework dependencies for validation
         working-directory: planner-control-validation
-        run: npm ci --ignore-scripts --prefix .framework-runtime
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
 
       - name: Validate bounded PLAN against fresh exact SHA
         working-directory: planner-control-validation
