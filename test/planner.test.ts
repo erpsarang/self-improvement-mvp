@@ -9,6 +9,7 @@ import {
   createPlanPrompt,
   PLAN_CONTEXT_MAX_BYTES,
   PLAN_CONTEXT_MAX_FILES,
+  PLAN_ALLOWED_PATH_PATTERN,
   PLAN_SCHEMA,
   selectPlanContext,
   snapshot,
@@ -216,4 +217,124 @@ test("PLAN workflow removes repositories before bounded read-only AI execution",
   assert.match(workflow, /Fresh Target checkout at frozen SHA for validation/);
   assert.doesNotMatch(workflow.split("  provenance:")[0]!, /(?:contents|issues|pull-requests): write|workflow_run:|workflow_call:|git (?:commit|push|checkout -b)|trusted-rail/);
   assert.match(workflow, /runner.temp.*ai-plan\/PLAN-context.json/);
+});
+
+// ---------------------------------------------------------------------------
+// #176 blocker: PLAN AI가 runner 절대경로를 allowedPaths로 반환 → trusted validation 실패
+// ---------------------------------------------------------------------------
+
+const REJECTED_ALLOWED_PATHS = [
+  "/home/runner/work/_temp/plan-neutral/package.json",
+  "/home/runner/work/_temp/plan-neutral/src/order-analysis-cli.ts",
+  "/tmp/foo.ts",
+  "C:\\repo\\foo.ts",
+  "C:/repo/foo.ts",
+  "../foo.ts",
+  "./foo.ts",
+  "src/../foo.ts",
+  "src/./foo.ts",
+  "src/*",
+  "src/",
+  "src//foo.ts",
+  "src\\foo.ts",
+  "src/foo?.ts",
+  "src/[a].ts",
+  ".",
+  "..",
+  "",
+  " package.json",
+];
+const ACCEPTED_ALLOWED_PATHS = [
+  "package.json",
+  "package-lock.json",
+  "index.html",
+  "src/order-csv.ts",
+  "src/web-main.ts",
+  "test/order-csv.test.ts",
+  ".github/workflows/ci.yml",
+  ".gitignore",
+  "docs/phase-1-plan.md",
+];
+
+test("PLAN prompt는 allowedPaths가 repository-relative path이며 filesystem 절대경로가 금지임을 명시한다", () => {
+  const f = fixture();
+  try {
+    const context = selectPlanContext("orders 주문", f.target, "example/orders", "c".repeat(40), { maxFiles: 1 });
+    const prompt = createPlanPrompt("주문 기능을 개선한다", context);
+    // 1. repository-relative 규칙
+    assert.match(prompt, /implementationScope\.allowedPaths 규칙:/);
+    assert.match(prompt, /모든 allowedPaths는 repository root 기준 상대경로입니다/);
+    assert.match(prompt, /exact path는 filesystem 절대경로가 아니라 repository root 기준 상대경로\(repository-relative path\)를 뜻합니다/);
+    // 2. 절대경로 / runner 위치 금지
+    assert.match(prompt, /절대경로는 금지입니다/);
+    for (const forbidden of ["/home/...", "/tmp/...", "runner workspace", "plan-neutral", "PLAN_TARGET", "filesystem 실제 위치"]) {
+      assert.ok(prompt.includes(forbidden), forbidden);
+    }
+    assert.match(prompt, /'\.\/' 또는 '\.\.\/' 로 시작하는 경로, backslash, 끝의 '\/', 디렉터리 경로, wildcard도 금지/);
+    // 정상 예시
+    for (const example of ["package.json", "src/feature.ts", "test/feature.test.ts"]) assert.ok(prompt.includes(example), example);
+    // 3. 기존 파일은 Context Pack path 그대로
+    assert.match(prompt, /Context Pack의 path 값을 글자 그대로 사용하세요/);
+    // 4. 신규 파일도 repo-relative exact path
+    assert.match(prompt, /신규 파일도 같은 형식의 repository-relative exact path로만 제안하세요/);
+    // 기존 계약 문구는 유지
+    assert.match(prompt, /wildcard\/placeholder를 쓰지 마세요/);
+    assert.match(prompt, /implementationScope\.ready=true이면 questions는 반드시 빈 배열/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("PLAN_SCHEMA는 allowedPaths의 절대경로/비정상 경로를 structured output 단계에서 거부한다", () => {
+  const items = PLAN_SCHEMA.properties.implementationScope.properties.allowedPaths.items;
+  assert.equal(items.pattern, PLAN_ALLOWED_PATH_PATTERN);
+  assert.equal(items.type, "string");
+  assert.equal(items.minLength, 1);
+  assert.equal(items.maxLength, 500);
+  assert.equal(PLAN_SCHEMA.properties.implementationScope.properties.allowedPaths.maxItems, 8);
+  // lookahead 등 구현 의존 기능을 쓰지 않는다.
+  assert.doesNotMatch(PLAN_ALLOWED_PATH_PATTERN, /\(\?[=!<]/);
+  const pattern = new RegExp(PLAN_ALLOWED_PATH_PATTERN);
+  for (const path of REJECTED_ALLOWED_PATHS) assert.equal(pattern.test(path), false, `must reject ${JSON.stringify(path)}`);
+  for (const path of ACCEPTED_ALLOWED_PATHS) assert.equal(pattern.test(path), true, `must accept ${JSON.stringify(path)}`);
+});
+
+test("schema pattern은 trusted validator보다 느슨하지 않고, validator의 fail-closed 의미는 그대로다", () => {
+  const f = fixture();
+  try {
+    const context = selectPlanContext("orders 주문", f.target, "example/orders", "c".repeat(40), { maxFiles: 1 });
+    const valid = planFor(context);
+    const pattern = new RegExp(PLAN_ALLOWED_PATH_PATTERN);
+    const validatorAccepts = (path: string): boolean => {
+      try {
+        validatePlan({ ...valid, implementationScope: { ...valid.implementationScope, allowedPaths: [path] } }, f.target, context);
+        return true;
+      } catch (error) {
+        if (/Unsafe implementation scope path|Invalid implementationScope/.test(String(error))) return false;
+        throw error;
+      }
+    };
+    // validator는 기존과 같이 모두 거부한다 (완화 없음).
+    for (const path of REJECTED_ALLOWED_PATHS) {
+      assert.throws(
+        () => validatePlan({ ...valid, implementationScope: { ...valid.implementationScope, allowedPaths: [path] } }, f.target, context),
+        /Unsafe implementation scope path|Invalid implementationScope/,
+        JSON.stringify(path),
+      );
+    }
+    // schema가 허용하는 신규 경로는 validator도 안전 경로로 인정한다: pattern ⊆ validator.
+    for (const path of ACCEPTED_ALLOWED_PATHS) {
+      assert.equal(pattern.test(path), true, path);
+      assert.equal(validatorAccepts(path), true, `validator must accept ${path}`);
+    }
+    // validator는 허용하지만 schema는 더 엄격하게 거부하는 경우가 있어도 된다 (그 반대는 안 된다).
+    for (const path of ["..foo.ts", "src/...", "-"]) {
+      if (pattern.test(path)) assert.equal(validatorAccepts(path), true, path);
+    }
+    // 기존 파일이 bounded Context 밖이면 여전히 거부된다.
+    writeFileSync(join(f.target, "hidden.ts"), "export const hidden = true;\n");
+    assert.equal(pattern.test("hidden.ts"), true);
+    assert.throws(
+      () => validatePlan({ ...valid, implementationScope: { ...valid.implementationScope, allowedPaths: ["hidden.ts"] } }, f.target, context),
+      /outside bounded PLAN context/,
+    );
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
