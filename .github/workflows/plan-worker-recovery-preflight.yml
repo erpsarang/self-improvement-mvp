@@ -1,0 +1,293 @@
+name: Trusted Worker Recovery Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: STALLED_WORKER marker가 기록된 업무 Issue 번호
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      artifact_name: ${{ steps.verify.outputs.artifact_name }}
+
+    steps:
+      - name: STALLED_WORKER / Handoff / Framework-only drift exact 검증
+        id: verify
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          OUTPUT_PATH: ${{ runner.temp }}/worker-recovery-preflight/recovery.json
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+              core.setFailed('invalid issue_number');
+              return;
+            }
+
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            if (issue.pull_request || issue.state !== 'open') {
+              core.setFailed('recovery target must be one open Issue');
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const markerPattern =
+              /<!-- ai-dev-framework:STALLED_WORKER issue=(\d+) handoff-run=(\d+) handoff-attempt=(\d+) artifact=([^\s>]+) base-sha=([0-9a-f]{40,64}) worker-run=(\d+) worker-attempt=(\d+) reason=INFRA_FAILURE -->/;
+            const stalled = comments
+              .map((comment) => {
+                const match = markerPattern.exec(comment.body || '');
+                if (!match) return null;
+                return {
+                  commentId: comment.id,
+                  createdAt: comment.created_at,
+                  issueNumber: Number(match[1]),
+                  handoffRunId: Number(match[2]),
+                  handoffRunAttempt: Number(match[3]),
+                  handoffArtifactName: match[4],
+                  baseSha: match[5],
+                  workerRunId: Number(match[6]),
+                  workerRunAttempt: Number(match[7]),
+                };
+              })
+              .filter(Boolean);
+
+            if (stalled.length === 0) {
+              core.setFailed('expected at least one STALLED_WORKER marker');
+              return;
+            }
+            if (stalled.some((entry) => entry.issueNumber !== issueNumber)) {
+              core.setFailed('STALLED_WORKER issue identity mismatch');
+              return;
+            }
+            if (stalled.some((entry) => !entry.createdAt || !Number.isFinite(Date.parse(entry.createdAt)))) {
+              core.setFailed('STALLED_WORKER comment timestamp missing');
+              return;
+            }
+
+            const cycleKeys = new Set(
+              stalled.map((entry) =>
+                JSON.stringify([
+                  entry.handoffRunId,
+                  entry.handoffRunAttempt,
+                  entry.handoffArtifactName,
+                  entry.baseSha,
+                ]),
+              ),
+            );
+            if (cycleKeys.size !== 1) {
+              core.setFailed(`expected exactly one STALLED Handoff cycle; actual=${cycleKeys.size}`);
+              return;
+            }
+
+            stalled.sort((a, b) => {
+              const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+              return timeDiff !== 0 ? timeDiff : b.commentId - a.commentId;
+            });
+            const source = stalled[0];
+            core.info(
+              `selected latest STALLED_WORKER marker comment=${source.commentId} worker=${source.workerRunId}/${source.workerRunAttempt}`,
+            );
+
+            const defaultBranch = context.payload.repository.default_branch;
+            const { data: branch } = await github.rest.repos.getBranch({
+              ...context.repo,
+              branch: defaultBranch,
+            });
+            const currentDefaultSha = branch.commit.sha;
+            if (context.ref !== `refs/heads/${defaultBranch}` || context.sha !== currentDefaultSha) {
+              core.setFailed('preflight trusted code is not exact current default branch');
+              return;
+            }
+
+            const { data: worker } = await github.rest.actions.getWorkflowRun({
+              ...context.repo,
+              run_id: source.workerRunId,
+            });
+            if (
+              worker.name !== 'PLAN Bounded IMPLEMENT Worker' ||
+              worker.path !== '.github/workflows/plan-implement-worker.yml' ||
+              worker.event !== 'workflow_run' ||
+              worker.status !== 'completed' ||
+              worker.conclusion !== 'failure' ||
+              worker.run_attempt !== source.workerRunAttempt ||
+              worker.head_branch !== defaultBranch ||
+              !/^[0-9a-f]{40,64}$/.test(worker.head_sha || '')
+            ) {
+              core.setFailed('STALLED_WORKER source Worker identity mismatch');
+              return;
+            }
+
+            const { data: baseToWorker } = await github.rest.repos.compareCommitsWithBasehead({
+              ...context.repo,
+              basehead: `${source.baseSha}...${worker.head_sha}`,
+              per_page: 100,
+            });
+            if (
+              !['ahead', 'identical'].includes(baseToWorker.status) ||
+              baseToWorker.merge_base_commit.sha !== source.baseSha
+            ) {
+              core.setFailed('STALLED_WORKER source Worker is outside approved-base ancestry');
+              return;
+            }
+
+            const { data: workerToCurrent } = await github.rest.repos.compareCommitsWithBasehead({
+              ...context.repo,
+              basehead: `${worker.head_sha}...${currentDefaultSha}`,
+              per_page: 100,
+            });
+            if (
+              !['ahead', 'identical'].includes(workerToCurrent.status) ||
+              workerToCurrent.merge_base_commit.sha !== worker.head_sha
+            ) {
+              core.setFailed('STALLED_WORKER source Worker is not an ancestor of current default');
+              return;
+            }
+
+            const { data: handoff } = await github.rest.actions.getWorkflowRun({
+              ...context.repo,
+              run_id: source.handoffRunId,
+            });
+            if (
+              handoff.name !== 'Trusted PLAN IMPLEMENT Handoff' ||
+              handoff.path !== '.github/workflows/plan-implement-handoff.yml' ||
+              handoff.event !== 'workflow_run' ||
+              handoff.status !== 'completed' ||
+              handoff.conclusion !== 'success' ||
+              handoff.run_attempt !== source.handoffRunAttempt ||
+              handoff.head_branch !== defaultBranch ||
+              handoff.head_sha !== source.baseSha
+            ) {
+              core.setFailed('STALLED_WORKER source Handoff identity mismatch');
+              return;
+            }
+
+            const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+              ...context.repo,
+              run_id: source.handoffRunId,
+              per_page: 100,
+            });
+            const exactArtifacts = artifacts.artifacts.filter(
+              (artifact) =>
+                !artifact.expired &&
+                artifact.name === source.handoffArtifactName &&
+                /^sha256:[0-9a-f]{64}$/.test(artifact.digest || ''),
+            );
+            if (exactArtifacts.length !== 1) {
+              core.setFailed(`expected one exact Handoff artifact; actual=${exactArtifacts.length}`);
+              return;
+            }
+            const handoffArtifact = exactArtifacts[0];
+
+            const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+              ...context.repo,
+              basehead: `${source.baseSha}...${currentDefaultSha}`,
+              per_page: 100,
+            });
+            const files = comparison.files;
+            if (
+              !['ahead', 'identical'].includes(comparison.status) ||
+              comparison.merge_base_commit.sha !== source.baseSha ||
+              !Array.isArray(files) ||
+              files.length > 12
+            ) {
+              core.setFailed('recovery drift is not a bounded ancestor diff');
+              return;
+            }
+
+            const allowedFiles = new Set([
+              '.github/workflows/plan-implement-worker.yml',
+              '.github/workflows/plan-candidate-bridge.yml',
+              '.github/workflows/plan-worker-recovery-preflight.yml',
+              'src/self-improvement/plan-implement-worker-handler.ts',
+              'src/self-improvement/plan-implement-worker.ts',
+              'src/self-improvement/plan-candidate-bridge-handler.ts',
+              'src/self-improvement/plan-candidate-bridge.ts',
+              'test/plan-implement-worker-workflow.test.ts',
+              'test/plan-candidate-bridge-workflow.test.ts',
+              'test/plan-candidate-bridge.test.ts',
+              'test/plan-implement-worker.test.ts',
+              'test/plan-worker-recovery-preflight-workflow.test.ts',
+            ]);
+            const rejected = files.filter(
+              (file) =>
+                !['added', 'modified'].includes(file.status) ||
+                !allowedFiles.has(file.filename) ||
+                file.previous_filename,
+            );
+            if (rejected.length > 0) {
+              core.setFailed(
+                `recovery requires fresh PLAN; non-approved drift: ${rejected
+                  .map((file) => `${file.status}:${file.filename}`)
+                  .join(',')}`,
+              );
+              return;
+            }
+
+            const payload = {
+              schemaVersion: 1,
+              kind: 'trusted-worker-recovery-ready',
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+              issueNumber,
+              sourceMarkerCommentId: source.commentId,
+              approvedBaseSha: source.baseSha,
+              currentDefaultSha,
+              sourceHandoff: {
+                runId: source.handoffRunId,
+                runAttempt: source.handoffRunAttempt,
+                artifact: {
+                  id: handoffArtifact.id,
+                  name: handoffArtifact.name,
+                  digest: handoffArtifact.digest,
+                },
+              },
+              failedWorker: {
+                runId: source.workerRunId,
+                runAttempt: source.workerRunAttempt,
+              },
+              frameworkDriftFiles: files.map((file) => file.filename).sort(),
+              preflight: {
+                workflowPath: '.github/workflows/plan-worker-recovery-preflight.yml',
+                runId: Number(process.env.GITHUB_RUN_ID),
+                runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+                trustedCodeSha: context.sha,
+              },
+            };
+
+            const outputPath = process.env.OUTPUT_PATH;
+            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+            fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2));
+            const artifactName =
+              `worker-recovery-ready-issue-${issueNumber}-run-${process.env.GITHUB_RUN_ID}-attempt-${process.env.GITHUB_RUN_ATTEMPT}`;
+            core.setOutput('artifact_name', artifactName);
+            core.info(
+              `RECOVERY_READY issue=${issueNumber} base=${source.baseSha} current=${currentDefaultSha}`,
+            );
+
+      - name: RECOVERY_READY artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.verify.outputs.artifact_name }}
+          path: ${{ runner.temp }}/worker-recovery-preflight/recovery.json
+          if-no-files-found: error

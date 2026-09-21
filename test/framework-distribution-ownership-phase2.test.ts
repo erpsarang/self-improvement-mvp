@@ -7,7 +7,7 @@ import { assertTrustedOwnershipList } from '../src/self-improvement/distribution
 const workflows = [
   'fix-request', 'fix-worker', 'improvement-candidate', 'learn-source', 'learn',
   'orchestrator', 'plan-authorize', 'plan-candidate-bridge', 'plan-implement-handoff',
-  'plan-implement-worker', 'plan-recovery', 'plan', 'semantic-review', 'trusted-rail',
+  'plan-implement-worker', 'plan-recovery', 'plan-worker-recovery-preflight', 'plan', 'semantic-review', 'trusted-rail',
 ];
 const runtime = [
   'authorization', 'completed-cycle', 'context-pack', 'deterministic-ci',
@@ -36,7 +36,7 @@ test('production ownership is exactly the reviewed full bundle, with no digests 
     ...runtime.map(name => `src/self-improvement/${name}.ts`),
     'policy/framework-distribution-ownership.v1.json',
   ].sort();
-  assert.equal(expected.length, 67);
+  assert.equal(expected.length, 68);
   assert.deepEqual(value.entries.map(entry => entry.sourcePath).sort(), expected);
   for (const entry of value.entries) {
     assert.equal(entry.targetPath, entry.sourcePath);
