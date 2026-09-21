@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { augmentPlanContextWithBusinessRelations } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "../src/self-improvement/plan-human-output-context.js";
 import { selectPlanContext, verifyPlanContextPack } from "../src/self-improvement/planner.js";
 
@@ -213,6 +214,78 @@ test("사용자/Human provenance만 있는 business requirement는 Human Output 
     const augmented = augmentPlanContextWithHumanOutputSurfaces(requirement, root, initial);
 
     assert.deepEqual(augmented, initial);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test("Web App UI 요구는 Framework human-output surface를 추가하지 않고 App 계약을 보존한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-web-project-config-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "test"));
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test", build: "tsc --noEmit" }, devDependencies: { vite: "^7.0.0" } }, null, 2),
+    );
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022" } }, null, 2));
+
+    writeFileSync(
+      join(root, "src", "order-analysis.ts"),
+      "export function analyzeOrder(order: unknown) { return order; }\n// 주문 분석 결과\n",
+    );
+    writeFileSync(
+      join(root, "src", "batch-order-analysis.ts"),
+      "import { analyzeOrder } from './order-analysis.js';\nexport function analyzeBatch(order: unknown) { return analyzeOrder(order); }\n// 주문 CSV 분석\n",
+    );
+    writeFileSync(
+      join(root, "src", "order-analysis-cli.ts"),
+      "import { analyzeBatch } from './batch-order-analysis.js';\nexport const runCli = analyzeBatch;\n// CSV 주문 결과\n",
+    );
+    writeFileSync(
+      join(root, "test", "order-analysis.test.ts"),
+      "import { analyzeOrder } from '../src/order-analysis.js';\nvoid analyzeOrder;\n// 주문 분석 테스트\n",
+    );
+    writeFileSync(
+      join(root, "test", "batch-order-analysis.test.ts"),
+      "import { analyzeBatch } from '../src/batch-order-analysis.js';\nvoid analyzeBatch;\n// 주문 CSV 분석 테스트\n",
+    );
+    writeFileSync(
+      join(root, "test", "order-analysis-cli.test.ts"),
+      "import { runCli } from '../src/order-analysis-cli.js';\nvoid runCli;\n// CSV 주문 결과 테스트\n",
+    );
+
+    writeFileSync(
+      join(root, ".github", "workflows", "orchestrator.yml"),
+      "name: Orchestrator\nscript: |\n  await github.rest.issues.createComment({ body: 'human output' });\n",
+    );
+    writeFileSync(
+      join(root, ".github", "workflows", "plan-implement-worker.yml"),
+      "name: Worker\nscript: |\n  await github.rest.issues.createComment({ body: 'human output' });\n",
+    );
+
+    const requirement = [
+      "브라우저에서 주문 CSV 파일을 올리고 분석 결과를 화면에 표시하고 싶다.",
+      "기존 CLI의 JSON/CSV 입력 기능은 그대로 유지한다.",
+      "기존 분석 엔진을 재사용하고 Web 전용 판정 로직을 복제하지 않는다.",
+    ].join("\n");
+    const selected = selectPlanContext(requirement, root, "example/orders", "f".repeat(40));
+    assert.ok(selected.files.some((file) => file.path === "package.json"));
+    assert.ok(selected.files.some((file) => file.path === "tsconfig.json"));
+
+    const business = augmentPlanContextWithBusinessRelations(requirement, root, selected);
+    const businessPaths = business.files.map((file) => file.path);
+    assert.ok(businessPaths.includes("package.json"));
+    assert.ok(businessPaths.includes("tsconfig.json"));
+    assert.ok(businessPaths.includes("src/order-analysis-cli.ts"), `missing existing CLI contract: ${businessPaths.join(", ")}`);
+    assert.ok(businessPaths.includes("test/order-analysis-cli.test.ts"), `missing existing CLI test: ${businessPaths.join(", ")}`);
+
+    const augmented = augmentPlanContextWithHumanOutputSurfaces(requirement, root, business);
+    assert.deepEqual(augmented, business);
+    assert.doesNotThrow(() => verifyPlanContextPack(augmented));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

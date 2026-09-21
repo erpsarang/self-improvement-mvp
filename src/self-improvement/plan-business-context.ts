@@ -35,6 +35,10 @@ function isFrameworkSource(path: string): boolean {
   return path.toLowerCase().startsWith("src/self-improvement/");
 }
 
+function isProjectExecutionContext(path: string): boolean {
+  return path === "package.json" || path === "tsconfig.json";
+}
+
 function walkFiles(target: string, root: string): string[] {
   const absoluteRoot = join(target, root);
   if (!existsSync(absoluteRoot)) return [];
@@ -170,6 +174,47 @@ function importedRuntimeSources(testPath: string, testText: string, sourcePaths:
     if (source && !result.includes(source)) result.push(source);
   }
   return result.sort((a, b) => sourceAffinity(testPath, b) - sourceAffinity(testPath, a) || a.localeCompare(b));
+}
+
+function selectedRelationProtection(target: string, context: PlanContextPack): ReadonlySet<string> {
+  const contextPaths = new Set(context.files.map((file) => file.path));
+  const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
+  const allTests = walkFiles(target, "test")
+    .filter(isTestLike)
+    .map((path) => {
+      const text = decodeText(join(target, path));
+      return text === null ? null : { path, text };
+    })
+    .filter((entry): entry is { path: string; text: string } => entry !== null);
+  const protectedPaths = new Set<string>();
+
+  for (const file of context.files) {
+    if (isProjectExecutionContext(file.path)) protectedPaths.add(file.path);
+    if (!isTestLike(file.path)) continue;
+    const text = decodeText(join(target, file.path));
+    if (text === null) continue;
+    for (const sourcePath of importedRuntimeSources(file.path, text, sourcePaths)) {
+      if (!contextPaths.has(sourcePath) || isFrameworkSource(sourcePath)) continue;
+      protectedPaths.add(sourcePath);
+      protectedPaths.add(file.path);
+    }
+  }
+
+  // The primary selector can surface an App runtime without its direct test when
+  // later context competition is tight. Recover only the strongest exact-stem
+  // direct test so trusted scope validation can still require evidence for that
+  // existing test path.
+  for (const file of context.files) {
+    if (!isRuntimeSource(file.path) || isFrameworkSource(file.path)) continue;
+    const direct = allTests
+      .filter((test) => importedRuntimeSources(test.path, test.text, sourcePaths).includes(file.path))
+      .sort((a, b) => sourceAffinity(b.path, file.path) - sourceAffinity(a.path, file.path) || a.path.localeCompare(b.path))
+      .find((test) => sourceAffinity(test.path, file.path) === 2);
+    if (!direct) continue;
+    protectedPaths.add(file.path);
+    protectedPaths.add(direct.path);
+  }
+  return protectedPaths;
 }
 
 function trimUtf8(text: string, maxBytes: number): string {
@@ -351,15 +396,52 @@ export function augmentPlanContextWithBusinessRelations(
   const candidates = businessRelationCandidates(requirement, target, contextPaths, maxFiles, maxFileBytes).slice(0, maxFiles);
   if (candidates.length < 2) return context;
 
-  const candidatePaths = new Set(candidates.map((file) => file.path));
-  const retained = context.files.filter((file) => !candidatePaths.has(file.path));
-  const files = [...candidates, ...retained].slice(0, maxFiles);
+  const protectedPaths = selectedRelationProtection(target, context);
+  const terms = requirementTerms(requirement);
+  const protectedFiles: PlanContextFile[] = [];
+  const protectedSeen = new Set<string>();
+  const addProtected = (file: PlanContextFile | null): void => {
+    if (!file || protectedSeen.has(file.path)) return;
+    protectedFiles.push(file);
+    protectedSeen.add(file.path);
+  };
+  for (const file of context.files) {
+    if (protectedPaths.has(file.path)) addProtected(file);
+  }
+  for (const path of protectedPaths) {
+    if (protectedSeen.has(path)) continue;
+    addProtected(contextFile(target, path, terms, maxFileBytes));
+  }
+  const protectedBytes = protectedFiles.reduce((sum, file) => sum + file.byteLength, 0);
+  if (protectedFiles.length > maxFiles || protectedBytes > maxBytes) return context;
+
+  const additionalCandidates = candidates.filter((file) => !protectedPaths.has(file.path));
+  const candidatePaths = new Set(additionalCandidates.map((file) => file.path));
+  const ordinaryRetained = context.files.filter(
+    (file) => !protectedPaths.has(file.path) && !candidatePaths.has(file.path),
+  );
+
+  // Protected source/test/package evidence is authoritative for the already
+  // selected runtime. Business augmentation only spends the remaining budget.
+  let selectedCandidates = additionalCandidates.slice(0, Math.max(0, maxFiles - protectedFiles.length));
+  while (
+    selectedCandidates.length >= 2 &&
+    protectedBytes + selectedCandidates.reduce((sum, file) => sum + file.byteLength, 0) > maxBytes
+  ) {
+    selectedCandidates = selectedCandidates.slice(0, -1);
+  }
+
+  const required = [...selectedCandidates, ...protectedFiles];
+  const files = [...required, ...ordinaryRetained].slice(0, maxFiles);
+  const requiredCount = required.length;
   let totalBytes = files.reduce((sum, file) => sum + file.byteLength, 0);
-  while (totalBytes > maxBytes && files.length > candidates.length) {
+  while (totalBytes > maxBytes && files.length > requiredCount) {
     const removed = files.pop()!;
     totalBytes -= removed.byteLength;
   }
-  if (totalBytes > maxBytes) throw new Error("Business relation Context Pack cannot fit within trusted budget");
+  if (totalBytes > maxBytes) return context;
 
+  // Even when no additional source/test pair fits, returning the protected pack
+  // is useful because it can restore a missing exact direct test for validation.
   return rebind(context.repository, context.sha, files);
 }

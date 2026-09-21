@@ -302,6 +302,10 @@ function lifecycleCandidates(requirement: string, target: string): PlanContextFi
   return result;
 }
 
+function isProtectedProjectContext(path: string): boolean {
+  return path === "package.json" || path === "tsconfig.json";
+}
+
 function uniqueCandidates(groups: readonly PlanContextFile[][]): PlanContextFile[] {
   const result: PlanContextFile[] = [];
   const seen = new Set<string>();
@@ -331,6 +335,9 @@ export function augmentPlanContextWithHumanOutputSurfaces(
   if (candidates.length === 0) return context;
 
   const candidatePaths = new Set(candidates.map((file) => file.path));
+  const protectedProjectPaths = new Set(
+    context.files.filter((file) => isProtectedProjectContext(file.path)).map((file) => file.path),
+  );
   const candidateByPath = new Map(candidates.map((file) => [file.path, file] as const));
   const files = context.files.map((file) => candidateByPath.get(file.path) ?? file);
   const totalBytes = () => files.reduce((sum, file) => sum + file.byteLength, 0);
@@ -341,7 +348,7 @@ export function augmentPlanContextWithHumanOutputSurfaces(
     while (files.length >= PLAN_CONTEXT_MAX_FILES || totalBytes() + candidate.byteLength > PLAN_CONTEXT_MAX_BYTES) {
       let removeIndex = -1;
       for (let index = files.length - 1; index >= 0; index -= 1) {
-        if (!candidatePaths.has(files[index]!.path)) {
+        if (!candidatePaths.has(files[index]!.path) && !protectedProjectPaths.has(files[index]!.path)) {
           removeIndex = index;
           break;
         }
