@@ -138,7 +138,11 @@ async function main(): Promise<void> {
   for (const { locator } of locators) {
     try {
       const run = await api<any>(`/repos/${owner}/${repo}/actions/runs/${locator.runId}`);
-      if (run.name !== "Read-only AI PLAN" || run.event !== "workflow_dispatch" || run.conclusion !== "success") continue;
+      if (
+        run.name !== "Read-only AI PLAN" ||
+        !["workflow_dispatch", "issues"].includes(run.event) ||
+        run.conclusion !== "success"
+      ) continue;
       if (Number(run.run_attempt) !== locator.runAttempt) continue;
 
       const artifactsResponse = await api<any>(`/repos/${owner}/${repo}/actions/runs/${locator.runId}/artifacts?per_page=100`);

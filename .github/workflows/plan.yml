@@ -1,6 +1,8 @@
 name: Read-only AI PLAN
 
 on:
+  issues:
+    types: [opened, reopened]
   workflow_dispatch:
     inputs:
       issue_number:
@@ -12,7 +14,12 @@ permissions: {}
 
 jobs:
   plan:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'issues' &&
+       startsWith(github.event.issue.title, '[업무 요구]') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     outputs:
       identity: ${{ steps.input.outputs.identity }}
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
@@ -46,7 +53,7 @@ jobs:
         id: input
         uses: actions/github-script@v7
         env:
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_NUMBER: ${{ github.event_name == 'issues' && github.event.issue.number || inputs.issue_number }}
         with:
           script: |
             const fs = require('node:fs');
@@ -101,6 +108,15 @@ jobs:
           rm -rf planner-control plan-target
           test ! -e planner-control
           test ! -e plan-target
+
+      - name: PLAN AI rerun 비용 상한 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_RUN_ATTEMPT" -gt 2 ]; then
+            echo "AI Cost Guardrail: 동일 PLAN run의 AI 호출은 최대 2 attempts만 허용합니다." >&2
+            exit 1
+          fi
 
       - name: Read-only bounded AI Planner
         timeout-minutes: 3

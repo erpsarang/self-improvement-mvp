@@ -76,7 +76,8 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
 test("workflow isolates write permission and uses upload result rather than planner claims", () => {
   assert.equal(scripts.length, 3);
   const [planner, provenance] = workflow.split("  provenance:");
-  assert.match(planner!, /if: github.ref == format\('refs\/heads\/\{0\}', github.event.repository.default_branch\)/);
+  assert.match(planner!, /github\.event_name == 'workflow_dispatch'[\s\S]*github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
+  assert.match(planner!, /github\.event_name == 'issues'[\s\S]*startsWith\(github\.event\.issue\.title, '\[업무 요구\]'\)/);
   assert.match(planner!, /ai-plan\/identity.json/);
   assert.match(planner!, /name: \$\{\{ fromJSON\(steps.input.outputs.identity\).artifactName \}\}/);
   assert.match(planner!, /artifact_digest: \$\{\{ steps.upload.outputs.artifact-digest \}\}/);
