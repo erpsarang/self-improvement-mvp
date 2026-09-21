@@ -28,6 +28,7 @@ jobs:
       ci_status: ${{ steps.ci0.outputs.status }}
       repair_ready: ${{ steps.ci0.outputs.repair_ready }}
       repair_blocked_reason: ${{ steps.ci0.outputs.repair_blocked_reason }}
+      retry_required: ${{ steps.timeout0.outputs.retry }}
 
     steps:
       - name: Trusted handoff artifact exact 선택
@@ -148,8 +149,16 @@ jobs:
           test -f "$RUNNER_TEMP/plan-worker-input/prompt.md"
           test -f "$RUNNER_TEMP/plan-worker-input/schema.json"
 
+      - name: IMPLEMENT timeout 측정 시작
+        if: steps.source.outputs.should_run == 'true'
+        id: implement_clock
+        shell: bash
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Untrusted bounded IMPLEMENT Worker
         if: steps.source.outputs.should_run == 'true'
+        id: implement0
+        continue-on-error: true
         timeout-minutes: 4
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
         env:
@@ -167,13 +176,67 @@ jobs:
           effort: low
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
-      - name: Worker input 제거
-        if: steps.source.outputs.should_run == 'true'
+      - name: IMPLEMENT timeout 재시도 분류
+        if: always() && steps.source.outputs.should_run == 'true'
+        id: timeout0
         shell: bash
-        run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home"
+        env:
+          IMPLEMENT_OUTCOME: ${{ steps.implement0.outcome }}
+          STARTED_AT: ${{ steps.implement_clock.outputs.started_at }}
+          RAW_PROPOSAL: ${{ runner.temp }}/worker-output/raw-proposal.json
+        run: |
+          set -euo pipefail
+          now="$(date +%s)"
+          elapsed="$((now - STARTED_AT))"
+          has_output=false
+          if [ -s "$RAW_PROPOSAL" ]; then has_output=true; fi
+
+          echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
+          echo "has_output=${has_output}" >> "$GITHUB_OUTPUT"
+
+          if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$has_output" = "false" ]; then
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+            echo "첫 IMPLEMENT가 timeout 경계에서 output 없이 실패해 bounded retry 1회를 허용합니다."
+          else
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: bounded IMPLEMENT 실행 결과 확인
+        if: always() && steps.source.outputs.should_run == 'true'
+        id: implement_gate
+        shell: bash
+        env:
+          INITIAL_OUTCOME: ${{ steps.implement0.outcome }}
+          RETRY_REQUIRED: ${{ steps.timeout0.outputs.retry }}
+        run: |
+          set -euo pipefail
+          if [ "$INITIAL_OUTCOME" = "success" ]; then
+            exit 0
+          fi
+          if [ "$RETRY_REQUIRED" = "true" ]; then
+            echo "timeout retry는 fresh runner Job으로 위임합니다."
+            exit 0
+          fi
+          echo "bounded IMPLEMENT failed before retry eligibility" >&2
+          exit 1
+
+      - name: timeout retry input artifact 저장
+        if: steps.timeout0.outputs.retry == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-timeout-retry-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/plan-worker-input/prompt.md
+            ${{ runner.temp }}/plan-worker-input/schema.json
+          if-no-files-found: error
+
+      - name: Worker input 제거
+        if: steps.source.outputs.should_run == 'true' && steps.implement_gate.outcome == 'success' && steps.timeout0.outputs.retry != 'true'
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home" "$RUNNER_TEMP/worker-codex-home-timeout-retry"
 
       - name: Trusted validation checkout 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -181,12 +244,12 @@ jobs:
           path: control-validate-0
 
       - name: Trusted validation dependencies 설치 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
         run: npm ci --ignore-scripts
 
       - name: Trusted handoff artifact 재다운로드 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ steps.source.outputs.name }}
@@ -196,7 +259,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: Trusted candidate 검증 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
         run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
@@ -214,7 +277,7 @@ jobs:
           CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-0
 
       - name: exact base candidate CI checkout 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.base.outputs.sha }}
@@ -223,14 +286,14 @@ jobs:
           path: validation-target-0
 
       - name: exact base SHA 확인 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         shell: bash
         env:
           EXPECTED_SHA: ${{ steps.base.outputs.sha }}
         run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-0" rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: candidate CI dependencies 설치 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: validation-target-0
         env:
           GH_TOKEN: ""
@@ -240,7 +303,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: deterministic CI 및 repair 입력 준비 0
-        if: steps.source.outputs.should_run == 'true'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         id: ci0
         working-directory: control-validate-0
         env:
@@ -258,7 +321,7 @@ jobs:
         run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
       - name: attempt 0 state 정리
-        if: steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true' && steps.ci0.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -273,18 +336,251 @@ jobs:
           fi
 
       - name: attempt 0 state artifact 저장
-        if: steps.source.outputs.should_run == 'true' && steps.ci0.outcome == 'success'
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true' && steps.ci0.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/worker-state-0
           if-no-files-found: error
 
-  repair1:
+  timeout_retry:
     needs: attempt0
+    if: needs.attempt0.outputs.retry_required == 'true'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    outputs:
+      ci_status: ${{ steps.ci0_retry.outputs.status }}
+      repair_ready: ${{ steps.ci0_retry.outputs.repair_ready }}
+      repair_blocked_reason: ${{ steps.ci0_retry.outputs.repair_blocked_reason }}
+
+    steps:
+      - name: timeout retry input artifact 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: bounded-worker-timeout-retry-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan-worker-input
+
+      - name: fresh retry 작업공간 준비
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/worker-neutral" "$RUNNER_TEMP/worker-output"
+          test -f "$RUNNER_TEMP/plan-worker-input/prompt.md"
+          test -f "$RUNNER_TEMP/plan-worker-input/schema.json"
+
+      - name: Untrusted bounded IMPLEMENT timeout retry
+        timeout-minutes: 6
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+        with:
+          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          working-directory: ${{ runner.temp }}/worker-neutral
+          codex-home: ${{ runner.temp }}/worker-codex-home-timeout-retry
+          prompt-file: ${{ runner.temp }}/plan-worker-input/prompt.md
+          output-schema-file: ${{ runner.temp }}/plan-worker-input/schema.json
+          output-file: ${{ runner.temp }}/worker-output/raw-proposal.json
+          effort: low
+          codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: timeout retry input 제거
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home-timeout-retry"
+
+      - name: Trusted validation checkout retry
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          path: control-validate-retry
+
+      - name: Node 설정 retry
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: control-validate-retry/package-lock.json
+
+      - name: Trusted validation dependencies 설치 retry
+        working-directory: control-validate-retry
+        run: npm ci --ignore-scripts
+
+      - name: Trusted handoff artifact 재다운로드 retry
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.attempt0.outputs.source_name }}
+          path: ${{ runner.temp }}/plan-worker-source-validate-retry
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Trusted candidate 검증 retry
+        working-directory: control-validate-retry
+        run: node --import tsx src/self-improvement/plan-implement-worker-handler.ts validate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
+          SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-retry
+          RAW_PROPOSAL_PATH: ${{ runner.temp }}/worker-output/raw-proposal.json
+          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-retry
+
+      - name: exact base candidate CI checkout retry
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.attempt0.outputs.base_sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: validation-target-retry
+
+      - name: exact base SHA 확인 retry
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.attempt0.outputs.base_sha }}
+        run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-retry" rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: candidate CI dependencies 설치 retry
+        working-directory: validation-target-retry
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: npm ci --ignore-scripts
+
+      - name: deterministic CI 및 repair 입력 준비 retry
+        id: ci0_retry
+        working-directory: control-validate-retry
+        env:
+          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-retry
+          CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-retry
+          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-retry
+          OBSERVED_BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
+          STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-0
+          NEXT_REPAIR_ATTEMPT: "1"
+          REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-1
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: node --import tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
+
+      - name: timeout retry state 정리
+        if: steps.ci0_retry.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/worker-state-0/candidate" "$RUNNER_TEMP/worker-state-0/evidence"
+          cp "$RUNNER_TEMP/validated-candidate-retry/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
+          cp "$RUNNER_TEMP/validated-candidate-retry/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
+          cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
+          if [ "${{ steps.ci0_retry.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci0_retry.outputs.repair_ready }}" = "true" ]; then
+            mkdir -p "$RUNNER_TEMP/worker-state-0/repair-input"
+            cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md"
+            cp "$RUNNER_TEMP/repair-input-1/schema.json" "$RUNNER_TEMP/worker-state-0/repair-input/schema.json"
+          fi
+
+      - name: timeout retry state artifact 저장
+        if: steps.ci0_retry.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-state-0
+          if-no-files-found: error
+
+  attempt0_result:
+    needs: [attempt0, timeout_retry]
+    if: always() && needs.attempt0.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should_run: ${{ steps.effective.outputs.should_run }}
+      ci_status: ${{ steps.effective.outputs.ci_status }}
+      repair_ready: ${{ steps.effective.outputs.repair_ready }}
+      repair_blocked_reason: ${{ steps.effective.outputs.repair_blocked_reason }}
+      infrastructure_failed: ${{ steps.effective.outputs.infrastructure_failed }}
+      source_name: ${{ steps.effective.outputs.source_name }}
+      source_id: ${{ steps.effective.outputs.source_id }}
+      source_digest: ${{ steps.effective.outputs.source_digest }}
+      base_sha: ${{ steps.effective.outputs.base_sha }}
+      candidate_artifact_name: ${{ steps.effective.outputs.candidate_artifact_name }}
+
+    steps:
+      - name: initial/retry effective 결과 고정
+        id: effective
+        shell: bash
+        env:
+          SHOULD_RUN: ${{ needs.attempt0.outputs.should_run }}
+          ATTEMPT0_RESULT: ${{ needs.attempt0.result }}
+          RETRY_REQUIRED: ${{ needs.attempt0.outputs.retry_required }}
+          RETRY_RESULT: ${{ needs.timeout_retry.result }}
+          DIRECT_STATUS: ${{ needs.attempt0.outputs.ci_status }}
+          DIRECT_REPAIR_READY: ${{ needs.attempt0.outputs.repair_ready }}
+          DIRECT_BLOCKED_REASON: ${{ needs.attempt0.outputs.repair_blocked_reason }}
+          RETRY_STATUS: ${{ needs.timeout_retry.outputs.ci_status }}
+          RETRY_REPAIR_READY: ${{ needs.timeout_retry.outputs.repair_ready }}
+          RETRY_BLOCKED_REASON: ${{ needs.timeout_retry.outputs.repair_blocked_reason }}
+          SOURCE_NAME: ${{ needs.attempt0.outputs.source_name }}
+          SOURCE_ID: ${{ needs.attempt0.outputs.source_id }}
+          SOURCE_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
+          BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
+          CANDIDATE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.candidate_artifact_name }}
+        run: |
+          set -euo pipefail
+          infrastructure_failed=false
+          ci_status="$DIRECT_STATUS"
+          repair_ready="$DIRECT_REPAIR_READY"
+          repair_blocked_reason="$DIRECT_BLOCKED_REASON"
+
+          if [ "$RETRY_REQUIRED" = "true" ]; then
+            if [ "$RETRY_RESULT" != "success" ]; then
+              infrastructure_failed=true
+              ci_status=""
+              repair_ready=""
+              repair_blocked_reason=""
+            else
+              ci_status="$RETRY_STATUS"
+              repair_ready="$RETRY_REPAIR_READY"
+              repair_blocked_reason="$RETRY_BLOCKED_REASON"
+            fi
+          elif [ "$ATTEMPT0_RESULT" != "success" ]; then
+            infrastructure_failed=true
+            ci_status=""
+            repair_ready=""
+            repair_blocked_reason=""
+          fi
+
+          {
+            echo "should_run=$SHOULD_RUN"
+            echo "ci_status=$ci_status"
+            echo "repair_ready=$repair_ready"
+            echo "repair_blocked_reason=$repair_blocked_reason"
+            echo "infrastructure_failed=$infrastructure_failed"
+            echo "source_name=$SOURCE_NAME"
+            echo "source_id=$SOURCE_ID"
+            echo "source_digest=$SOURCE_DIGEST"
+            echo "base_sha=$BASE_SHA"
+            echo "candidate_artifact_name=$CANDIDATE_ARTIFACT_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+
+  repair1:
+    needs: attempt0_result
     if: >-
-      needs.attempt0.outputs.ci_status == 'FAIL' &&
-      needs.attempt0.outputs.repair_ready == 'true'
+      needs.attempt0_result.outputs.ci_status == 'FAIL' &&
+      needs.attempt0_result.outputs.repair_ready == 'true'
     permissions:
       contents: read
       actions: read
@@ -357,7 +653,7 @@ jobs:
       - name: Trusted handoff artifact 재다운로드 1
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.attempt0.outputs.source_name }}
+          name: ${{ needs.attempt0_result.outputs.source_name }}
           path: ${{ runner.temp }}/plan-worker-source-validate-1
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -371,9 +667,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
-          SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
-          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
+          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0_result.outputs.source_name }}
+          SOURCE_ARTIFACT_ID: ${{ needs.attempt0_result.outputs.source_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0_result.outputs.source_digest }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
@@ -383,7 +679,7 @@ jobs:
       - name: exact base candidate CI checkout 1
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.attempt0.outputs.base_sha }}
+          ref: ${{ needs.attempt0_result.outputs.base_sha }}
           persist-credentials: false
           fetch-depth: 1
           path: validation-target-1
@@ -391,7 +687,7 @@ jobs:
       - name: exact base SHA 확인 1
         shell: bash
         env:
-          EXPECTED_SHA: ${{ needs.attempt0.outputs.base_sha }}
+          EXPECTED_SHA: ${{ needs.attempt0_result.outputs.base_sha }}
         run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-1" rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: candidate CI dependencies 설치 1
@@ -410,7 +706,7 @@ jobs:
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-1
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-1
           TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-1
-          OBSERVED_BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
+          OBSERVED_BASE_SHA: ${{ needs.attempt0_result.outputs.base_sha }}
           STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-1
           NEXT_REPAIR_ATTEMPT: "2"
           REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-2
@@ -444,7 +740,7 @@ jobs:
           if-no-files-found: error
 
   repair2:
-    needs: [attempt0, repair1]
+    needs: [attempt0_result, repair1]
     if: >-
       needs.repair1.outputs.ci_status == 'FAIL' &&
       needs.repair1.outputs.repair_ready == 'true'
@@ -518,7 +814,7 @@ jobs:
       - name: Trusted handoff artifact 재다운로드 2
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.attempt0.outputs.source_name }}
+          name: ${{ needs.attempt0_result.outputs.source_name }}
           path: ${{ runner.temp }}/plan-worker-source-validate-2
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -532,9 +828,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
-          SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
-          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
+          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0_result.outputs.source_name }}
+          SOURCE_ARTIFACT_ID: ${{ needs.attempt0_result.outputs.source_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0_result.outputs.source_digest }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
@@ -544,7 +840,7 @@ jobs:
       - name: exact base candidate CI checkout 2
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.attempt0.outputs.base_sha }}
+          ref: ${{ needs.attempt0_result.outputs.base_sha }}
           persist-credentials: false
           fetch-depth: 1
           path: validation-target-2
@@ -552,7 +848,7 @@ jobs:
       - name: exact base SHA 확인 2
         shell: bash
         env:
-          EXPECTED_SHA: ${{ needs.attempt0.outputs.base_sha }}
+          EXPECTED_SHA: ${{ needs.attempt0_result.outputs.base_sha }}
         run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-2" rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: candidate CI dependencies 설치 2
@@ -571,7 +867,7 @@ jobs:
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-2
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-2
           TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-2
-          OBSERVED_BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
+          OBSERVED_BASE_SHA: ${{ needs.attempt0_result.outputs.base_sha }}
           STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-2
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
@@ -598,8 +894,8 @@ jobs:
           if-no-files-found: error
 
   finalize:
-    needs: [attempt0, repair1, repair2]
-    if: always() && needs.attempt0.outputs.should_run == 'true'
+    needs: [attempt0_result, repair1, repair2]
+    if: always() && needs.attempt0_result.outputs.should_run == 'true'
     permissions:
       actions: read
     runs-on: ubuntu-latest
@@ -607,7 +903,7 @@ jobs:
 
     steps:
       - name: attempt 0 state 다운로드
-        if: needs.attempt0.result == 'success'
+        if: needs.attempt0_result.outputs.ci_status != ''
         uses: actions/download-artifact@v4
         with:
           name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
@@ -629,12 +925,12 @@ jobs:
 
       - name: PASS candidate 선택
         if: >-
-          needs.attempt0.outputs.ci_status == 'PASS' ||
+          needs.attempt0_result.outputs.ci_status == 'PASS' ||
           needs.repair1.outputs.ci_status == 'PASS' ||
           needs.repair2.outputs.ci_status == 'PASS'
         shell: bash
         env:
-          STATUS0: ${{ needs.attempt0.outputs.ci_status }}
+          STATUS0: ${{ needs.attempt0_result.outputs.ci_status }}
           STATUS1: ${{ needs.repair1.outputs.ci_status }}
           STATUS2: ${{ needs.repair2.outputs.ci_status }}
         run: |
@@ -654,7 +950,7 @@ jobs:
           cp "$SOURCE/candidate-provenance.json" "$RUNNER_TEMP/final-candidate/candidate-provenance.json"
 
       - name: deterministic CI evidence 정리
-        if: needs.attempt0.result == 'success'
+        if: needs.attempt0_result.outputs.ci_status != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -667,7 +963,7 @@ jobs:
           done
 
       - name: deterministic CI evidence artifact 저장
-        if: needs.attempt0.result == 'success'
+        if: needs.attempt0_result.outputs.ci_status != ''
         uses: actions/upload-artifact@v4
         with:
           name: bounded-worker-ci-evidence-${{ github.run_id }}-attempt-${{ github.run_attempt }}
@@ -676,13 +972,13 @@ jobs:
 
       - name: out-of-scope boundary repair 차단 시 fail-closed
         if: >-
-          (needs.attempt0.outputs.ci_status == 'FAIL' &&
-           needs.attempt0.outputs.repair_ready == 'false') ||
+          (needs.attempt0_result.outputs.ci_status == 'FAIL' &&
+           needs.attempt0_result.outputs.repair_ready == 'false') ||
           (needs.repair1.outputs.ci_status == 'FAIL' &&
            needs.repair1.outputs.repair_ready == 'false')
         shell: bash
         env:
-          ATTEMPT0_REASON: ${{ needs.attempt0.outputs.repair_blocked_reason }}
+          ATTEMPT0_REASON: ${{ needs.attempt0_result.outputs.repair_blocked_reason }}
           ATTEMPT1_REASON: ${{ needs.repair1.outputs.repair_blocked_reason }}
         run: |
           echo "AI repair blocked by deterministic repair policy: attempt0=${ATTEMPT0_REASON}, attempt1=${ATTEMPT1_REASON}" >&2
@@ -690,7 +986,7 @@ jobs:
 
       - name: upstream infrastructure failure 시 fail-closed
         if: >-
-          needs.attempt0.result == 'failure' ||
+          needs.attempt0_result.outputs.infrastructure_failed == 'true' ||
           needs.repair1.result == 'failure' ||
           needs.repair2.result == 'failure'
         shell: bash
@@ -700,7 +996,7 @@ jobs:
 
       - name: bounded repair 소진 시 fail-closed
         if: >-
-          needs.attempt0.outputs.ci_status == 'FAIL' &&
+          needs.attempt0_result.outputs.ci_status == 'FAIL' &&
           needs.repair1.outputs.ci_status == 'FAIL' &&
           needs.repair2.outputs.ci_status == 'FAIL'
         shell: bash
@@ -710,12 +1006,12 @@ jobs:
 
       - name: Validated candidate artifact 저장
         if: >-
-          needs.attempt0.outputs.ci_status == 'PASS' ||
+          needs.attempt0_result.outputs.ci_status == 'PASS' ||
           needs.repair1.outputs.ci_status == 'PASS' ||
           needs.repair2.outputs.ci_status == 'PASS'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ needs.attempt0.outputs.candidate_artifact_name }}
+          name: ${{ needs.attempt0_result.outputs.candidate_artifact_name }}
           path: |
             ${{ runner.temp }}/final-candidate/candidate.json
             ${{ runner.temp }}/final-candidate/candidate-provenance.json
