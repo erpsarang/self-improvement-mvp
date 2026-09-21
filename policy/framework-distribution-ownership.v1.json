@@ -2,73 +2,355 @@
   "schemaVersion": 1,
   "sourceRepository": "erpsarang/self-improvement-mvp",
   "entries": [
-    { "sourcePath": ".github/workflows/fix-request.yml", "targetPath": ".github/workflows/fix-request.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/fix-worker.yml", "targetPath": ".github/workflows/fix-worker.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/improvement-candidate.yml", "targetPath": ".github/workflows/improvement-candidate.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/learn-source.yml", "targetPath": ".github/workflows/learn-source.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/learn.yml", "targetPath": ".github/workflows/learn.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/orchestrator.yml", "targetPath": ".github/workflows/orchestrator.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan-authorize.yml", "targetPath": ".github/workflows/plan-authorize.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan-candidate-bridge.yml", "targetPath": ".github/workflows/plan-candidate-bridge.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan-implement-handoff.yml", "targetPath": ".github/workflows/plan-implement-handoff.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan-implement-worker.yml", "targetPath": ".github/workflows/plan-implement-worker.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan-recovery.yml", "targetPath": ".github/workflows/plan-recovery.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan-worker-recovery-preflight.yml", "targetPath": ".github/workflows/plan-worker-recovery-preflight.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/plan.yml", "targetPath": ".github/workflows/plan.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/semantic-review.yml", "targetPath": ".github/workflows/semantic-review.yml", "classification": "required" },
-    { "sourcePath": ".github/workflows/trusted-rail.yml", "targetPath": ".github/workflows/trusted-rail.yml", "classification": "required" },
-    { "sourcePath": "policy/framework-distribution-ownership.v1.json", "targetPath": "policy/framework-distribution-ownership.v1.json", "classification": "required" },
-    { "sourcePath": "src/self-improvement/authorization.ts", "targetPath": "src/self-improvement/authorization.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/completed-cycle.ts", "targetPath": "src/self-improvement/completed-cycle.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/context-pack.ts", "targetPath": "src/self-improvement/context-pack.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/deterministic-ci.ts", "targetPath": "src/self-improvement/deterministic-ci.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/distribution-bundle-builder.ts", "targetPath": "src/self-improvement/distribution-bundle-builder.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/distribution-bundle-verifier.ts", "targetPath": "src/self-improvement/distribution-bundle-verifier.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/distribution-bundle.ts", "targetPath": "src/self-improvement/distribution-bundle.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/distribution-manifest-verifier.ts", "targetPath": "src/self-improvement/distribution-manifest-verifier.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/distribution-manifest.ts", "targetPath": "src/self-improvement/distribution-manifest.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/fix-handler.ts", "targetPath": "src/self-improvement/fix-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/fix.ts", "targetPath": "src/self-improvement/fix.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/implement-contract.ts", "targetPath": "src/self-improvement/implement-contract.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/implement.ts", "targetPath": "src/self-improvement/implement.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/improvement-candidate-handler.ts", "targetPath": "src/self-improvement/improvement-candidate-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/improvement-candidate.ts", "targetPath": "src/self-improvement/improvement-candidate.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/learn-handler.ts", "targetPath": "src/self-improvement/learn-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/learn-input-pack.ts", "targetPath": "src/self-improvement/learn-input-pack.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/learn-report.ts", "targetPath": "src/self-improvement/learn-report.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/learn-source-handler.ts", "targetPath": "src/self-improvement/learn-source-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/learn-source.ts", "targetPath": "src/self-improvement/learn-source.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/orchestrator-handler.ts", "targetPath": "src/self-improvement/orchestrator-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/orchestrator.ts", "targetPath": "src/self-improvement/orchestrator.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-authorization.ts", "targetPath": "src/self-improvement/plan-authorization.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-authorize-handler.ts", "targetPath": "src/self-improvement/plan-authorize-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-bridge-patch.ts", "targetPath": "src/self-improvement/plan-bridge-patch.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-business-context.ts", "targetPath": "src/self-improvement/plan-business-context.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-candidate-bridge-handler.ts", "targetPath": "src/self-improvement/plan-candidate-bridge-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-candidate-bridge.ts", "targetPath": "src/self-improvement/plan-candidate-bridge.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-context-policy.ts", "targetPath": "src/self-improvement/plan-context-policy.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-explicit-path-context.ts", "targetPath": "src/self-improvement/plan-explicit-path-context.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-human-output-context.ts", "targetPath": "src/self-improvement/plan-human-output-context.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-implement-handoff-handler.ts", "targetPath": "src/self-improvement/plan-implement-handoff-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-implement-handoff.ts", "targetPath": "src/self-improvement/plan-implement-handoff.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-implement-worker-handler.ts", "targetPath": "src/self-improvement/plan-implement-worker-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-implement-worker.ts", "targetPath": "src/self-improvement/plan-implement-worker.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-recovery-handler.ts", "targetPath": "src/self-improvement/plan-recovery-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-recovery.ts", "targetPath": "src/self-improvement/plan-recovery.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/plan-worker-ci-repair-handler.ts", "targetPath": "src/self-improvement/plan-worker-ci-repair-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/planner-handler.ts", "targetPath": "src/self-improvement/planner-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/planner.ts", "targetPath": "src/self-improvement/planner.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/publish-handler.ts", "targetPath": "src/self-improvement/publish-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/publish.ts", "targetPath": "src/self-improvement/publish.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/repair-policy.ts", "targetPath": "src/self-improvement/repair-policy.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/review-decision.ts", "targetPath": "src/self-improvement/review-decision.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/review-handler.ts", "targetPath": "src/self-improvement/review-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/review.ts", "targetPath": "src/self-improvement/review.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/seal-handler.ts", "targetPath": "src/self-improvement/seal-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/seal.ts", "targetPath": "src/self-improvement/seal.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/single-pass-worker.ts", "targetPath": "src/self-improvement/single-pass-worker.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/trusted-lockfile.ts", "targetPath": "src/self-improvement/trusted-lockfile.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/verify-handler.ts", "targetPath": "src/self-improvement/verify-handler.ts", "classification": "required" },
-    { "sourcePath": "src/self-improvement/verify.ts", "targetPath": "src/self-improvement/verify.ts", "classification": "required" }
+    {
+      "sourcePath": ".github/workflows/fix-request.yml",
+      "targetPath": ".github/workflows/fix-request.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/fix-worker.yml",
+      "targetPath": ".github/workflows/fix-worker.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/improvement-candidate.yml",
+      "targetPath": ".github/workflows/improvement-candidate.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/learn-source.yml",
+      "targetPath": ".github/workflows/learn-source.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/learn.yml",
+      "targetPath": ".github/workflows/learn.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/orchestrator.yml",
+      "targetPath": ".github/workflows/orchestrator.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan-authorize.yml",
+      "targetPath": ".github/workflows/plan-authorize.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan-candidate-bridge.yml",
+      "targetPath": ".github/workflows/plan-candidate-bridge.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan-implement-handoff.yml",
+      "targetPath": ".github/workflows/plan-implement-handoff.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan-implement-worker.yml",
+      "targetPath": ".github/workflows/plan-implement-worker.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan-recovery.yml",
+      "targetPath": ".github/workflows/plan-recovery.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan-worker-recovery-preflight.yml",
+      "targetPath": ".github/workflows/plan-worker-recovery-preflight.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/plan.yml",
+      "targetPath": ".github/workflows/plan.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/semantic-review.yml",
+      "targetPath": ".github/workflows/semantic-review.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": ".github/workflows/trusted-rail.yml",
+      "targetPath": ".github/workflows/trusted-rail.yml",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "policy/framework-distribution-ownership.v1.json",
+      "targetPath": "policy/framework-distribution-ownership.v1.json",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/authorization.ts",
+      "targetPath": "src/self-improvement/authorization.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/completed-cycle.ts",
+      "targetPath": "src/self-improvement/completed-cycle.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/context-pack.ts",
+      "targetPath": "src/self-improvement/context-pack.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/deterministic-ci.ts",
+      "targetPath": "src/self-improvement/deterministic-ci.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/distribution-bundle-builder.ts",
+      "targetPath": "src/self-improvement/distribution-bundle-builder.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/distribution-bundle-verifier.ts",
+      "targetPath": "src/self-improvement/distribution-bundle-verifier.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/distribution-bundle.ts",
+      "targetPath": "src/self-improvement/distribution-bundle.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/distribution-manifest-verifier.ts",
+      "targetPath": "src/self-improvement/distribution-manifest-verifier.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/distribution-manifest.ts",
+      "targetPath": "src/self-improvement/distribution-manifest.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/fix-handler.ts",
+      "targetPath": "src/self-improvement/fix-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/fix.ts",
+      "targetPath": "src/self-improvement/fix.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/implement-contract.ts",
+      "targetPath": "src/self-improvement/implement-contract.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/implement.ts",
+      "targetPath": "src/self-improvement/implement.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/improvement-candidate-handler.ts",
+      "targetPath": "src/self-improvement/improvement-candidate-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/improvement-candidate.ts",
+      "targetPath": "src/self-improvement/improvement-candidate.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/learn-handler.ts",
+      "targetPath": "src/self-improvement/learn-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/learn-input-pack.ts",
+      "targetPath": "src/self-improvement/learn-input-pack.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/learn-report.ts",
+      "targetPath": "src/self-improvement/learn-report.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/learn-source-handler.ts",
+      "targetPath": "src/self-improvement/learn-source-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/learn-source.ts",
+      "targetPath": "src/self-improvement/learn-source.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/orchestrator-handler.ts",
+      "targetPath": "src/self-improvement/orchestrator-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/orchestrator.ts",
+      "targetPath": "src/self-improvement/orchestrator.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-authorization.ts",
+      "targetPath": "src/self-improvement/plan-authorization.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-authorize-handler.ts",
+      "targetPath": "src/self-improvement/plan-authorize-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-bridge-patch.ts",
+      "targetPath": "src/self-improvement/plan-bridge-patch.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-business-context.ts",
+      "targetPath": "src/self-improvement/plan-business-context.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-candidate-bridge-handler.ts",
+      "targetPath": "src/self-improvement/plan-candidate-bridge-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-candidate-bridge.ts",
+      "targetPath": "src/self-improvement/plan-candidate-bridge.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-context-policy.ts",
+      "targetPath": "src/self-improvement/plan-context-policy.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-explicit-path-context.ts",
+      "targetPath": "src/self-improvement/plan-explicit-path-context.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-human-output-context.ts",
+      "targetPath": "src/self-improvement/plan-human-output-context.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-implement-handoff-handler.ts",
+      "targetPath": "src/self-improvement/plan-implement-handoff-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-implement-handoff.ts",
+      "targetPath": "src/self-improvement/plan-implement-handoff.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-implement-worker-handler.ts",
+      "targetPath": "src/self-improvement/plan-implement-worker-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-implement-worker.ts",
+      "targetPath": "src/self-improvement/plan-implement-worker.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-recovery-handler.ts",
+      "targetPath": "src/self-improvement/plan-recovery-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-recovery.ts",
+      "targetPath": "src/self-improvement/plan-recovery.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/plan-worker-ci-repair-handler.ts",
+      "targetPath": "src/self-improvement/plan-worker-ci-repair-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/planner-handler.ts",
+      "targetPath": "src/self-improvement/planner-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/planner.ts",
+      "targetPath": "src/self-improvement/planner.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/publish-handler.ts",
+      "targetPath": "src/self-improvement/publish-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/publish.ts",
+      "targetPath": "src/self-improvement/publish.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/repair-policy.ts",
+      "targetPath": "src/self-improvement/repair-policy.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/review-decision.ts",
+      "targetPath": "src/self-improvement/review-decision.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/review-handler.ts",
+      "targetPath": "src/self-improvement/review-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/review.ts",
+      "targetPath": "src/self-improvement/review.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/seal-handler.ts",
+      "targetPath": "src/self-improvement/seal-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/seal.ts",
+      "targetPath": "src/self-improvement/seal.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/single-pass-worker.ts",
+      "targetPath": "src/self-improvement/single-pass-worker.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/trusted-lockfile.ts",
+      "targetPath": "src/self-improvement/trusted-lockfile.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/verify-handler.ts",
+      "targetPath": "src/self-improvement/verify-handler.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "src/self-improvement/verify.ts",
+      "targetPath": "src/self-improvement/verify.ts",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "package.json",
+      "targetPath": ".framework-runtime/package.json",
+      "classification": "required"
+    },
+    {
+      "sourcePath": "package-lock.json",
+      "targetPath": ".framework-runtime/package-lock.json",
+      "classification": "required"
+    }
   ]
 }
