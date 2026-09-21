@@ -219,7 +219,7 @@ jobs:
         timeout-minutes: 3
         uses: openai/codex-action@v1
         with:
-          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
+          openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
           permission-profile: ":read-only"
           allow-bot-users: "github-actions[bot]"
           safety-strategy: drop-sudo

@@ -38,9 +38,9 @@ test("PLAN Recovery handler는 exact PLAN_AUTHORIZE identity를 재검증하고 
   assert.match(handler, /Human `PLAN-승인`이 다시 필요합니다/);
 });
 
-test("bot이 dispatch한 recovery PLAN을 위해 plan.yml만 allow-bots를 켜고 Framework 전용 key를 유지한다", () => {
+test("bot이 dispatch한 recovery PLAN도 repository identity에 맞는 Codex key를 사용한다", () => {
   assert.equal((planWorkflow.match(/allow-bots: true/g) ?? []).length, 1);
   assert.doesNotMatch(planWorkflow, /allow-bot-users/);
-  assert.match(planWorkflow, /openai-api-key: \$\{\{ secrets\.FRAMEWORK_CODEX_API_KEY \}\}/);
+  assert.match(planWorkflow, /openai-api-key: \$\{\{ secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\] \}\}/);
   assert.match(planWorkflow, /permission-profile: ":read-only"/);
 });

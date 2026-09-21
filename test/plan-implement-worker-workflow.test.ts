@@ -143,8 +143,8 @@ test("각 untrusted Job은 repository 없이 neutral input만 보고 drop-sudo r
   assert.equal((workflow.match(/effort: low/g) ?? []).length, 4);
   assert.ok((workflow.match(/GH_TOKEN: ""/g) ?? []).length >= 4);
   assert.ok((workflow.match(/GITHUB_TOKEN: ""/g) ?? []).length >= 4);
-  assert.equal((workflow.match(/secrets\.FRAMEWORK_CODEX_API_KEY/g) ?? []).length, 4);
-  assert.doesNotMatch(workflow, /secrets\.(?!FRAMEWORK_CODEX_API_KEY\b)/);
+  assert.equal((workflow.match(/secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\]/g) ?? []).length, 4);
+  assert.doesNotMatch(workflow, /secrets\.[A-Za-z0-9_]+/);
   assert.ok((workflow.match(/test -z "\$\(find "\$GITHUB_WORKSPACE"/g) ?? []).length >= 3);
 });
 
