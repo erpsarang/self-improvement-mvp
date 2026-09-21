@@ -278,11 +278,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: bridge-control/package-lock.json
+          cache-dependency-path: bridge-control/.framework-runtime/package-lock.json
 
       - name: Trusted bridge dependencies 설치
         working-directory: bridge-control
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefix .framework-runtime
 
       - name: bounded Worker candidate artifact 다운로드
         uses: actions/download-artifact@v4
@@ -296,7 +296,7 @@ jobs:
       - name: candidate provenance 검증 및 Handoff exact identity 준비
         id: prepare
         working-directory: bridge-control
-        run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts prepare
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-candidate-bridge-handler.ts prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -373,7 +373,7 @@ jobs:
           TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
           TRUSTED_RECOVERY_WORKER_SHA: ${{ steps.recovery_guard.outputs.worker_head_sha }}
           TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
-        run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts validate
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-candidate-bridge-handler.ts validate
 
       - name: canonical patch와 bridge provenance 생성
         working-directory: bridge-control
@@ -398,7 +398,7 @@ jobs:
           TRUSTED_RECOVERY_BASE_SHA: ${{ steps.recovery_guard.outputs.base_sha }}
           TRUSTED_RECOVERY_WORKER_SHA: ${{ steps.recovery_guard.outputs.worker_head_sha }}
           TRUSTED_RECOVERY_DEFAULT_SHA: ${{ steps.recovery_guard.outputs.default_sha }}
-        run: node --import tsx src/self-improvement/plan-candidate-bridge-handler.ts finalize
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-candidate-bridge-handler.ts finalize
 
       - name: canonical PLAN bridge artifact 저장
         uses: actions/upload-artifact@v4
