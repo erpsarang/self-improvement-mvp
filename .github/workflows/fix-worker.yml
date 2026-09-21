@@ -231,7 +231,7 @@ jobs:
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
         timeout-minutes: 4
         with:
-          openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
+          openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
           permission-profile: ":workspace"
           prompt-file: fix-prompt.txt
           allow-bot-users: "github-actions[bot]"
