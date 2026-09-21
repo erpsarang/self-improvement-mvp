@@ -2,12 +2,30 @@ import type { DeterministicValidationResult } from "./deterministic-ci.js";
 
 export type RepairEligibility =
   | { readonly allowed: true; readonly reason: "REPAIR_ALLOWED"; readonly sourcePaths: readonly string[] }
-  | { readonly allowed: false; readonly reason: "OUT_OF_SCOPE_BOUNDARY"; readonly sourcePaths: readonly string[] };
+  | { readonly allowed: false; readonly reason: "OUT_OF_SCOPE_BOUNDARY"; readonly sourcePaths: readonly string[] }
+  | { readonly allowed: false; readonly reason: "DEPENDENCY_LOCK_MISMATCH"; readonly sourcePaths: readonly string[] };
 
 const BOUNDARY_SIGNAL =
   /\b(?:budget|bounded|forbidden|not allowed|outside|scope|limits?|exceeds?|exceeded)\b/i;
 const SOURCE_FRAME =
   /(?:^|[\s(])(?:[^\s():]+\/)*(src\/[A-Za-z0-9._/-]+):\d+:\d+/g;
+
+const NPM_LOCK_SYNC_SIGNAL =
+  /(?:npm ci[\s\S]{0,240}package\.json[\s\S]{0,240}package-lock\.json[\s\S]{0,240}in sync|Missing:\s+[^\r\n]+\s+from lock file)/i;
+
+function dependencyLockBoundaryPaths(validation: DeterministicValidationResult): readonly string[] {
+  for (const command of validation.commands) {
+    if (
+      command.status === "FAIL" &&
+      command.executable === "npm" &&
+      command.args[0] === "ci" &&
+      NPM_LOCK_SYNC_SIGNAL.test(`${command.stdout}\n${command.stderr}`)
+    ) {
+      return ["package-lock.json"];
+    }
+  }
+  return [];
+}
 
 function boundarySourcePaths(validation: DeterministicValidationResult): readonly string[] {
   const found = new Set<string>();
@@ -45,7 +63,17 @@ export function classifyRepairEligibility(
     return { allowed: true, reason: "REPAIR_ALLOWED", sourcePaths: [] };
   }
 
-  const sourcePaths = boundarySourcePaths(validation);
+  // package.json / package-lock.json 불일치는 AI repair로 절대 고칠 수 없다.
+  // (lockfile은 trusted deterministic step이 생성한다. AI는 integrity hash가 들어간 lock을 만들 수 없다.)
+  // allowedPaths에 package-lock.json이 있든 없든 AI를 호출하지 않고 fail-closed 한다.
+  const lockPaths = dependencyLockBoundaryPaths(validation);
+  if (lockPaths.length > 0) {
+    return { allowed: false, reason: "DEPENDENCY_LOCK_MISMATCH", sourcePaths: lockPaths };
+  }
+
+  const sourcePaths = [...new Set([
+    ...boundarySourcePaths(validation),
+  ])].sort((a, b) => a.localeCompare(b));
   if (sourcePaths.length === 0) {
     return { allowed: true, reason: "REPAIR_ALLOWED", sourcePaths };
   }

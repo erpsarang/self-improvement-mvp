@@ -266,16 +266,29 @@ export function createPlanImplementContract(
   const trustedAuthorization = verifyPlanAuthorizeArtifact(authorization);
   const plan = extractCanonicalPlanDocument(planValue, trustedAuthorization);
   const scope = plan.implementationScope;
+  const allowedPaths = [...scope.allowedPaths];
+  const requiredChanges = [...scope.requiredChanges];
+
+  if (allowedPaths.includes("package.json")) {
+    if (!allowedPaths.includes("package-lock.json")) {
+      if (allowedPaths.length >= PLAN_IMPLEMENT_MAX_FILES) {
+        throw new Error("approved PLAN package.json change requires package-lock.json within bounded scope");
+      }
+      allowedPaths.push("package-lock.json");
+    }
+    requiredChanges.push("package.json을 변경하더라도 package-lock.json은 작성하지 않는다. package-lock.json은 trusted deterministic step이 생성해 같은 candidate에 포함한다. 의존성은 npm registry의 semver 버전으로만 지정한다.");
+  }
+
   return createImplementContract(toApprovedPlanIdentity(trustedAuthorization), {
-    allowedPaths: scope.allowedPaths,
+    allowedPaths,
     contextPaths: scope.contextPaths,
     requiredChanges: [
-      ...scope.requiredChanges,
+      ...requiredChanges,
       ...plan.approach.map((item) => `승인된 PLAN approach: ${item}`),
     ],
     forbiddenChanges: scope.forbiddenChanges,
     validationCommands: scope.validationCommands,
-    maxFilesChanged: scope.allowedPaths.length,
+    maxFilesChanged: allowedPaths.length,
     maxContextBytes: PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
     maxPatchBytes: PLAN_IMPLEMENT_MAX_PATCH_BYTES,
   }, requirementSnapshot);

@@ -78,7 +78,10 @@ test("FAIL에서는 exact identity와 최소 실패 증빙으로 FIX request를 
   const { root, contract, contextPack, candidate } = fixture();
   try {
     const validation = runDeterministicValidation(contract, contextPack, candidate, root, identity.targetSha, {
-      executor: () => ({ status: 1, signal: null, stdout: "test failed", stderr: "x".repeat(20_000) }),
+      // dependency preflight(npm ci --ignore-scripts)는 통과하고 contract validation command가 실패하는 경우
+      executor: (_executable, args) => args[0] === "ci"
+        ? { status: 0, signal: null, stdout: "ok", stderr: "" }
+        : { status: 1, signal: null, stdout: "test failed", stderr: "x".repeat(20_000) },
     });
     const request = createBoundedFixRequest(contract, contextPack, candidate, validation);
 

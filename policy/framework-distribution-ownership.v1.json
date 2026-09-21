@@ -62,6 +62,7 @@
     { "sourcePath": "src/self-improvement/seal-handler.ts", "targetPath": "src/self-improvement/seal-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/seal.ts", "targetPath": "src/self-improvement/seal.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/single-pass-worker.ts", "targetPath": "src/self-improvement/single-pass-worker.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/trusted-lockfile.ts", "targetPath": "src/self-improvement/trusted-lockfile.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/verify-handler.ts", "targetPath": "src/self-improvement/verify-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/verify.ts", "targetPath": "src/self-improvement/verify.ts", "classification": "required" }
   ]

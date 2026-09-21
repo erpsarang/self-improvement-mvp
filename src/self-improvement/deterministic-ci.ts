@@ -139,7 +139,10 @@ export function parseValidationCommand(raw: string): ValidationCommandSpec {
 
 export function createValidationPlan(contract: ImplementContract): readonly ValidationCommandSpec[] {
   verifyImplementContract(contract);
-  return contract.scope.validationCommands.map(parseValidationCommand);
+  return [
+    parseValidationCommand("npm ci --ignore-scripts"),
+    ...contract.scope.validationCommands.map(parseValidationCommand),
+  ];
 }
 
 export function applyCandidateToExactBase(
