@@ -45,6 +45,6 @@ test("동일 PLAN run의 AI 호출은 최대 2 attempts로 제한하고 Framewor
   const plannerIndex = workflow.indexOf("Read-only bounded AI Planner");
   assert.ok(guardIndex >= 0 && plannerIndex > guardIndex);
   assert.match(workflow, /\[ "\$GITHUB_RUN_ATTEMPT" -gt 2 \]/);
-  assert.match(workflow, /openai-api-key: \$\{\{ secrets\.FRAMEWORK_CODEX_API_KEY \}\}/);
-  assert.doesNotMatch(workflow, /secrets\.(?!FRAMEWORK_CODEX_API_KEY\b)/);
+  assert.match(workflow, /openai-api-key: \$\{\{ secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\] \}\}/);
+  assert.doesNotMatch(workflow, /secrets\.[A-Za-z0-9_]+/);
 });
