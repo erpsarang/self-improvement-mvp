@@ -219,6 +219,53 @@ function fileRolePriority(path: string): number {
   return 4;
 }
 
+function npmRunScriptNames(requirement: string): string[] {
+  const names: string[] = [];
+  for (const match of requirement.matchAll(/\bnpm\s+run\s+([A-Za-z0-9:_-]{1,80})\b/g)) {
+    const name = match[1]!;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+function packageScriptPathAnchors<T extends { path: string; text: string }>(
+  requirement: string,
+  candidates: readonly T[],
+): string[] {
+  const packageCandidate = candidates.find((candidate) => candidate.path === "package.json");
+  if (!packageCandidate) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(packageCandidate.text);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  const scripts = (parsed as Record<string, unknown>).scripts;
+  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return [];
+
+  const candidatePaths = new Set(candidates.map((candidate) => candidate.path));
+  const result: string[] = [];
+  for (const scriptName of npmRunScriptNames(requirement)) {
+    const command = (scripts as Record<string, unknown>)[scriptName];
+    if (typeof command !== "string") continue;
+    for (const match of command.matchAll(/(?:^|[\s"'\`])((?:\.\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\.(?:[cm]?[jt]sx?|json))(?:$|[\s"'\`])/g)) {
+      const raw = match[1]!;
+      const path = raw.startsWith("./") ? raw.slice(2) : raw;
+      if (
+        isAbsolute(path) ||
+        path.includes("\\") ||
+        path.split("/").some((segment) => segment === "" || segment === "." || segment === "..") ||
+        !candidatePaths.has(path) ||
+        fileRolePriority(path) !== 0
+      ) continue;
+      if (!result.includes(path)) result.push(path);
+    }
+  }
+  return result;
+}
+
 function modulePathIdentity(path: string): string {
   return path.replace(/\\/g, "/").replace(/\.(?:[cm]?[jt]sx?)$/i, "");
 }
@@ -249,11 +296,27 @@ function directTestImportsSource(testPath: string, testText: string, sourcePath:
   });
 }
 
+function projectBootstrapContextPaths<T extends { path: string }>(
+  requirement: string,
+  candidates: readonly T[],
+): string[] {
+  const hasWebIntent = /(?:브라우저|웹|browser|web|frontend|front-end|vite)/i.test(requirement);
+  const excludesWeb =
+    /(?:^|[\n.!?])\s*[-*]?\s*(?:브라우저|웹|browser|web|frontend|front-end)(?:\s*(?:화면|기능|구현|앱|app|application))?[^.\n]{0,40}(?:제외|범위 밖|out of scope|exclude)/im.test(requirement) ||
+    /(?:^|[\n.!?])\s*[-*]?\s*(?:브라우저|웹|browser|web|frontend|front-end)(?:\s*(?:화면|기능|구현|앱|app|application))?\s*(?:은|는|을|를|이|가)?\s*(?:사용하지 않|구현하지 않|하지 않)/im.test(requirement);
+  if (!hasWebIntent || excludesWeb) return [];
+
+  const available = new Set(candidates.map((candidate) => candidate.path));
+  return ["package.json", "tsconfig.json"].filter((path) => available.has(path));
+}
+
 function diverseRankedCandidates<T extends { path: string; text: string; score: number }>(
   candidates: readonly T[],
   maxFiles: number,
   anchors: readonly string[],
   pathAnchors: readonly string[],
+  projectContextPaths: readonly string[],
+  scriptPathAnchors: readonly string[],
 ): T[] {
   const positive = candidates.filter((candidate) => candidate.score > 0);
   const fallback = positive.length > 0 ? positive : [...candidates];
@@ -262,10 +325,33 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
     if (candidate && !selected.some((entry) => entry.path === candidate.path) && selected.length < maxFiles) selected.push(candidate);
   };
 
+  // Exact repository paths explicitly named in the requirement are trusted context
+  // selection hints. Preserve every readable exact match while the file budget allows,
+  // in requirement order, before lexical relevance can consume those slots.
+  for (const path of pathAnchors) {
+    add(candidates.find((candidate) => candidate.path === path));
+  }
+  for (const path of projectContextPaths) {
+    add(candidates.find((candidate) => candidate.path === path));
+  }
+  for (const path of scriptPathAnchors) {
+    add(candidates.find((candidate) => candidate.path === path));
+  }
+
+  const scriptRuntimes = scriptPathAnchors
+    .map((path) => candidates.find((candidate) => candidate.path === path && fileRolePriority(candidate.path) === 0))
+    .filter((candidate): candidate is T => candidate !== undefined);
+  const scriptDirectTests = scriptRuntimes
+    .map((source) => candidates.find((candidate) => directTestImportsSource(candidate.path, candidate.text, source.path)))
+    .filter((candidate): candidate is T => candidate !== undefined);
+  for (const candidate of scriptDirectTests) add(candidate);
+  if (scriptPathAnchors.length > 0) add(candidates.find((entry) => entry.path === "package.json"));
+
   const explicitRuntime = pathAnchors
     .map((path) => candidates.find((candidate) => candidate.path === path && fileRolePriority(candidate.path) === 0))
     .find((candidate): candidate is T => candidate !== undefined);
-  const primaryRuntime = explicitRuntime ?? fallback.find((entry) => fileRolePriority(entry.path) === 0);
+  const scriptRuntime = scriptRuntimes[0];
+  const primaryRuntime = explicitRuntime ?? scriptRuntime ?? fallback.find((entry) => fileRolePriority(entry.path) === 0);
   const primaryDirectTest = primaryRuntime
     ? candidates.find((candidate) => directTestImportsSource(candidate.path, candidate.text, primaryRuntime.path))
     : undefined;
@@ -307,7 +393,7 @@ function diverseRankedCandidates<T extends { path: string; text: string; score: 
 
   add(fallback.find((entry) => fileRolePriority(entry.path) === 1));
   add(fallback.find((entry) => fileRolePriority(entry.path) === 2));
-  add(fallback.find((entry) => entry.path === "package.json"));
+  if (scriptPathAnchors.length === 0) add(fallback.find((entry) => entry.path === "package.json"));
   for (const candidate of fallback) add(candidate);
   return selected;
 }
@@ -337,7 +423,9 @@ export function selectPlanContext(
   }).filter((value): value is { path: string; text: string; score: number } => value !== null);
 
   candidates.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  const ranked = diverseRankedCandidates(candidates, maxFiles, anchors, pathAnchors);
+  const projectContextPaths = projectBootstrapContextPaths(requirement, candidates);
+  const scriptPathAnchors = packageScriptPathAnchors(requirement, candidates);
+  const ranked = diverseRankedCandidates(candidates, maxFiles, anchors, pathAnchors, projectContextPaths, scriptPathAnchors);
 
   const files: PlanContextFile[] = [];
   let totalBytes = 0;
@@ -379,7 +467,26 @@ export function selectPlanContext(
 const boundedString = { type: "string", minLength: 1, maxLength: 1600 };
 const strings = { type: "array", minItems: 1, maxItems: 8, items: boundedString };
 const optionalStrings = { type: "array", maxItems: 8, items: boundedString };
-const pathStrings = { type: "array", maxItems: 8, items: { type: "string", minLength: 1, maxLength: 500 } };
+/**
+ * implementationScope.allowedPaths의 structured-output 단계 조기 차단용 pattern.
+ * repository root 기준 상대경로만 허용한다: 절대경로(/..., C:\...), backslash, "." / ".." segment,
+ * 빈 segment, trailing slash, wildcard를 모두 거부한다.
+ * trusted validator(assertSafePlanPath)보다 느슨하지 않다. validator는 그대로 최종 fail-closed 경계다.
+ * (lookahead 없이 작성해 JSON Schema pattern 구현 차이에 의존하지 않는다.)
+ */
+export const PLAN_ALLOWED_PATH_PATTERN =
+  "^\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*(/\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*)*$";
+const pathStrings = {
+  type: "array",
+  maxItems: 8,
+  items: {
+    type: "string",
+    minLength: 1,
+    maxLength: 500,
+    pattern: PLAN_ALLOWED_PATH_PATTERN,
+    description: "repository root 기준 상대경로. 예: package.json, src/feature.ts. 절대경로(/home/..., /tmp/..., C:\\...)와 ./ ../ 는 금지.",
+  },
+};
 export const PLAN_SCHEMA = {
   type: "object", additionalProperties: false,
   required: ["summary", "analysis", "approach", "changeCandidates", "acceptanceCriteria", "testStrategy", "questions", "implementationScope"],
@@ -481,8 +588,14 @@ analysis에는 Context Pack이 발급한 evidenceId만 사용하세요. path나 
 approach: 구현 접근, changeCandidates: 변경 후보 경로와 이유, acceptanceCriteria: 관찰 가능한 완료조건,
 testStrategy: 기존 문맥에서 확인 가능한 테스트와 추가할 테스트 및 실행 방법, questions: IMPLEMENT 범위 또는 검증 방법을 확정하지 못하게 하는 blocking question만 작성하세요. 비차단 확인/참고 사항은 questions에 넣지 말고 approach 또는 testStrategy에 검증 방법으로 반영하세요.
 implementationScope는 IMPLEMENT에 넘길 machine-actionable 제안입니다. exact path만 사용하고 wildcard/placeholder를 쓰지 마세요.
-기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 path여야 합니다. 필요한 신규 파일은 exact safe path로 제안할 수 있습니다.
-contextPaths는 IMPLEMENT Worker가 읽기만 할 기존 참고 파일입니다. exact safe path만 사용하고, 변경 권한을 부여하지 않습니다. 필요한 경우 PLAN Context에서 보지 못한 기존 파일도 제안할 수 있지만 frozen target SHA에 실제 존재해야 합니다.
+여기서 exact path는 filesystem 절대경로가 아니라 repository root 기준 상대경로(repository-relative path)를 뜻합니다.
+implementationScope.allowedPaths 규칙:
+- 모든 allowedPaths는 repository root 기준 상대경로입니다. 예: package.json, src/feature.ts, test/feature.test.ts
+- 절대경로는 금지입니다. /home/..., /tmp/..., runner workspace 경로, plan-neutral, PLAN_TARGET, 현재 작업 디렉터리 등 filesystem 실제 위치를 경로에 쓰지 마세요. '/'로 시작하거나 드라이브 문자(C:\\)로 시작하면 안 됩니다.
+- './' 또는 '../' 로 시작하는 경로, backslash, 끝의 '/', 디렉터리 경로, wildcard도 금지입니다.
+- 기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 파일이어야 하며, Context Pack의 path 값을 글자 그대로 사용하세요.
+- 필요한 신규 파일도 같은 형식의 repository-relative exact path로만 제안하세요. 예: src/new-feature.ts, test/new-feature.test.ts, index.html
+contextPaths는 IMPLEMENT Worker가 읽기만 할 기존 참고 파일입니다. allowedPaths와 같은 형식의 repository-relative exact path만 사용하고, 변경 권한을 부여하지 않습니다. 필요한 경우 PLAN Context에서 보지 못한 기존 파일도 제안할 수 있지만 frozen target SHA에 실제 존재해야 합니다.
 validationCommands는 'npm test', 'npm run build' 중 필요한 것만 사용하세요. budget 값은 AI가 정하지 않습니다.
 구현 범위와 검증 방법을 확정할 수 있고 blocking questions가 하나도 없을 때만 implementationScope.ready=true로 하세요.
 implementationScope.ready=true이면 questions는 반드시 빈 배열 []이어야 합니다.
