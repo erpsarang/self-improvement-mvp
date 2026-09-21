@@ -75,6 +75,19 @@ test("out-of-scope 경계 실패는 AI repair를 시작하지 않고 fail-closed
   assert.match(workflow, /AI repair blocked by deterministic repair policy/);
 });
 
+test("timeout_retry가 skipped여도 repair는 implicit skip되지 않고 FAIL + repair_ready일 때만 실행한다", () => {
+  const repair1 = jobBlock("repair1");
+  const repair2 = jobBlock("repair2");
+  assert.match(
+    repair1,
+    /if: >-\n\s+always\(\) &&\n\s+needs\.attempt0_result\.outputs\.ci_status == 'FAIL' &&\n\s+needs\.attempt0_result\.outputs\.repair_ready == 'true'\n/,
+  );
+  assert.match(
+    repair2,
+    /if: >-\n\s+always\(\) &&\n\s+needs\.repair1\.outputs\.ci_status == 'FAIL' &&\n\s+needs\.repair1\.outputs\.repair_ready == 'true'\n/,
+  );
+});
+
 test("각 untrusted Job은 repository 없이 neutral input만 보고 drop-sudo read-only로 실행한다", () => {
   assert.match(workflow, /Worker 실행 전 repository와 trusted source 제거/);
   assert.match(workflow, /repair 1 untrusted input 격리/);
