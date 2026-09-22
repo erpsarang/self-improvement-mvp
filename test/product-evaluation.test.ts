@@ -20,6 +20,7 @@ import {
   type ProductCycleIdentity,
   type ProductEvaluationReport,
   type ProductSnapshot,
+  type RejectedCandidate,
 } from "../src/self-improvement/product-evaluation.js";
 
 const cycle: ProductCycleIdentity = {
@@ -370,4 +371,75 @@ test("중복이 없으면 업무 요구 서식과 provenance를 갖춘 Improveme
   assert.match(decision.body, /최종 Merge는 Human-only입니다/);
   assert.match(decision.body, new RegExp(`Product Evaluation report SHA-256: \`${report.reportDigest}\``));
   assert.match(decision.body, new RegExp(`평가한 배포 SHA: \`${cycle.deployedSha}\``));
+});
+
+const rejectedTranslation: RejectedCandidate = {
+  issueNumber: 11,
+  title: `${SELF_IMPROVEMENT_TITLE_PREFIX} 추천 문단에 한국어 번역을 함께 제공하기`,
+  reason: "public domain 원문만 싣고 번역은 사용하지 않는다는 제품 방침을 유지한다.",
+};
+
+test("사람이 기각한 후보는 snapshot에 canonical하게 담기고 digest에 반영된다", () => {
+  const root = appFixture();
+  const plain = createProductSnapshot(cycle, root);
+  const withRejected = createProductSnapshot(cycle, root, [
+    { issueNumber: 4, title: "  오래된 기각 후보 ", reason: "" },
+    rejectedTranslation,
+  ]);
+  verifyProductSnapshot(withRejected);
+
+  assert.deepEqual(plain.rejectedCandidates, []);
+  assert.notEqual(plain.snapshotDigest, withRejected.snapshotDigest);
+  // 최신 Issue가 먼저 오고 접두사와 공백은 정리된다.
+  assert.deepEqual(withRejected.rejectedCandidates, [
+    { issueNumber: 11, title: "추천 문단에 한국어 번역을 함께 제공하기", reason: rejectedTranslation.reason },
+    { issueNumber: 4, title: "오래된 기각 후보", reason: "" },
+  ]);
+});
+
+test("기각 후보가 조작되면 snapshot 검증이 fail-closed 한다", () => {
+  const snapshot = createProductSnapshot(cycle, appFixture(), [rejectedTranslation]);
+  const reordered = { ...snapshot, rejectedCandidates: [{ ...snapshot.rejectedCandidates[0]!, reason: "조작" }] };
+  assert.throws(() => verifyProductSnapshot(reordered), /digest mismatch|not canonical/);
+});
+
+test("기각 후보 입력은 예산과 모양을 결정적으로 강제한다", () => {
+  const root = appFixture();
+  assert.throws(
+    () => createProductSnapshot(cycle, root, Array.from({ length: PRODUCT_EVALUATION_BUDGET.maxRejectedCandidates + 1 }, (_, index) => ({
+      issueNumber: index + 1, title: `후보 ${index}`, reason: "",
+    }))),
+    /exceeds maxRejectedCandidates/,
+  );
+  assert.throws(
+    () => createProductSnapshot(cycle, root, [rejectedTranslation, { ...rejectedTranslation }]),
+    /issueNumbers must be unique/,
+  );
+  assert.throws(
+    () => createProductSnapshot(cycle, root, [{ ...rejectedTranslation, reason: "x".repeat(PRODUCT_EVALUATION_BUDGET.maxStatementBytes + 1) }]),
+    /reason exceeds maxStatementBytes/,
+  );
+  assert.throws(
+    () => createProductSnapshot(cycle, root, [{ ...rejectedTranslation, title: `${SELF_IMPROVEMENT_TITLE_PREFIX}   ` }]),
+    /title must be non-empty/,
+  );
+});
+
+test("prompt는 기각된 후보를 다시 제안하지 말라고 명시한다", () => {
+  const empty = createProductEvaluationPrompt(createProductSnapshot(cycle, appFixture()));
+  assert.match(empty, /# 이미 기각된 후보 \(다시 제안 금지\)\n없음/);
+
+  const prompt = createProductEvaluationPrompt(createProductSnapshot(cycle, appFixture(), [rejectedTranslation]));
+  assert.match(prompt, /다른 표현, 부분 적용, 우회 방식으로 다시 제안하지 마십시오/);
+  assert.match(prompt, /- #11 추천 문단에 한국어 번역을 함께 제공하기 — 기각 사유: public domain 원문만/);
+});
+
+test("기각된 후보와 같은 제목은 닫힌 Issue여도 결정적으로 다시 만들지 않는다", () => {
+  const snapshot = createProductSnapshot(cycle, appFixture(), [rejectedTranslation]);
+  const report = reportWith(snapshot, [{ ...diversityCandidate, title: "추천 문단에 한국어 번역을 함께 제공하기" }]);
+  const decision = decideImprovementIssue(report, [
+    { number: 11, title: rejectedTranslation.title, state: "closed" },
+  ]);
+  assert.equal(decision.action, "skip");
+  assert.match(decision.action === "skip" ? decision.reason : "", /같은 제목의 Issue가 이미 있습니다: #11/);
 });

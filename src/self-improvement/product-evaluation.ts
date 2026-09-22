@@ -28,6 +28,7 @@ export const PRODUCT_EVALUATION_BUDGET = Object.freeze({
   maxScopePaths: 8,
   maxTitleBytes: 160,
   maxReportBytes: 32_768,
+  maxRejectedCandidates: 16,
 });
 
 /** Framework distribution이 소유하는 경로. 제품 평가 대상도, 개선 범위도 될 수 없다. */
@@ -95,6 +96,13 @@ export interface ProductCycleIdentity {
   readonly deployedSha: string;
 }
 
+/** 사람이 not_planned로 닫은 Improvement Candidate. 같은 문제를 다른 표현으로 다시 제안하지 않게 한다. */
+export interface RejectedCandidate {
+  readonly issueNumber: number;
+  readonly title: string;
+  readonly reason: string;
+}
+
 export interface ProductSnapshotFile {
   readonly path: string;
   readonly byteLength: number;
@@ -121,6 +129,7 @@ export interface ProductSnapshotPayload {
   };
   readonly files: readonly ProductSnapshotFile[];
   readonly omittedPaths: readonly string[];
+  readonly rejectedCandidates: readonly RejectedCandidate[];
   readonly fileCount: number;
   readonly totalSnapshotBytes: number;
 }
@@ -360,8 +369,44 @@ function normalizeCycleIdentity(identity: ProductCycleIdentity): ProductCycleIde
  * 배포된 merge commit의 제품 내용만 담은 bounded snapshot을 만든다.
  * Framework 파일은 선택 자체에서 제외되므로 Learner가 Framework를 볼 수 없다.
  */
-export function createProductSnapshot(identity: ProductCycleIdentity, targetRoot: string): ProductSnapshot {
+/** 기각 후보는 trusted control-plane이 GitHub에서 읽어 오며, 여기서 모양과 예산만 결정적으로 고정한다. */
+function normalizeRejectedCandidates(value: readonly RejectedCandidate[]): RejectedCandidate[] {
+  if (!Array.isArray(value)) throw new Error("rejectedCandidates must be an array");
+  if (value.length > PRODUCT_EVALUATION_BUDGET.maxRejectedCandidates) {
+    throw new Error("rejectedCandidates exceeds maxRejectedCandidates");
+  }
+  const normalized = value.map((entry) => {
+    const item = asObject("rejected candidate", entry);
+    assertExactKeys("rejected candidate", item, new Set(["issueNumber", "title", "reason"]));
+    const issueNumber = assertPositiveInteger("rejected candidate issueNumber", item.issueNumber);
+    if (typeof item.title !== "string") throw new Error("rejected candidate title must be a string");
+    const rawTitle = item.title.startsWith(SELF_IMPROVEMENT_TITLE_PREFIX)
+      ? item.title.slice(SELF_IMPROVEMENT_TITLE_PREFIX.length)
+      : item.title;
+    const title = assertNonempty("rejected candidate title", rawTitle).trim();
+    if (/[\r\n]/.test(title)) throw new Error("rejected candidate title must be a single line");
+    if (Buffer.byteLength(title, "utf8") > PRODUCT_EVALUATION_BUDGET.maxTitleBytes) {
+      throw new Error("rejected candidate title exceeds maxTitleBytes");
+    }
+    if (typeof item.reason !== "string") throw new Error("rejected candidate reason must be a string");
+    const reason = item.reason.trim();
+    if (Buffer.byteLength(reason, "utf8") > PRODUCT_EVALUATION_BUDGET.maxStatementBytes) {
+      throw new Error("rejected candidate reason exceeds maxStatementBytes");
+    }
+    return { issueNumber, title, reason };
+  });
+  const numbers = normalized.map(({ issueNumber }) => issueNumber);
+  if (new Set(numbers).size !== numbers.length) throw new Error("rejected candidate issueNumbers must be unique");
+  return normalized.sort((left, right) => right.issueNumber - left.issueNumber);
+}
+
+export function createProductSnapshot(
+  identity: ProductCycleIdentity,
+  targetRoot: string,
+  rejectedCandidates: readonly RejectedCandidate[] = [],
+): ProductSnapshot {
   const cycle = normalizeCycleIdentity(identity);
+  const rejected = normalizeRejectedCandidates(rejectedCandidates);
   const root = resolve(targetRoot);
   const stat = lstatSync(root);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
@@ -419,6 +464,7 @@ export function createProductSnapshot(identity: ProductCycleIdentity, targetRoot
     },
     files,
     omittedPaths,
+    rejectedCandidates: rejected,
     fileCount: files.length,
     totalSnapshotBytes,
   };
@@ -436,6 +482,9 @@ export function verifyProductSnapshot(snapshot: ProductSnapshot): void {
     throw new Error("unsupported product snapshot schema or digest");
   }
   if (snapshot.files.length !== snapshot.fileCount) throw new Error("product snapshot fileCount mismatch");
+  if (JSON.stringify(normalizeRejectedCandidates(snapshot.rejectedCandidates)) !== JSON.stringify(snapshot.rejectedCandidates)) {
+    throw new Error("product snapshot rejectedCandidates are not canonical");
+  }
   const total = snapshot.files.reduce((sum, file) => sum + file.byteLength, 0);
   if (total !== snapshot.totalSnapshotBytes) throw new Error("product snapshot totalSnapshotBytes mismatch");
   for (const file of snapshot.files) {
@@ -690,6 +739,14 @@ export function createProductEvaluationPrompt(snapshot: ProductSnapshot): string
     "- title은 대괄호 태그 없이 개선 내용을 한 줄로 적습니다.",
     "- 코드 수정, Issue/PR 생성, workflow 실행, 승인, Merge를 실행하지 않습니다.",
     "- 이 평가는 사람이 판단할 제안일 뿐 authority가 아닙니다.",
+    "- 아래 '이미 기각된 후보'는 제품 책임자가 거절한 방향입니다. 같은 문제를 다른 표현, 부분 적용, 우회 방식으로 다시 제안하지 마십시오.",
+    "",
+    "# 이미 기각된 후보 (다시 제안 금지)",
+    ...(snapshot.rejectedCandidates.length === 0
+      ? ["없음"]
+      : snapshot.rejectedCandidates.map(({ issueNumber, title, reason }) =>
+          `- #${issueNumber} ${title}${reason ? ` — 기각 사유: ${reason}` : ""}`,
+        )),
     "",
     "# Trusted Product Snapshot",
     "```json",

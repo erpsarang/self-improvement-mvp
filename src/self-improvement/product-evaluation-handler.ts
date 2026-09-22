@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createProductEvaluationOutputSchema,
   createProductEvaluationPrompt,
@@ -13,6 +13,7 @@ import {
   type ProductCycleIdentity,
   type ProductEvaluationReport,
   type ProductSnapshot,
+  type RejectedCandidate,
 } from "./product-evaluation.js";
 
 function requiredEnv(name: string): string {
@@ -60,7 +61,11 @@ if (command !== "prepare" && command !== "finalize" && command !== "decide") {
 
 if (command === "prepare") {
   const identity = parseJson<ProductCycleIdentity>(requiredEnv("PRODUCT_CYCLE_FACTS_JSON"));
-  const snapshot = createProductSnapshot(identity, requiredEnv("PRODUCT_TARGET_ROOT"));
+  const rejectedPath = process.env.REJECTED_CANDIDATES_JSON;
+  const rejectedCandidates = rejectedPath && existsSync(rejectedPath)
+    ? parseJson<readonly RejectedCandidate[]>(rejectedPath)
+    : [];
+  const snapshot = createProductSnapshot(identity, requiredEnv("PRODUCT_TARGET_ROOT"), rejectedCandidates);
   verifyProductSnapshot(snapshot);
 
   const runtimeDir = requiredEnv("PRODUCT_EVALUATION_RUNTIME_DIR");
@@ -78,6 +83,7 @@ if (command === "prepare") {
   writeOutput("snapshot_digest", snapshot.snapshotDigest);
   writeOutput("snapshot_artifact_name", productSnapshotArtifactName(snapshot));
   writeOutput("file_count", snapshot.fileCount);
+  writeOutput("rejected_candidate_count", snapshot.rejectedCandidates.length);
   process.exit(0);
 }
 

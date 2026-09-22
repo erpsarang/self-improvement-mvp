@@ -101,6 +101,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read
     outputs:
       issue_number: ${{ steps.prepare.outputs.issue_number }}
       human_merge_pr: ${{ steps.prepare.outputs.human_merge_pr }}
@@ -182,6 +183,48 @@ jobs:
               }, null, 2),
             );
 
+      - name: 사람이 기각한 후보 수집
+        uses: actions/github-script@v7
+        env:
+          REJECTED_CANDIDATES_JSON: ${{ runner.temp }}/product-evaluation/rejected-candidates.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            const prefix = '[Self-Improvement]';
+            const maxCandidates = 16;
+            const maxReasonBytes = 1024;
+            const bounded = (text) => {
+              let value = String(text || '').trim();
+              while (Buffer.byteLength(value, 'utf8') > maxReasonBytes) value = value.slice(0, -1);
+              return value;
+            };
+            const rejected = [];
+            // not_planned로 닫힌 Improvement Candidate만 기각 후보다. 사람이 남긴 마지막 코멘트를 사유로 읽는다.
+            for (let page = 1; page <= 5 && rejected.length < maxCandidates; page += 1) {
+              const { data } = await github.rest.issues.listForRepo({
+                ...context.repo,
+                state: 'closed',
+                sort: 'created',
+                direction: 'desc',
+                per_page: 100,
+                page,
+              });
+              for (const issue of data) {
+                if (rejected.length >= maxCandidates) break;
+                if (issue.pull_request || !issue.title.startsWith(prefix) || issue.state_reason !== 'not_planned') continue;
+                const { data: comments } = await github.rest.issues.listComments({
+                  ...context.repo,
+                  issue_number: issue.number,
+                  per_page: 100,
+                });
+                const human = comments.filter((comment) => comment.user?.login !== 'github-actions[bot]').pop();
+                rejected.push({ issueNumber: issue.number, title: issue.title, reason: bounded(human?.body) });
+              }
+              if (data.length < 100) break;
+            }
+            fs.writeFileSync(process.env.REJECTED_CANDIDATES_JSON, JSON.stringify(rejected, null, 2));
+            core.info(`기각된 후보 ${rejected.length}건을 평가 입력에 포함합니다`);
+
       - name: trusted control-plane checkout
         uses: actions/checkout@v4
         with:
@@ -220,6 +263,7 @@ jobs:
         env:
           PRODUCT_CYCLE_FACTS_JSON: ${{ runner.temp }}/product-evaluation/facts.json
           PRODUCT_TARGET_ROOT: ${{ github.workspace }}/product-target
+          REJECTED_CANDIDATES_JSON: ${{ runner.temp }}/product-evaluation/rejected-candidates.json
           PRODUCT_EVALUATION_RUNTIME_DIR: ${{ runner.temp }}/product-evaluation/request
 
       - name: 평가 요청 artifact 이름 고정

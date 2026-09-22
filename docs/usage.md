@@ -281,8 +281,11 @@ snapshot에서 항상 제외되는 것:
 | App의 실제 사용자 가치만 | prompt와 snapshot 범위, 근거 경로 enum 제한 |
 | 불필요한 AI 호출/재시도 금지 | cycle당 1회, `GITHUB_RUN_ATTEMPT > 1`이면 중단 |
 | Auto Merge 금지 / 최종 Merge Human-only | 어떤 job도 merge·push 권한을 갖지 않음 |
+| 사람이 기각한 후보를 다시 제안하지 않음 | `not_planned`로 닫힌 `[Self-Improvement]` Issue와 닫기 코멘트를 snapshot에 담아 Evaluator에게 금지 목록으로 전달 |
 
 중복 판단 규칙은 두 가지입니다. 열린 `[Self-Improvement]` Issue가 하나라도 있으면 사람이 처리할 때까지 새 후보를 쌓지 않습니다. 열림/닫힘과 무관하게 같은 제목이 이미 있으면 만들지 않습니다.
+
+후보를 거절할 때는 Issue를 `not_planned`로 닫고 사유를 코멘트로 남깁니다. 그 코멘트가 다음 평가의 제품 방침이 됩니다. 사람의 "아니오"가 루프에 기억되므로 같은 방향이 표현만 바뀌어 돌아오지 않습니다.
 
 ### 생성된 Issue를 다음 cycle로 보내는 방법
 
