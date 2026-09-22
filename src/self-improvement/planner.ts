@@ -524,7 +524,7 @@ function assertSafePlanPath(path: string): void {
   }
 }
 
-const EXPLICIT_PLAN_PATH = /(?:^|[\\s`"'(])((?:\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\\/)+\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\\.[A-Za-z0-9._-]+|(?:package(?:-lock)?\\.json|tsconfig\\.json|index\\.html|README\\.md))/g;
+const EXPLICIT_PLAN_PATH = /(?:^|[\s`\"'(])((?:\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z0-9._-]+|(?:package(?:-lock)?\.json|tsconfig\.json|index\.html|README\.md))/g;
 
 function explicitPlanPaths(values: readonly string[]): string[] {
   const paths: string[] = [];
