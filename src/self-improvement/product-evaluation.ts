@@ -14,7 +14,7 @@ import { TextDecoder } from "node:util";
  * - 한 cycle당 Improvement Candidate 최대 1개 (schema가 구조적으로 제한한다)
  * - 기존 Issue와 중복이면 생성 금지 (trusted control-plane이 결정적으로 판단한다)
  * - Framework 자체 개선 후보는 생성 금지 (snapshot에 Framework 파일이 없고 scope도 거부한다)
- * - 생성한 Issue는 proposal이며 구현은 사람의 PLAN-승인 이후에만 시작된다
+ * - 생성한 Issue는 proposal이다. read-only PLAN은 자동으로 한 번 제안되지만 구현은 사람의 PLAN-승인 이후에만 시작된다
  */
 
 export const SELF_IMPROVEMENT_TITLE_PREFIX = "[Self-Improvement]";
@@ -858,7 +858,7 @@ export function renderImprovementIssueBody(report: ProductEvaluationReport): str
     "---",
     "### HumanStatus: IMPROVEMENT_CANDIDATE",
     "**현재 상황:** 배포된 App을 제품 관점으로 평가해 만든 개선 후보입니다. 아직 아무 구현도 시작하지 않았습니다.",
-    "**다음 행동:** 이 후보가 실제로 필요한지 사람이 판단하세요. 진행한다면 Actions → Read-only AI PLAN → Run workflow에서 이 Issue 번호를 입력해 PLAN을 받고, PLAN-승인 이후에만 구현이 시작됩니다.",
+    "**다음 행동:** read-only AI PLAN이 이 Issue에 자동으로 제안됩니다. PLAN을 읽고 진행하려면 `PLAN-승인` 댓글을 남기고, 진행하지 않으려면 사유를 남기고 `not_planned`로 닫으세요. PLAN-승인 이후에만 구현이 시작됩니다.",
     [
       `- 평가한 cycle: Issue #${cycle.requirementIssueNumber} / Human Merge PR #${cycle.humanMergePullRequestNumber}`,
       `- 평가한 배포 SHA: \`${cycle.deployedSha}\``,

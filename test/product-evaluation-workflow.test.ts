@@ -16,10 +16,12 @@ test("Human Merge된 default branch PR만 Product Evaluation bootstrap 대상이
   assert.match(workflow, /pr\.head\.sha !== reviewedSha/);
 });
 
-test("bootstrap은 자기 자신만 dispatch하고 PLAN/IMPLEMENT를 시작하지 않는다", () => {
-  assert.match(workflow, /workflow_id: 'product-evaluation\.yml'/);
-  assert.match(workflow, /human_merge_pr_number: process\.env\.HUMAN_MERGE_PR_NUMBER/);
-  assert.doesNotMatch(workflow, /workflow_id: 'plan\.yml'|workflow_id: 'implement\.yml'/);
+test("bootstrap은 자기 자신만 dispatch하고 IMPLEMENT나 LEARN을 시작하지 않는다", () => {
+  const bootstrap = workflow.slice(workflow.indexOf("\n  bootstrap:\n"), workflow.indexOf("\n  prepare:\n"));
+  assert.match(bootstrap, /workflow_id: 'product-evaluation\.yml'/);
+  assert.match(bootstrap, /human_merge_pr_number: process\.env\.HUMAN_MERGE_PR_NUMBER/);
+  assert.doesNotMatch(bootstrap, /workflow_id: 'plan\.yml'/);
+  assert.doesNotMatch(workflow, /workflow_id: 'implement\.yml'|workflow_id: 'plan-implement-handoff\.yml'|workflow_id: 'trusted-rail\.yml'/);
   assert.doesNotMatch(workflow, /workflow_id: 'learn-source\.yml'|workflow_id: 'learn\.yml'/);
 });
 
@@ -78,23 +80,28 @@ test("Issue 생성은 trusted finalize의 결정적 판단 뒤에만 일어난�
   assert.match(workflow, /body: decision\.body/);
 });
 
-test("Product Evaluation은 Issue 생성에서 멈추고 Human authority를 침범하지 않는다", () => {
+test("Product Evaluation은 read-only PLAN 제안에서 멈추고 Human authority를 침범하지 않는다", () => {
   assert.match(workflow, /permissions: \{\}/);
   assert.doesNotMatch(workflow, /pulls\.merge|mergePullRequest|enablePullRequestAutoMerge|git\s+push/);
   assert.doesNotMatch(workflow, /pulls\.create/);
   assert.doesNotMatch(workflow, /contents: write/);
   // 평가 job은 어떤 write 권한도 갖지 않는다.
   assert.match(workflow, /\n {2}evaluator:\n[\s\S]*?permissions:\n {6}contents: read\n/);
-  // Issue를 만드는 job의 write 권한은 issues 하나뿐이다.
-  assert.match(workflow, /\n {2}finalize:\n[\s\S]*?permissions:\n {6}contents: read\n {6}issues: write\n/);
+  // Issue를 만드는 job의 write 권한은 issues와 PLAN dispatch용 actions뿐이다.
+  assert.match(workflow, /\n {2}finalize:\n[\s\S]*?permissions:\n {6}contents: read\n {6}issues: write\n {6}actions: write\n/);
 });
 
-test("자동 생성 Issue는 PLAN을 자동으로 시작시키지 않는다", () => {
+test("후보 Issue가 생성되면 read-only PLAN을 정확히 한 번 자동 시작하고 승인은 사람에게 남긴다", () => {
   assert.match(moduleSource, /SELF_IMPROVEMENT_TITLE_PREFIX = "\[Self-Improvement\]"/);
-  // PLAN 자동 시작은 [업무 요구] 접두사를 쓴 사람 작성 Issue에서만 일어난다.
+  // Issue 이벤트로는 PLAN이 시작되지 않는다. [업무 요구] 접두사를 쓰지 않으므로 dispatch가 유일한 경로다.
   assert.match(plan, /startsWith\(github\.event\.issue\.title, '\[업무 요구\]'\)/);
   assert.doesNotMatch(workflow, /\[업무 요구\]/);
-  assert.doesNotMatch(moduleSource, /SELF_IMPROVEMENT_TITLE_PREFIX = "\[업무 요구\]"/);
+  assert.equal(workflow.split("workflow_id: 'plan.yml'").length - 1, 1);
+  assert.match(workflow, /if: steps\.decide\.outputs\.action == 'create' && steps\.create\.outputs\.issue_number != ''/);
+  assert.match(workflow, /inputs: \{ issue_number: issueNumber \}/);
+  // 승인 댓글이나 IMPLEMENT는 어디에서도 만들지 않는다.
+  assert.doesNotMatch(workflow, /issues\.createComment|body: 'PLAN-승인'/);
+  assert.match(moduleSource, /PLAN-승인 이후에만 구현이 시작됩니다/);
 });
 
 test("가드레일은 계약 모듈에 구조적으로 박혀 있다", () => {
