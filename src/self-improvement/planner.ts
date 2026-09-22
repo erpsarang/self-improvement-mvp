@@ -6,6 +6,7 @@ import { TextDecoder } from "node:util";
 export const PLAN_CONTEXT_MAX_FILES = 8;
 export const PLAN_CONTEXT_MAX_BYTES = 80_000;
 export const PLAN_CONTEXT_MAX_FILE_BYTES = 20_000;
+export const PLAN_IMPLEMENT_MAX_FILES = 8;
 
 export interface PlanContextFile {
   readonly evidenceId: string;
@@ -478,7 +479,7 @@ export const PLAN_ALLOWED_PATH_PATTERN =
   "^\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*(/\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*)*$";
 const pathStrings = {
   type: "array",
-  maxItems: 8,
+  maxItems: PLAN_IMPLEMENT_MAX_FILES,
   items: {
     type: "string",
     minLength: 1,
@@ -523,6 +524,39 @@ function assertSafePlanPath(path: string): void {
   }
 }
 
+const EXPLICIT_PLAN_PATH = /(?:^|[\s`\"'(])((?:\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z0-9._-]+|(?:package(?:-lock)?\.json|tsconfig\.json|index\.html|README\.md))/g;
+
+function explicitPlanPaths(values: readonly string[]): string[] {
+  const paths: string[] = [];
+  for (const value of values) {
+    for (const match of value.matchAll(EXPLICIT_PLAN_PATH)) {
+      const path = match[1]!;
+      if (!paths.includes(path)) paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: PlanImplementationScope): void {
+  if (!scope.ready) return;
+  const allowed = new Set(scope.allowedPaths);
+  const readable = new Set([...scope.allowedPaths, ...scope.contextPaths]);
+  const changeCandidates = plan.changeCandidates as string[];
+  const descriptiveSections = [
+    ...(plan.approach as string[]),
+    ...changeCandidates,
+    ...(plan.testStrategy as string[]),
+    ...scope.requiredChanges,
+  ];
+
+  for (const path of explicitPlanPaths(changeCandidates)) {
+    if (!allowed.has(path)) throw new Error(`PLAN change candidate path is outside allowedPaths: ${path}`);
+  }
+  for (const path of explicitPlanPaths(descriptiveSections)) {
+    if (!readable.has(path)) throw new Error(`PLAN references exact path outside bounded implementation scope: ${path}`);
+  }
+}
+
 function validateImplementationScope(value: unknown, target: string, context: PlanContextPack, questions: readonly string[]): PlanImplementationScope {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Missing implementationScope");
   const scope = value as Record<string, unknown>;
@@ -540,7 +574,7 @@ function validateImplementationScope(value: unknown, target: string, context: Pl
   const requiredChanges = scope.requiredChanges as string[];
   const forbiddenChanges = scope.forbiddenChanges as string[];
   const validationCommands = scope.validationCommands as string[];
-  if (allowedPaths.length > 8 || contextPaths.length > 8 || requiredChanges.length > 8 || forbiddenChanges.length > 8 || validationCommands.length > 2) throw new Error("implementationScope exceeds budget");
+  if (allowedPaths.length > PLAN_IMPLEMENT_MAX_FILES || contextPaths.length > PLAN_IMPLEMENT_MAX_FILES || requiredChanges.length > 8 || forbiddenChanges.length > 8 || validationCommands.length > 2) throw new Error("implementationScope exceeds budget");
   if (new Set(allowedPaths).size !== allowedPaths.length) throw new Error("Duplicate implementation scope path");
   if (new Set(contextPaths).size !== contextPaths.length) throw new Error("Duplicate context scope path");
   const planContextPaths = new Set(context.files.map((file) => file.path));
@@ -563,6 +597,9 @@ function validateImplementationScope(value: unknown, target: string, context: Pl
     if (questions.length > 0) throw new Error("implementationScope.ready requires no blocking questions");
     if (allowedPaths.length === 0 || requiredChanges.length === 0 || validationCommands.length === 0) {
       throw new Error("implementationScope.ready requires exact paths, required changes and validation commands");
+    }
+    if (allowedPaths.includes("package.json") && !allowedPaths.includes("package-lock.json") && allowedPaths.length >= PLAN_IMPLEMENT_MAX_FILES) {
+      throw new Error("implementationScope.ready package.json change requires package-lock.json capacity within bounded scope");
     }
   } else if (allowedPaths.length > 0 || contextPaths.length > 0 || requiredChanges.length > 0 || forbiddenChanges.length > 0 || validationCommands.length > 0) {
     throw new Error("implementationScope must be empty when ready=false");
@@ -595,6 +632,9 @@ implementationScope.allowedPaths 규칙:
 - './' 또는 '../' 로 시작하는 경로, backslash, 끝의 '/', 디렉터리 경로, wildcard도 금지입니다.
 - 기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 파일이어야 하며, Context Pack의 path 값을 글자 그대로 사용하세요.
 - 필요한 신규 파일도 같은 형식의 repository-relative exact path로만 제안하세요. 예: src/new-feature.ts, test/new-feature.test.ts, index.html
+- approach/changeCandidates/testStrategy/requiredChanges에서 추가·수정·생성할 파일을 언급하면 repository-relative exact path를 쓰고 반드시 allowedPaths에 포함하세요. 기존 파일을 읽기만 한다면 contextPaths에 포함하세요.
+- package.json을 allowedPaths에 넣고 package-lock.json을 직접 포함하지 않는 경우, trusted Handoff가 package-lock.json companion을 추가할 수 있도록 8개 bounded slot 중 최소 1개를 비워두세요.
+- 필요한 변경 파일이 8개 안에 들어오지 않으면 범위를 줄이세요. 실행 가능한 작은 범위로 줄일 수 없으면 implementationScope.ready=false로 반환하세요.
 contextPaths는 IMPLEMENT Worker가 읽기만 할 기존 참고 파일입니다. allowedPaths와 같은 형식의 repository-relative exact path만 사용하고, 변경 권한을 부여하지 않습니다. 필요한 경우 PLAN Context에서 보지 못한 기존 파일도 제안할 수 있지만 frozen target SHA에 실제 존재해야 합니다.
 validationCommands는 'npm test', 'npm run build' 중 필요한 것만 사용하세요. budget 값은 AI가 정하지 않습니다.
 구현 범위와 검증 방법을 확정할 수 있고 blocking questions가 하나도 없을 때만 implementationScope.ready=true로 하세요.
@@ -649,5 +689,6 @@ export function validatePlan(value: unknown, target: string, context: PlanContex
   }
 
   const implementationScope = validateImplementationScope(plan.implementationScope, target, context, plan.questions as string[]);
+  validateReadyPlanPathConsistency(plan, implementationScope);
   return { ...plan, analysis: normalizedAnalysis, implementationScope };
 }
