@@ -114,3 +114,14 @@ test("Product Evaluation은 canonical distribution으로 App repository에 전�
     assert.equal(ownership.includes(`"sourcePath": "${path}"`), true, path);
   }
 });
+
+test("prepare는 사람이 not_planned로 닫은 후보만 읽어 평가 입력에 넣는다", () => {
+  assert.match(workflow, /\n {2}prepare:\n[\s\S]*?permissions:\n {6}contents: read\n {6}pull-requests: read\n {6}issues: read\n/);
+  assert.match(workflow, /issue\.state_reason !== 'not_planned'/);
+  assert.match(workflow, /issue\.title\.startsWith\(prefix\)/);
+  assert.match(workflow, /comment\.user\?\.login !== 'github-actions\[bot\]'/);
+  assert.match(workflow, /REJECTED_CANDIDATES_JSON: \$\{\{ runner\.temp \}\}\/product-evaluation\/rejected-candidates\.json/);
+  // 기각 후보 수집은 읽기 전용이고 AI 호출을 늘리지 않는다.
+  assert.doesNotMatch(workflow, /issues\.update|issues\.createComment/);
+  assert.equal(workflow.split("openai/codex-action@v1").length - 1, 2);
+});
