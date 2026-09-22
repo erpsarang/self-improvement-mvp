@@ -91,6 +91,8 @@ export interface ProductCycleIdentity {
   readonly humanMergePullRequestNumber: number;
   readonly reviewedHeadSha: string;
   readonly mergeCommitSha: string;
+  /** snapshot 내용을 읽은 배포 SHA. 평가 대상은 특정 PR이 아니라 지금 배포된 제품이다. */
+  readonly deployedSha: string;
 }
 
 export interface ProductSnapshotFile {
@@ -110,6 +112,7 @@ export interface ProductSnapshotPayload {
     readonly humanMergePullRequestNumber: number;
     readonly reviewedHeadSha: string;
     readonly mergeCommitSha: string;
+    readonly deployedSha: string;
   };
   readonly budget: {
     readonly maxFiles: number;
@@ -349,6 +352,7 @@ function normalizeCycleIdentity(identity: ProductCycleIdentity): ProductCycleIde
   assertPositiveInteger("humanMergePullRequestNumber", identity.humanMergePullRequestNumber);
   if (!GIT_SHA.test(identity.reviewedHeadSha)) throw new Error("reviewedHeadSha must be a git SHA");
   if (!GIT_SHA.test(identity.mergeCommitSha)) throw new Error("mergeCommitSha must be a git SHA");
+  if (!GIT_SHA.test(identity.deployedSha)) throw new Error("deployedSha must be a git SHA");
   return { ...identity };
 }
 
@@ -406,6 +410,7 @@ export function createProductSnapshot(identity: ProductCycleIdentity, targetRoot
       humanMergePullRequestNumber: cycle.humanMergePullRequestNumber,
       reviewedHeadSha: cycle.reviewedHeadSha,
       mergeCommitSha: cycle.mergeCommitSha,
+      deployedSha: cycle.deployedSha,
     },
     budget: {
       maxFiles: PRODUCT_EVALUATION_BUDGET.maxFiles,
@@ -799,7 +804,8 @@ export function renderImprovementIssueBody(report: ProductEvaluationReport): str
     "**다음 행동:** 이 후보가 실제로 필요한지 사람이 판단하세요. 진행한다면 Actions → Read-only AI PLAN → Run workflow에서 이 Issue 번호를 입력해 PLAN을 받고, PLAN-승인 이후에만 구현이 시작됩니다.",
     [
       `- 평가한 cycle: Issue #${cycle.requirementIssueNumber} / Human Merge PR #${cycle.humanMergePullRequestNumber}`,
-      `- 평가한 merge commit: \`${cycle.mergeCommitSha}\``,
+      `- 평가한 배포 SHA: \`${cycle.deployedSha}\``,
+      `- 이 cycle의 merge commit: \`${cycle.mergeCommitSha}\``,
       `- Product Snapshot SHA-256: \`${report.source.snapshot.snapshotDigest}\``,
       `- Product Evaluation report SHA-256: \`${report.reportDigest}\``,
       `- Evaluator: ${report.evaluator.provider} / ${report.evaluator.action} / ${report.evaluator.model} / effort ${report.evaluator.reasoningEffort}`,

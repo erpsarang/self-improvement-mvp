@@ -156,9 +156,16 @@ jobs:
               throw new Error('Human Merge PR exact identity mismatch');
             }
 
-            // 이미 다음 Merge가 올라온 cycle은 현재 배포본이 아니므로 평가하지 않는다.
-            if (pr.merge_commit_sha !== currentDefault.commit.sha) {
-              throw new Error('Product Evaluation only evaluates the currently deployed merge commit');
+            // 평가 대상은 특정 PR의 트리가 아니라 지금 배포된 default branch다.
+            // 이 cycle이 그 배포에 실제로 포함되었는지만 exact하게 확인한다.
+            const deployedSha = currentDefault.commit.sha;
+            const { data: comparison } = await github.rest.repos.compareCommits({
+              ...context.repo,
+              base: pr.merge_commit_sha,
+              head: deployedSha,
+            });
+            if (comparison.status !== 'identical' && comparison.status !== 'ahead') {
+              throw new Error('Human Merge commit must be part of the currently deployed default branch');
             }
 
             const output = path.join(process.env.RUNNER_TEMP, 'product-evaluation');
@@ -171,9 +178,9 @@ jobs:
                 humanMergePullRequestNumber: prNumber,
                 reviewedHeadSha,
                 mergeCommitSha: pr.merge_commit_sha,
+                deployedSha,
               }, null, 2),
             );
-            core.setOutput('merge_commit_sha', pr.merge_commit_sha);
 
       - name: trusted control-plane checkout
         uses: actions/checkout@v4
@@ -185,7 +192,7 @@ jobs:
       - name: 배포된 제품 checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.freeze.outputs.merge_commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
           path: product-target
 

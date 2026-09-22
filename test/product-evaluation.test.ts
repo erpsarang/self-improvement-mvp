@@ -28,6 +28,7 @@ const cycle: ProductCycleIdentity = {
   humanMergePullRequestNumber: 7,
   reviewedHeadSha: "6d819957a2c7f6cabd637c674c1fa4a8c1672bad",
   mergeCommitSha: "1252246a861cb8c7edf64488c40b6bfe438d69e7",
+  deployedSha: "90eaf07d1b0e4a2c2f3f6a5b8c7d9e0f1a2b3c4d",
 };
 
 function write(root: string, path: string, content: string): void {
@@ -132,6 +133,8 @@ test("제품 snapshot은 App 제품 파일만 담고 Framework distribution을 �
   for (const path of snapshotPaths(snapshot)) assert.equal(isFrameworkOwnedPath(path), false);
   assert.equal(snapshot.repository, cycle.repository);
   assert.equal(snapshot.deployedCycle.mergeCommitSha, cycle.mergeCommitSha);
+  // 평가 대상은 특정 PR의 트리가 아니라 지금 배포된 default branch다.
+  assert.equal(snapshot.deployedCycle.deployedSha, cycle.deployedSha);
   assert.equal(snapshot.fileCount, snapshot.files.length);
   assert.equal(
     snapshot.totalSnapshotBytes,
@@ -366,4 +369,5 @@ test("중복이 없으면 업무 요구 서식과 provenance를 갖춘 Improveme
   assert.match(decision.body, /PLAN-승인 이후에만 구현이 시작됩니다/);
   assert.match(decision.body, /최종 Merge는 Human-only입니다/);
   assert.match(decision.body, new RegExp(`Product Evaluation report SHA-256: \`${report.reportDigest}\``));
+  assert.match(decision.body, new RegExp(`평가한 배포 SHA: \`${cycle.deployedSha}\``));
 });

@@ -23,12 +23,16 @@ test("bootstrap은 자기 자신만 dispatch하고 PLAN/IMPLEMENT를 시작하�
   assert.doesNotMatch(workflow, /workflow_id: 'learn-source\.yml'|workflow_id: 'learn\.yml'/);
 });
 
-test("평가는 현재 배포된 merge commit에서만 exact하게 실행된다", () => {
+test("평가 대상은 지금 배포된 default branch이고 cycle 포함 여부를 exact하게 확인한다", () => {
   assert.match(workflow, /github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
   assert.match(workflow, /Trusted Product Evaluation must execute at the exact current default branch SHA/);
-  assert.match(workflow, /Product Evaluation only evaluates the currently deployed merge commit/);
+  assert.match(workflow, /Human Merge commit must be part of the currently deployed default branch/);
+  assert.match(workflow, /comparison\.status !== 'identical' && comparison\.status !== 'ahead'/);
   assert.match(workflow, /Human Merge PR must be actually merged/);
   assert.match(workflow, /Human Merge PR exact identity mismatch/);
+  // snapshot 내용은 배포된 SHA에서 읽는다.
+  assert.match(workflow, /const deployedSha = currentDefault\.commit\.sha;/);
+  assert.match(workflow, /path: product-target/);
 });
 
 test("Evaluator는 credential 없이 neutral workspace에서 read-only로 1회만 호출된다", () => {
