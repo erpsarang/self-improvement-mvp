@@ -33,6 +33,17 @@ User Requirement
 → 다음 Requirement / PLAN cycle
 ```
 
+Human Merge된 App은 같은 경계에서 제품 관점으로도 한 번 평가됩니다.
+
+```text
+Human Merge
+→ bounded Product Snapshot (배포된 merge commit의 제품 파일만)
+→ read-only AI Product Evaluation
+→ 사이클당 최대 1개의 Improvement Candidate Issue
+→ Human 판단
+→ 사람이 시작하는 PLAN cycle
+```
+
 최종 Merge는 **Human-only**이며 Auto Merge를 사용하지 않습니다.
 
 ## Trust Model
@@ -87,6 +98,21 @@ Merge가 실제 완료된 뒤에만 Completed Cycle Record를 만듭니다. LEAR
 
 LEARN 결과는 authority가 아니라 evidence-grounded proposal이고, Improvement Candidate도 `proposal-only / pending-human`입니다. 사람이 선택한 candidate만 새 Requirement / PLAN cycle로 연결됩니다.
 
+### 5. Human Merge → Product Evaluation → Improvement Candidate Issue
+
+LEARN이 개발 cycle의 진행 방식을 본다면, Product Evaluation은 **배포된 App 자체가 사용자에게 충분한가**를 봅니다. 두 stage는 입력도 산출물도 공유하지 않습니다.
+
+평가 대상은 merge commit 시점의 제품 파일로 한정한 bounded Product Snapshot입니다. Framework distribution 파일은 snapshot 선택에서 제외되므로 Evaluator는 Framework를 볼 수 없습니다.
+
+명백한 개선이 있을 때만 App repository에 `[Self-Improvement]` Issue 하나가 만들어집니다. 지켜지는 경계는 다음과 같습니다.
+
+- 한 cycle당 Improvement Candidate 최대 1개 (출력 schema가 구조적으로 제한)
+- 열린 `[Self-Improvement]` Issue가 있거나 같은 제목이 이미 있으면 생성 금지
+- 개선 범위가 Framework 소유 경로면 fail-closed로 거부
+- AI 호출은 cycle당 1회이고 재시도하지 않음
+- 생성된 Issue는 `[업무 요구]` 접두사를 쓰지 않으므로 PLAN이 자동으로 시작되지 않음
+- 구현은 사람이 PLAN을 시작하고 `PLAN-승인`한 이후에만 진행
+
 ## 실제 dogfood 증거
 
 첫 v0.2 E2E 실증은 `erpsarang/sales-order-exception-analyzer`의 실제 업무 요구 Issue #8로 수행했습니다.
@@ -125,7 +151,7 @@ v0.2는 신뢰 가능한 **수직 개발 루프**를 증명한 MVP입니다. 다
 - durable / append-only 장기 provenance store
 - 운영 UI와 관측성 개선
 - 비용·시간 최적화
-- Framework/App별 OpenAI Project·API Key 분리와 AI call dedup / budget guardrail
+- Framework/App별 OpenAI Project·API Key 분리와 전 stage 공통 AI call dedup / budget guardrail (Product Evaluation은 cycle당 1회 호출 상한과 Issue 중복 차단을 이미 적용)
 
 Auto Merge는 향후 목표가 아니며, 최종 Merge는 계속 Human-only입니다.
 

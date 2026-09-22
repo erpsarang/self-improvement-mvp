@@ -111,13 +111,37 @@ AI output은 evidence ID에 grounding되어야 하며 trusted finalize를 통과
 
 검증된 LEARN hypothesis를 deterministic하게 `proposal-only / pending-human` candidate로 투영합니다.
 
-자동 ranking, Issue 생성, IMPLEMENT 시작은 하지 않습니다.
+자동 ranking, Issue 생성, IMPLEMENT 시작은 하지 않습니다. LEARN 계열 경로는 artifact에서 멈추고 사람이 읽습니다.
 
 ### Phase 3-D — Human-selected LOOP
 
 사람이 선택한 candidate만 새 Requirement로 연결합니다.
 
 실제 dogfood Improvement Candidate의 `candidate-hyp-01`을 사람이 선택해 Framework Issue #171로 연결했고, #171을 PLAN → IMPLEMENT/FIX → Trusted Rail → Human Merge까지 완주했습니다.
+
+### Phase 3-E — Product Evaluation과 Improvement Candidate Issue
+
+여기까지는 개선 후보를 사람이 직접 발견해 Issue로 옮겨야 했습니다. Phase 3-E는 그 한 칸만 자동화합니다.
+
+```text
+Human Merge
+→ bounded Product Snapshot (배포된 merge commit의 제품 파일만)
+→ read-only AI Product Evaluation
+→ trusted 결정적 중복 판단
+→ 사이클당 최대 1개의 [Self-Improvement] Issue
+→ Human 판단
+```
+
+Phase 3-C가 "Issue 생성을 하지 않는다"고 고정한 것은 LEARN hypothesis 경로입니다. Phase 3-E는 제품 평가라는 별도 입력에 한해 그 경계를 한 칸만 넓히고, 다음을 그대로 유지합니다.
+
+- 자동 ranking 없음
+- 자동 PLAN / IMPLEMENT 시작 없음 (`[업무 요구]` 접두사를 쓰지 않아 PLAN 자동 시작 조건에 걸리지 않습니다)
+- Auto Merge 없음, 최종 Merge는 Human-only
+- Framework 자체 개선 후보 금지 (snapshot 제외 + scope fail-closed)
+- 한 cycle당 후보 1개, 중복이면 생성 금지
+- AI 호출은 cycle당 1회, 재시도 없음
+
+즉 자동화된 것은 **후보를 발견해 사람 앞에 올려놓는 일**까지이고, 무엇을 만들지 결정하는 authority는 여전히 사람에게 있습니다.
 
 ## v0.2 추가 증명 — exact test execution evidence
 
