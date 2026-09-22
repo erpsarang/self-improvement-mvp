@@ -135,7 +135,7 @@ Human Merge
 Phase 3-C가 "Issue 생성을 하지 않는다"고 고정한 것은 LEARN hypothesis 경로입니다. Phase 3-E는 제품 평가라는 별도 입력에 한해 그 경계를 한 칸만 넓히고, 다음을 그대로 유지합니다.
 
 - 자동 ranking 없음
-- 자동 PLAN / IMPLEMENT 시작 없음 (`[업무 요구]` 접두사를 쓰지 않아 PLAN 자동 시작 조건에 걸리지 않습니다)
+- read-only PLAN은 후보 1개당 정확히 한 번 자동 제안되지만, IMPLEMENT는 사람의 `PLAN-승인` 이후에만 시작됩니다
 - Auto Merge 없음, 최종 Merge는 Human-only
 - Framework 자체 개선 후보 금지 (snapshot 제외 + scope fail-closed)
 - 한 cycle당 후보 1개, 중복이면 생성 금지

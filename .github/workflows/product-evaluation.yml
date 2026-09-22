@@ -8,7 +8,7 @@ name: Trusted Product Evaluation
 # - 기존 Issue와 중복이면 생성 금지
 # - Framework 자체 개선 후보는 생성 금지
 # - AI 호출은 cycle당 1회, 재시도 없음
-# - 생성한 Issue는 proposal이며 PLAN은 사람이 직접 시작한다
+# - 생성한 Issue는 proposal이다. read-only AI PLAN은 자동으로 한 번 시작되지만 구현은 사람의 PLAN-승인 이후에만 진행된다
 # - Auto Merge를 사용하지 않고 최종 Merge는 Human-only다
 on:
   pull_request:
@@ -367,6 +367,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: write
 
     steps:
       - name: trusted control-plane checkout
@@ -482,6 +483,7 @@ jobs:
           IMPROVEMENT_ISSUE_DECISION_JSON: ${{ runner.temp }}/product-evaluation-final/issue-decision.json
 
       - name: proposal-only Improvement Candidate Issue 생성
+        id: create
         if: steps.decide.outputs.action == 'create'
         uses: actions/github-script@v7
         env:
@@ -497,8 +499,28 @@ jobs:
               body: decision.body,
             });
             core.info(`Improvement Candidate Issue #${issue.number}를 생성했습니다`);
+            core.setOutput('issue_number', String(issue.number));
             core.summary.addRaw(`Improvement Candidate Issue #${issue.number}: ${decision.title}`);
             await core.summary.write();
+
+      # 사람이 Actions에서 PLAN을 수동으로 시작하던 한 단계를 없앤다. PLAN은 read-only 제안이며
+      # 구현은 여전히 사람의 PLAN-승인 이후에만 시작된다. 후보 1개당 정확히 1회만 dispatch한다.
+      - name: Read-only AI PLAN 자동 시작
+        if: steps.decide.outputs.action == 'create' && steps.create.outputs.issue_number != ''
+        uses: actions/github-script@v7
+        env:
+          CANDIDATE_ISSUE_NUMBER: ${{ steps.create.outputs.issue_number }}
+        with:
+          script: |
+            const issueNumber = process.env.CANDIDATE_ISSUE_NUMBER || '';
+            if (!/^[1-9]\d*$/.test(issueNumber)) throw new Error('candidate issue number is required');
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'plan.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: { issue_number: issueNumber },
+            });
+            core.info(`Improvement Candidate Issue #${issueNumber}에 대해 Read-only AI PLAN을 자동 dispatch했습니다`);
 
       - name: 생성하지 않은 이유 기록
         if: steps.decide.outputs.action == 'skip'

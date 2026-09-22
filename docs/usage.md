@@ -286,7 +286,7 @@ snapshot에서 항상 제외되는 것:
 | Framework 자체 개선 후보 금지 | snapshot 선택 제외 + `scopePaths`의 Framework 경로 fail-closed |
 | App의 실제 사용자 가치만 | prompt와 snapshot 범위, 근거 경로 enum 제한 |
 | 불필요한 AI 호출/재시도 금지 | cycle당 1회, `GITHUB_RUN_ATTEMPT > 1`이면 중단 |
-| Auto Merge 금지 / 최종 Merge Human-only | 어떤 job도 merge·push 권한을 갖지 않음 |
+| Auto Merge 금지 / 최종 Merge Human-only | 어떤 job도 merge·push 권한을 갖지 않음. PLAN은 자동 제안되지만 `PLAN-승인`과 Merge는 사람만 함 |
 | 사람이 기각한 후보를 다시 제안하지 않음 | `not_planned`로 닫힌 `[Self-Improvement]` Issue와 닫기 코멘트를 snapshot에 담아 Evaluator에게 금지 목록으로 전달 |
 
 중복 판단 규칙은 두 가지입니다. 열린 `[Self-Improvement]` Issue가 하나라도 있으면 사람이 처리할 때까지 새 후보를 쌓지 않습니다. 열림/닫힘과 무관하게 같은 제목이 이미 있으면 만들지 않습니다.
@@ -295,9 +295,11 @@ snapshot에서 항상 제외되는 것:
 
 ### 생성된 Issue를 다음 cycle로 보내는 방법
 
-생성된 Issue는 proposal입니다. 제목이 `[Self-Improvement]`이므로 `[업무 요구]`로 시작하는 Issue에서만 동작하는 PLAN 자동 시작 조건에 걸리지 않습니다.
+생성된 Issue는 proposal입니다. finalize job이 그 Issue 번호로 Read-only AI PLAN을 정확히 한 번 자동 dispatch하므로, 사람이 Actions에서 PLAN을 시작할 필요가 없습니다. PLAN은 read-only 제안이며 Issue 댓글로 달립니다.
 
-진행하기로 판단했다면 사람이 Actions → Read-only AI PLAN → Run workflow에서 그 Issue 번호를 입력합니다. 이후는 기존과 같습니다. PLAN을 읽고 `PLAN-승인` 댓글을 단 다음에만 구현이 시작되고, 최종 Merge는 Human-only입니다.
+사람의 일은 두 가지뿐입니다. PLAN을 읽고 진행하려면 `PLAN-승인` 댓글을 남기고, 진행하지 않으려면 사유를 남기고 `not_planned`로 닫습니다. 구현은 `PLAN-승인` 이후에만 시작되고 최종 Merge는 Human-only입니다.
+
+비용은 후보 1개당 PLAN 호출 1회입니다. 기각될 후보에도 PLAN이 한 번 돌지만, 기각 후보 기억이 같은 방향의 재제안을 막으므로 기각률은 사이클이 돌수록 낮아집니다.
 
 ## 12. v0.2에서 실제 증명한 dogfood
 

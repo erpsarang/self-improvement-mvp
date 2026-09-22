@@ -110,8 +110,8 @@ LEARN이 개발 cycle의 진행 방식을 본다면, Product Evaluation은 **배
 - 열린 `[Self-Improvement]` Issue가 있거나 같은 제목이 이미 있으면 생성 금지
 - 개선 범위가 Framework 소유 경로면 fail-closed로 거부
 - AI 호출은 cycle당 1회이고 재시도하지 않음
-- 생성된 Issue는 `[업무 요구]` 접두사를 쓰지 않으므로 PLAN이 자동으로 시작되지 않음
-- 구현은 사람이 PLAN을 시작하고 `PLAN-승인`한 이후에만 진행
+- 생성된 Issue에는 read-only AI PLAN이 정확히 한 번 자동으로 제안됨
+- 구현은 사람이 `PLAN-승인`한 이후에만 진행하고, 진행하지 않을 후보는 사유를 남기고 `not_planned`로 닫음
 - `not_planned`로 닫힌 후보와 그 사유는 다음 평가에 금지 목록으로 전달되어 다시 제안되지 않음
 
 ## 실제 dogfood 증거
