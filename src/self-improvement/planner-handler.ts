@@ -11,7 +11,7 @@ import {
   type PlanContextPack,
   type PlanImplementationScope,
 } from "./planner.js";
-import { augmentPlanContextWithBusinessRelations } from "./plan-business-context.js";
+import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations } from "./plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
 import { augmentPlanContextWithExplicitPaths } from "./plan-explicit-path-context.js";
 import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
@@ -73,7 +73,9 @@ if (command === "prepare") {
   }
   if (JSON.stringify(snapshot(target)) !== JSON.stringify(input.files)) throw new Error("Target repository changed during planning");
 
-  const plan = validatePlan(JSON.parse(readFileSync(file("raw-plan.json"), "utf8")), target, context);
+  // 변경 대상 소스를 import하는 기존 테스트는 trusted 단계가 scope에 결정적으로 추가한 뒤 검증한다.
+  const companionResult = applyImpactedTestCompanions(target, context, JSON.parse(readFileSync(file("raw-plan.json"), "utf8")));
+  const plan = validatePlan(companionResult.plan, target, context);
   writeFileSync(file("PLAN.json"), JSON.stringify({
     kind: "untrusted-plan",
     repository: input.repository,
@@ -98,6 +100,9 @@ if (command === "prepare") {
     ? [
         "- 준비 상태: **IMPLEMENT 가능**",
         `- 허용 경로: ${scope.allowedPaths.map((path) => `\`${path}\``).join(", ")}`,
+        ...(companionResult.companions.length > 0
+          ? [`- trusted 보강 테스트: ${companionResult.companions.map((path) => `\`${path}\``).join(", ")} (변경 대상 소스를 import하는 기존 테스트를 결정적으로 추가)`]
+          : []),
         `- 필수 변경: ${scope.requiredChanges.join(" / ")}`,
         `- 금지 변경: ${scope.forbiddenChanges.length > 0 ? scope.forbiddenChanges.join(" / ") : "없음"}`,
         `- 검증 명령: ${scope.validationCommands.map((command) => `\`${command}\``).join(", ")}`,

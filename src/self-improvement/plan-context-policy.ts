@@ -23,5 +23,5 @@ export function needsHumanOutputPlanContext(requirement: string): boolean {
 }
 
 export function planImpactTestScopeGuidance(): string {
-  return "Context Pack에 기존 테스트가 있고 그 테스트가 변경 대상의 반환 shape/API/contract를 정확히 검증한다면 영향 여부를 확인하세요. 수정이 실제로 필요할 때만 그 기존 테스트의 exact path를 implementationScope.allowedPaths에 포함하고, 무관한 테스트로 범위를 넓히지 마세요.";
+  return "Context Pack에 기존 테스트가 있고 그 테스트가 변경 대상의 반환 shape/API/contract를 정확히 검증한다면 영향 여부를 확인하세요. 수정이 실제로 필요할 때만 그 기존 테스트의 exact path를 implementationScope.allowedPaths에 포함하고, 무관한 테스트로 범위를 넓히지 마세요. 변경 대상 소스를 import하는 기존 테스트는 trusted 단계가 allowedPaths에 자동으로 추가하므로, 8개 bounded slot 안에 그 여유를 남겨두세요.";
 }

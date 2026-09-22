@@ -7,6 +7,7 @@ import {
   PLAN_CONTEXT_MAX_BYTES,
   PLAN_CONTEXT_MAX_FILES,
   PLAN_CONTEXT_MAX_FILE_BYTES,
+  PLAN_IMPLEMENT_MAX_FILES,
   verifyPlanContextPack,
   type PlanContextFile,
   type PlanContextPack,
@@ -444,4 +445,88 @@ export function augmentPlanContextWithBusinessRelations(
   // Even when no additional source/test pair fits, returning the protected pack
   // is useful because it can restore a missing exact direct test for validation.
   return rebind(context.repository, context.sha, files);
+}
+
+export interface ImpactedTestCompanionResult {
+  readonly plan: Record<string, unknown>;
+  readonly companions: readonly string[];
+}
+
+function isFrameworkTest(path: string): boolean {
+  return path.toLowerCase().startsWith("test/self-improvement/");
+}
+
+/**
+ * 변경 대상 App 소스를 import하는 기존 테스트를 trusted 단계가 allowedPaths에 결정적으로 추가한다.
+ *
+ * Planner가 Context Pack에서 그 테스트를 봤더라도 "수정이 필요할 때만 포함"이라는 판단을 틀리면
+ * Worker는 scope 밖 테스트를 고칠 수 없어 deterministic CI가 fail-closed 된다
+ * (classic-paragraph-wit#9 1차 PLAN). package-lock.json companion과 같은 원칙으로,
+ * AI 판단이 아니라 import graph로 정한다. 사람은 PLAN.md에서 보강된 최종 scope를 보고 승인한다.
+ *
+ * ready=false이거나 scope 모양이 맞지 않으면 손대지 않고 validatePlan이 판단하게 둔다.
+ */
+export function applyImpactedTestCompanions(
+  target: string,
+  context: PlanContextPack,
+  rawPlan: unknown,
+): ImpactedTestCompanionResult {
+  const untouched = { plan: rawPlan as Record<string, unknown>, companions: [] as string[] };
+  if (!rawPlan || typeof rawPlan !== "object" || Array.isArray(rawPlan)) return untouched;
+  const plan = rawPlan as Record<string, unknown>;
+  const scope = plan.implementationScope;
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return untouched;
+  const scopeRecord = scope as Record<string, unknown>;
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (scopeRecord.ready !== true || !isStringArray(scopeRecord.allowedPaths)) return untouched;
+  const allowedPaths = scopeRecord.allowedPaths;
+  const contextPaths = isStringArray(scopeRecord.contextPaths) ? scopeRecord.contextPaths : [];
+  const requiredChanges = isStringArray(scopeRecord.requiredChanges) ? scopeRecord.requiredChanges : [];
+
+  const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
+  const changedSources = new Set(
+    allowedPaths.filter((path) =>
+      isRuntimeSource(path) && !isFrameworkSource(path) && sourcePaths.includes(path) && existsSync(join(target, path)),
+    ),
+  );
+  if (changedSources.size === 0) return untouched;
+
+  // Planner가 본 Context Pack 안의 기존 테스트만 대상으로 한다. 존재하는 allowedPath는
+  // Context Pack에 있어야 한다는 validatePlan 규칙과 같은 경계다.
+  const companions: string[] = [];
+  for (const file of context.files) {
+    const path = file.path;
+    if (!isTestLike(path) || isFrameworkTest(path) || allowedPaths.includes(path)) continue;
+    if (!existsSync(join(target, path))) continue;
+    const text = decodeText(join(target, path));
+    if (text === null) continue;
+    const imported = importedRuntimeSources(path, text, sourcePaths);
+    if (imported.some((source) => changedSources.has(source)) && !companions.includes(path)) companions.push(path);
+  }
+  companions.sort((a, b) => a.localeCompare(b));
+  if (companions.length === 0) return untouched;
+
+  if (allowedPaths.length + companions.length > PLAN_IMPLEMENT_MAX_FILES) {
+    throw new Error(
+      `PLAN scope cannot hold existing tests that import changed sources within ${PLAN_IMPLEMENT_MAX_FILES} bounded paths: ${companions.join(", ")}`,
+    );
+  }
+
+  const companionNote =
+    `기존 테스트 ${companions.map((path) => `\`${path}\``).join(", ")}는 변경 대상 소스를 import하므로 새 동작에 맞게 기대값을 갱신한다. 테스트를 삭제하거나 건너뛰지 않는다.`;
+  const nextRequiredChanges = requiredChanges.length < 8 ? [...requiredChanges, companionNote] : requiredChanges;
+
+  return {
+    plan: {
+      ...plan,
+      implementationScope: {
+        ...scopeRecord,
+        allowedPaths: [...allowedPaths, ...companions],
+        contextPaths: contextPaths.filter((path) => !companions.includes(path)),
+        requiredChanges: nextRequiredChanges,
+      },
+    },
+    companions,
+  };
 }
