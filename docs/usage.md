@@ -112,6 +112,12 @@ Planner는 repository를 수정하지 않으며 PLAN 자체도 authority가 아�
 
 `ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
 
+### 변경 대상 소스를 import하는 기존 테스트
+
+Planner가 Context Pack에서 기존 테스트를 봤더라도 "수정이 필요할 때만 포함" 판단을 틀리면, Worker는 scope 밖 테스트를 고칠 수 없어 deterministic CI가 fail-closed 됩니다. 그래서 trusted validation 단계가 변경 대상 App 소스를 import하는 Context Pack 안의 기존 테스트를 `allowedPaths`에 결정적으로 추가합니다. `package-lock.json` companion과 같은 원칙입니다.
+
+보강된 테스트는 PLAN.md의 "trusted 보강 테스트" 줄에 표시되므로 사람은 최종 scope를 보고 승인합니다. 8개 bounded slot이 모자라면 조용히 넘기지 않고 PLAN 검증이 실패합니다.
+
 ## 5. Human `PLAN-승인`
 
 PLAN을 확인한 뒤 승인하려면 Requirement Issue에 정확히 다음 댓글을 남깁니다.
