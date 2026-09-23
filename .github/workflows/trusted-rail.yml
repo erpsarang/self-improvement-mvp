@@ -959,3 +959,7 @@ jobs:
       actions: write
       pull-requests: write
     uses: ./.github/workflows/orchestrator.yml
+    # Merge-Ready GitHub App credential만 명시적으로 넘긴다. 다른 secret(모델 API key, publish token)은 Orchestrator에 보이지 않는다.
+    secrets:
+      MERGE_READY_APP_ID: ${{ secrets.MERGE_READY_APP_ID }}
+      MERGE_READY_APP_PRIVATE_KEY: ${{ secrets.MERGE_READY_APP_PRIVATE_KEY }}

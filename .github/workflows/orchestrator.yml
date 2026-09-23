@@ -2,6 +2,13 @@ name: Embedded Orchestrator
 
 on:
   workflow_call:
+    # Framework 전용 Merge-Ready GitHub App. 없으면 GITHUB_TOKEN(github-actions[bot])으로 fallback 한다.
+    # 호출자(Trusted Rail)는 이 두 secret만 명시적으로 넘기고 inherit 하지 않는다.
+    secrets:
+      MERGE_READY_APP_ID:
+        required: false
+      MERGE_READY_APP_PRIVATE_KEY:
+        required: false
 
 # Semantic REVIEW 이후 같은 Trusted Rail run 안에서 deterministic routing을 수행한다.
 # 별도 workflow_run chain을 만들지 않으며, FIX 재진입만 새 workflow_dispatch root로 시작한다.
@@ -142,18 +149,39 @@ jobs:
       contents: read
       pull-requests: write
     runs-on: ubuntu-latest
+    env:
+      # secrets context는 if:에서 쓸 수 없으므로 job env로 내려 step 실행 여부를 정한다.
+      MERGE_READY_APP_CONFIGURED: ${{ secrets.MERGE_READY_APP_ID != '' && secrets.MERGE_READY_APP_PRIVATE_KEY != '' }}
     outputs:
       pr_number: ${{ steps.pr.outputs.pr_number }}
       pr_url: ${{ steps.pr.outputs.pr_url }}
       pr_base_branch: ${{ steps.pr.outputs.pr_base_branch }}
       pr_head_branch: ${{ steps.pr.outputs.pr_head_branch }}
       pr_head_sha: ${{ steps.pr.outputs.pr_head_sha }}
+      pr_author_login: ${{ steps.pr.outputs.pr_author_login }}
+      pr_created_by_identity: ${{ steps.pr.outputs.pr_created_by_identity }}
+      pr_created_by_app_slug: ${{ steps.pr.outputs.pr_created_by_app_slug }}
 
     steps:
+      # Framework 전용 identity. github-actions[bot]이 만든 PR은 GitHub 정책상 CI 실행에 사람의 Approve가 필요하므로,
+      # 최소 권한(pull requests write / contents read) GitHub App 설치 토큰으로 PR만 만든다. merge·push 권한은 없다.
+      # 토큰은 현재 repository로만 scope되고 job 종료 시 자동 revoke 된다.
+      - name: Framework Merge-Ready identity 토큰 발급 (GitHub App)
+        id: app_token
+        if: env.MERGE_READY_APP_CONFIGURED == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.MERGE_READY_APP_ID }}
+          private-key: ${{ secrets.MERGE_READY_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: read
+
       - name: exact reviewed SHA 확인 후 Human Merge PR 생성 또는 재사용
         id: pr
         uses: actions/github-script@v7
         env:
+          MERGE_READY_IDENTITY_KIND: ${{ steps.app_token.outputs.token != '' && 'GITHUB_APP' || 'GITHUB_TOKEN' }}
+          MERGE_READY_APP_SLUG: ${{ steps.app_token.outputs.app-slug }}
           ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
           REVIEWED_BRANCH: ${{ needs.route.outputs.reviewed_branch }}
           REVIEWED_HEAD_SHA: ${{ needs.route.outputs.reviewed_head_sha }}
@@ -163,6 +191,7 @@ jobs:
           TRUSTED_RAIL_RUN_ID: ${{ github.run_id }}
           TRUSTED_RAIL_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
+          github-token: ${{ steps.app_token.outputs.token || github.token }}
           script: |
             const issueNumber = Number(process.env.ISSUE_NUMBER);
             const branch = process.env.REVIEWED_BRANCH;
@@ -173,6 +202,19 @@ jobs:
             const trustedRailRunId = Number(process.env.TRUSTED_RAIL_RUN_ID);
             const trustedRailRunAttempt = Number(process.env.TRUSTED_RAIL_RUN_ATTEMPT);
             const base = context.payload.repository.default_branch;
+            const identityKind = process.env.MERGE_READY_IDENTITY_KIND;
+            const appSlug = process.env.MERGE_READY_APP_SLUG || '';
+            if (identityKind !== 'GITHUB_APP' && identityKind !== 'GITHUB_TOKEN') {
+              core.setFailed(`invalid Merge-Ready identity kind: ${identityKind}`);
+              return;
+            }
+            if (identityKind === 'GITHUB_APP' && !/^[a-z0-9-]+$/.test(appSlug)) {
+              core.setFailed('GitHub App identity requires an app slug');
+              return;
+            }
+            const identityLine = identityKind === 'GITHUB_APP'
+              ? `- PR 생성 identity: \`${appSlug}[bot]\` (Framework 전용 GitHub App · 권한 pull requests write / contents read · merge·push 불가)`
+              : '- PR 생성 identity: `github-actions[bot]` (GITHUB_TOKEN fallback · CI 실행에 사람의 Approve가 필요할 수 있음)';
 
             if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
               core.setFailed('invalid issue number');
@@ -254,6 +296,7 @@ jobs:
                   `- Issue: #${issueNumber}`,
                   `- reviewed exact SHA: \`${expectedSha}\``,
                   `- requirements digest: \`${requirementsDigest}\``,
+                  identityLine,
                   '- 최종 Merge는 **Human-only**입니다.',
                   '- Auto Merge는 사용하지 않습니다.',
                   '',
@@ -290,11 +333,29 @@ jobs:
               return;
             }
 
+            // 생성 identity는 사용한 토큰이 아니라 GitHub가 기록한 실제 PR 작성자로 결정한다 (재사용 PR 포함).
+            // Framework identity(App 또는 github-actions[bot]) 밖의 작성자는 MERGE_READY로 승격하지 않는다.
+            const authorLogin = exactPr.user?.login ?? '';
+            let createdByIdentity;
+            let createdByAppSlug = '';
+            if (appSlug && authorLogin === `${appSlug}[bot]`) {
+              createdByIdentity = 'GITHUB_APP';
+              createdByAppSlug = appSlug;
+            } else if (authorLogin === 'github-actions[bot]') {
+              createdByIdentity = 'GITHUB_TOKEN';
+            } else {
+              core.setFailed(`unexpected Human Merge PR author: ${authorLogin}`);
+              return;
+            }
+
             core.setOutput('pr_number', String(exactPr.number));
             core.setOutput('pr_url', exactPr.html_url);
             core.setOutput('pr_base_branch', exactPr.base.ref);
             core.setOutput('pr_head_branch', exactPr.head.ref);
             core.setOutput('pr_head_sha', exactPr.head.sha);
+            core.setOutput('pr_author_login', authorLogin);
+            core.setOutput('pr_created_by_identity', createdByIdentity);
+            core.setOutput('pr_created_by_app_slug', createdByAppSlug);
 
   record:
     name: trusted Orchestration provenance 기록
@@ -467,6 +528,9 @@ jobs:
           MERGE_PR_BASE_BRANCH: ${{ needs.merge_boundary.outputs.pr_base_branch }}
           MERGE_PR_HEAD_BRANCH: ${{ needs.merge_boundary.outputs.pr_head_branch }}
           MERGE_PR_HEAD_SHA: ${{ needs.merge_boundary.outputs.pr_head_sha }}
+          MERGE_PR_CREATED_BY_IDENTITY: ${{ needs.merge_boundary.outputs.pr_created_by_identity }}
+          MERGE_PR_CREATED_BY_LOGIN: ${{ needs.merge_boundary.outputs.pr_author_login }}
+          MERGE_PR_CREATED_BY_APP_SLUG: ${{ needs.merge_boundary.outputs.pr_created_by_app_slug }}
           ORCHESTRATION_JSON: ${{ runner.temp }}/orchestrator/orchestration.json
 
       - name: Orchestration provenance artifact 저장
