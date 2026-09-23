@@ -15,6 +15,7 @@ import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations } 
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
 import { augmentPlanContextWithExplicitPaths } from "./plan-explicit-path-context.js";
 import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
+import { renderPlanDecisionPacket, writeGithubOutput, type PlanDecisionInput } from "./plan-decision-packet.js";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -109,6 +110,15 @@ if (command === "prepare") {
       ].join("\n")
     : "- 준비 상태: **IMPLEMENT 보류**\n- 이유: PLAN의 blocking question 또는 exact scope 미확정. 이 PLAN은 자동 IMPLEMENT authority로 승격할 수 없습니다.";
   writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${analysisLines}\n\n## IMPLEMENT 실행 범위\n\n${scopeLines}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
+
+  // 사람이 PLAN 승인 여부를 판단할 재료. 검증된 PLAN 문서에서 결정적으로 렌더링하며 artifact 구성은 바꾸지 않는다.
+  // provenance job이 Issue pointer 댓글에 그대로 싣고, 승인 authority는 여전히 exact artifact 재검증에 있다.
+  const decisionPacket = renderPlanDecisionPacket(plan as unknown as PlanDecisionInput);
+  writeFileSync(file("decision-packet.md"), decisionPacket);
+  if (process.env.GITHUB_OUTPUT) {
+    writeGithubOutput(process.env.GITHUB_OUTPUT, "decision_packet", decisionPacket);
+    writeGithubOutput(process.env.GITHUB_OUTPUT, "plan_ready", String(scope.ready));
+  }
 } else {
   throw new Error("Expected prepare or artifact");
 }

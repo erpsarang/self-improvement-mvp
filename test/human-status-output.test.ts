@@ -55,8 +55,30 @@ test('MERGE_READY summary is only part of newly created PR content', () => {
   assert.match(orchestrator, /ai-dev-framework:MERGE_READY/);
 });
 
-test('does not publish additional IMPLEMENT, VERIFY, or STOPPED summaries', () => {
-  for (const status of ['IMPLEMENT', 'VERIFY', 'STOPPED']) {
+test('does not publish additional IMPLEMENT or VERIFY summaries', () => {
+  for (const status of ['IMPLEMENT', 'VERIFY']) {
     assert.doesNotMatch(`${plan}\n${authorize}\n${orchestrator}`, new RegExp(`HumanStatus: ${status}`));
   }
+});
+
+test('STOPPED is published only by the PLAN_AUTHORIZE fail-closed path, with a reason and next action', () => {
+  assert.doesNotMatch(`${plan}\n${orchestrator}`, /HumanStatus: STOPPED/);
+  const failureGate = position(authorize, "if: failure() && steps.authorize.outputs.rejected == 'true'");
+  const reason = position(authorize, '거부 사유: ${process.env.REJECTION_REASON}');
+  const stopped = position(authorize, '### HumanStatus: STOPPED');
+  const nextAction = position(authorize, '**다음 행동:** ${process.env.REJECTION_NEXT_ACTION}');
+  assert.ok(failureGate < reason && reason < stopped && stopped < nextAction);
+  assert.equal(authorize.match(/HumanStatus: STOPPED/g)?.length, 1);
+});
+
+test('PLAN pointer carries the Decision Packet between provenance fields and HumanStatus, and fails closed without it', () => {
+  const packetGuard = position(plan, "startsWith('### PLAN Decision Packet')");
+  const failClosed = position(plan, 'Missing PLAN Decision Packet');
+  const digest = position(plan, 'PLAN artifact SHA-256:');
+  const packet = position(plan, '              decisionPacket,');
+  const status = position(plan, '### HumanStatus: PLAN');
+  assert.ok(packetGuard < failClosed && failClosed < digest && digest < packet && packet < status);
+  assert.match(plan, /\*\*다음 행동:\*\* \$\{nextAction\}/);
+  assert.match(plan, /decision_packet: \$\{\{ steps\.validate\.outputs\.decision_packet \}\}/);
+  assert.match(plan, /plan_ready: \$\{\{ steps\.validate\.outputs\.plan_ready \}\}/);
 });

@@ -12,6 +12,12 @@ import {
   type PlanArtifactMetadata,
   type RawPlanProvenance,
 } from "./plan-authorization.js";
+import {
+  assertApprovablePlanArtifact,
+  describePlanAuthorizeRejection,
+  planArtifactQuestions,
+  writeGithubOutput,
+} from "./plan-decision-packet.js";
 
 interface EventPayload {
   issue: { number: number; pull_request?: unknown };
@@ -72,7 +78,7 @@ function normalizeApiDigest(value: unknown, name: string): string {
   return value.startsWith("sha256:") ? value.slice("sha256:".length) : value;
 }
 
-async function readProvenanceArtifact(artifactId: number): Promise<RawPlanProvenance> {
+async function readArtifactJson(artifactId: number, fileName: string, label: string): Promise<unknown> {
   const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/artifacts/${artifactId}/zip`, {
     redirect: "follow",
     headers: {
@@ -82,18 +88,40 @@ async function readProvenanceArtifact(artifactId: number): Promise<RawPlanProven
       "User-Agent": "self-improvement-mvp-plan-authorize",
     },
   });
-  if (!response.ok) throw new Error(`failed to download provenance artifact ${artifactId}: ${response.status}`);
+  if (!response.ok) throw new Error(`failed to download ${label} artifact ${artifactId}: ${response.status}`);
 
   const directory = mkdtempSync(join(tmpdir(), "plan-authorize-"));
   try {
     const zipPath = join(directory, "artifact.zip");
     writeFileSync(zipPath, Buffer.from(await response.arrayBuffer()));
-    const unzip = spawnSync("unzip", ["-p", zipPath, "PLAN-provenance.json"], { encoding: "utf8" });
-    if (unzip.status !== 0 || !unzip.stdout.trim()) throw new Error("PLAN provenance artifact is unreadable");
-    return JSON.parse(unzip.stdout) as RawPlanProvenance;
+    const listing = spawnSync("unzip", ["-Z1", zipPath], { encoding: "utf8" });
+    if (listing.status !== 0) throw new Error(`${label} artifact is not a readable ZIP`);
+    if (listing.stdout.split(/\r?\n/).filter((entry) => entry === fileName).length !== 1) {
+      throw new Error(`${fileName} must exist exactly once in ${label} artifact`);
+    }
+    const unzip = spawnSync("unzip", ["-p", zipPath, fileName], { encoding: "utf8" });
+    if (unzip.status !== 0 || !unzip.stdout.trim()) throw new Error(`${label} artifact is unreadable`);
+    return JSON.parse(unzip.stdout) as unknown;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+async function readProvenanceArtifact(artifactId: number): Promise<RawPlanProvenance> {
+  return await readArtifactJson(artifactId, "PLAN-provenance.json", "PLAN provenance") as RawPlanProvenance;
+}
+
+/** 거부 사유를 workflow가 Issue에 남길 수 있도록 GITHUB_OUTPUT에 기록한다. 예외는 그대로 다시 던진다. */
+let observedQuestions: readonly string[] = [];
+function recordRejection(error: unknown): void {
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (!outputPath) return;
+  const rejection = describePlanAuthorizeRejection(error, observedQuestions);
+  writeGithubOutput(outputPath, "rejected", "true");
+  writeGithubOutput(outputPath, "rejection_reason", rejection.reason.replaceAll("\n", " "));
+  writeGithubOutput(outputPath, "rejection_next_action", rejection.nextAction.replaceAll("\n", " "));
+  writeGithubOutput(outputPath, "rejection_detail", rejection.detail.replaceAll("\n", " ").replaceAll("`", "'"));
+  writeGithubOutput(outputPath, "rejection_questions", rejection.questions.map((question) => question.replace(/\s*\r?\n\s*/g, " ")).join("\n"));
 }
 
 async function main(): Promise<void> {
@@ -183,6 +211,12 @@ async function main(): Promise<void> {
 
   if (!selected || !selectedProvenanceArtifact) throw new Error("no valid PLAN provenance exists before this approval");
 
+  // 승인 불가능한 PLAN(ready=false 또는 blocking question)은 여기서 즉시 fail-closed 한다.
+  // Handoff와 같은 validateApprovedPlanDocument를 쓰므로 Handoff에서 뒤늦게 조용히 멈추지 않는다.
+  const planJson = await readArtifactJson(selected.plan.artifact.id, "PLAN.json", "PLAN");
+  observedQuestions = planArtifactQuestions(planJson);
+  assertApprovablePlanArtifact(planJson, { repository, targetSha: selected.targetSha });
+
   const authorization = createPlanAuthorizeArtifact({
     normalizedPlan: selected,
     provenanceArtifact: selectedProvenanceArtifact,
@@ -201,4 +235,9 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  recordRejection(error);
+  throw error;
+}

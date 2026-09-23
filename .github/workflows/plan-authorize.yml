@@ -78,3 +78,46 @@ jobs:
               issue_number: context.issue.number,
               body,
             });
+
+      # fail-closed는 정상 상태지만 사람이 볼 수 있어야 한다 (architecture §5). 거부 이유와 다음 행동을 Issue에 남긴다.
+      # 이 run은 실패로 끝나므로 Handoff / Recovery는 시작되지 않고 PLAN_AUTHORIZE artifact도 만들어지지 않는다.
+      - name: Leave fail-closed reason on requirement Issue
+        if: failure() && steps.authorize.outputs.rejected == 'true'
+        uses: actions/github-script@v7
+        env:
+          REJECTION_REASON: ${{ steps.authorize.outputs.rejection_reason }}
+          REJECTION_NEXT_ACTION: ${{ steps.authorize.outputs.rejection_next_action }}
+          REJECTION_DETAIL: ${{ steps.authorize.outputs.rejection_detail }}
+          REJECTION_QUESTIONS: ${{ steps.authorize.outputs.rejection_questions }}
+        with:
+          script: |
+            const approvalCommentId = context.payload.comment.id;
+            const markerPrefix = `<!-- self-improvement:PLAN_AUTHORIZE_REJECTED approval-comment=${approvalCommentId} `;
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            if (existing.some((comment) => typeof comment.body === 'string' && comment.body.includes(markerPrefix))) {
+              core.info('rejection already recorded for this approval comment');
+              return;
+            }
+            const questions = (process.env.REJECTION_QUESTIONS ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+            const body = [
+              `${markerPrefix}run-id=${context.runId} run-attempt=${process.env.GITHUB_RUN_ATTEMPT} -->`,
+              '## PLAN-승인이 fail-closed로 거부됨',
+              `거부 사유: ${process.env.REJECTION_REASON}`,
+              `검증 메시지: \`${process.env.REJECTION_DETAIL}\``,
+              ...(questions.length > 0
+                ? [`남은 Blocking Question (${questions.length}개):\n${questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}`]
+                : []),
+              'PLAN_AUTHORIZE artifact는 생성되지 않았고 IMPLEMENT는 시작되지 않습니다. 새 PLAN 댓글이 달리면 그 Decision Packet을 읽고 다시 승인 여부를 결정하세요.',
+              '### HumanStatus: STOPPED',
+              '**현재 상황:** PLAN 승인이 trusted 검증에서 거부되어 fail-closed 했습니다. 구현·검증·리뷰의 성공을 뜻하지 않습니다.',
+              `**다음 행동:** ${process.env.REJECTION_NEXT_ACTION}`,
+            ].join('\n\n');
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body,
+            });

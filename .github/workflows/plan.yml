@@ -25,6 +25,8 @@ jobs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
       artifact_url: ${{ steps.upload.outputs.artifact-url }}
+      decision_packet: ${{ steps.validate.outputs.decision_packet }}
+      plan_ready: ${{ steps.validate.outputs.plan_ready }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -177,6 +179,7 @@ jobs:
           ln -sT .framework-runtime/node_modules node_modules
 
       - name: Validate bounded PLAN against fresh exact SHA
+        id: validate
         working-directory: planner-control-validation
         run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/planner-handler.ts artifact
         env:
@@ -242,9 +245,21 @@ jobs:
           PLAN_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
           PLAN_ARTIFACT_URL: ${{ needs.plan.outputs.artifact_url }}
           PROVENANCE_URL: ${{ steps.upload.outputs.artifact-url }}
+          PLAN_DECISION_PACKET: ${{ needs.plan.outputs.decision_packet }}
+          PLAN_READY: ${{ needs.plan.outputs.plan_ready }}
         with:
           script: |
             const identity = JSON.parse(process.env.PLAN_IDENTITY);
+            // Decision Packet은 trusted validation이 검증한 PLAN 문서의 사람용 발췌다. 없으면 사람이 판단할 재료 없이
+            // 승인 가능한 pointer가 생기므로 댓글을 남기지 않고 fail-closed 한다.
+            const decisionPacket = process.env.PLAN_DECISION_PACKET ?? '';
+            const planReady = process.env.PLAN_READY;
+            if (!decisionPacket.trim().startsWith('### PLAN Decision Packet') || (planReady !== 'true' && planReady !== 'false')) {
+              throw new Error('Missing PLAN Decision Packet; refusing to post a PLAN pointer without human decision material');
+            }
+            const nextAction = planReady === 'true'
+              ? '위 PLAN Decision Packet을 읽고 이 계획으로 문제를 해결하도록 허용할지 결정하세요. 허용하면 정확히 `PLAN-승인` 댓글을 남기고, 아니면 사유를 남기고 Issue를 닫거나 요구사항을 보완한 뒤 재PLAN하세요.'
+              : '이 PLAN은 승인할 수 없습니다. Blocking Question에 답하도록 Issue 본문을 보완한 뒤 PLAN을 다시 받거나, 사유를 남기고 Issue를 닫으세요. `PLAN-승인`을 남겨도 fail-closed로 거부됩니다.';
             const body = [
               '## PLAN (AI 제안 — 구현 승인 아님)',
               `PLAN: [${identity.artifactName}](${process.env.PLAN_ARTIFACT_URL})`,
@@ -257,8 +272,9 @@ jobs:
               `PLAN artifact ID: ${process.env.PLAN_ARTIFACT_ID}`,
               `PLAN artifact SHA-256: \`${process.env.PLAN_ARTIFACT_DIGEST}\``,
               '이 PLAN은 제한된 Context Pack만 보고 생성되었습니다. pointer는 확인용이며 승인 시 exact provenance를 다시 검증합니다.',
+              decisionPacket,
               '### HumanStatus: PLAN',
               '**현재 상황:** AI가 계획을 제안했습니다. 아직 구현 승인이 아닙니다.',
-              '**다음 행동:** 계획을 검토하고 구현 범위가 준비된 경우에만 승인 여부를 결정하세요.',
+              `**다음 행동:** ${nextAction}`,
             ].join('\n\n');
             await github.rest.issues.createComment({ ...context.repo, issue_number: identity.requirement.issueNumber, body });
