@@ -214,12 +214,18 @@ test("PASS orchestration provenance는 exact reviewed SHA Human Merge PR을 요�
       baseBranch: "main",
       headBranch: review.reviewedBranch,
       headSha: review.reviewedHeadSha,
+      createdBy: { identity: "GITHUB_APP", login: "ai-dev-framework-merge-ready[bot]", appSlug: "ai-dev-framework-merge-ready" },
     },
   });
 
   assert.equal(provenance.nextState, "MERGE_READY");
   assert.equal(provenance.mergeBoundary?.headSha, review.reviewedHeadSha);
   assert.equal(provenance.requirementsDigest, requirements.digest);
+  assert.deepEqual(provenance.mergeBoundary?.createdBy, {
+    identity: "GITHUB_APP",
+    login: "ai-dev-framework-merge-ready[bot]",
+    appSlug: "ai-dev-framework-merge-ready",
+  });
 
   assert.throws(() => createOrchestrationProvenance({
     review,
@@ -245,6 +251,45 @@ test("Human Merge PR head SHA가 reviewedHeadSha와 다르면 거부한다", () 
       baseBranch: "main",
       headBranch: review.reviewedBranch,
       headSha: "e".repeat(40),
+      createdBy: { identity: "GITHUB_TOKEN", login: "github-actions[bot]", appSlug: null },
     },
   }), /exact reviewed SHA/);
+});
+
+test("Human Merge PR 생성 identity는 Framework identity(App bot 또는 github-actions[bot])만 인정한다", () => {
+  const withCreator = (createdBy: unknown) => createOrchestrationProvenance({
+    review,
+    reviewArtifactName,
+    sourceRun,
+    orchestratorRun: { runId: 500, runAttempt: 1, trustedCodeSha: orchestratorCodeSha },
+    defaultBranch: "main",
+    mergeBoundary: {
+      type: "HUMAN_PULL_REQUEST",
+      number: 27,
+      url: `https://github.com/${repository}/pull/27`,
+      baseBranch: "main",
+      headBranch: review.reviewedBranch,
+      headSha: review.reviewedHeadSha,
+      createdBy: createdBy as never,
+    },
+  });
+
+  // GITHUB_TOKEN fallback은 github-actions[bot]만, GitHub App은 `<slug>[bot]`만 통과한다.
+  assert.equal(withCreator({ identity: "GITHUB_TOKEN", login: "github-actions[bot]", appSlug: null }).mergeBoundary?.createdBy.identity, "GITHUB_TOKEN");
+  assert.equal(withCreator({ identity: "GITHUB_APP", login: "merge-ready[bot]", appSlug: "merge-ready" }).mergeBoundary?.createdBy.appSlug, "merge-ready");
+
+  const rejected: unknown[] = [
+    undefined,
+    { identity: "GITHUB_APP", login: "erpsarang", appSlug: "merge-ready" },              // 사람 계정이 App identity를 주장
+    { identity: "GITHUB_APP", login: "other[bot]", appSlug: "merge-ready" },             // slug와 작성자 불일치
+    { identity: "GITHUB_APP", login: "merge-ready[bot]", appSlug: null },                // slug 없음
+    { identity: "GITHUB_APP", login: "merge-ready[bot]", appSlug: "Merge Ready" },       // slug 형식 위반
+    { identity: "GITHUB_TOKEN", login: "erpsarang", appSlug: null },                     // 사람이 만든 PR
+    { identity: "GITHUB_TOKEN", login: "github-actions[bot]", appSlug: "merge-ready" },  // fallback인데 slug 있음
+    { identity: "HUMAN", login: "erpsarang", appSlug: null },                            // 정의되지 않은 identity
+    { identity: "GITHUB_TOKEN", login: "github-actions[bot]", appSlug: null, extra: 1 }, // 알 수 없는 필드
+  ];
+  for (const createdBy of rejected) {
+    assert.throws(() => withCreator(createdBy), /생성 identity가 올바르지 않습니다/, JSON.stringify(createdBy));
+  }
 });

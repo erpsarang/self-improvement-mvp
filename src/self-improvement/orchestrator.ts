@@ -30,6 +30,19 @@ export interface OrchestratorRunIdentity {
   readonly trustedCodeSha: string;
 }
 
+/**
+ * Human Merge PR을 만든 Framework identity.
+ * GITHUB_APP: Framework 전용 최소 권한 GitHub App (`<appSlug>[bot]`). CI가 사람의 Approve 없이 실행된다.
+ * GITHUB_TOKEN: GITHUB_TOKEN fallback (`github-actions[bot]`). 사람이 만든 PR은 어느 쪽도 아니므로 승격되지 않는다.
+ */
+export type HumanMergePullRequestIdentity = "GITHUB_APP" | "GITHUB_TOKEN";
+
+export interface HumanMergePullRequestCreator {
+  readonly identity: HumanMergePullRequestIdentity;
+  readonly login: string;
+  readonly appSlug: string | null;
+}
+
 export interface HumanMergePullRequest {
   readonly type: "HUMAN_PULL_REQUEST";
   readonly number: number;
@@ -37,6 +50,7 @@ export interface HumanMergePullRequest {
   readonly baseBranch: string;
   readonly headBranch: string;
   readonly headSha: string;
+  readonly createdBy: HumanMergePullRequestCreator;
 }
 
 export interface OrchestrationProvenance {
@@ -357,7 +371,27 @@ function validateMergeBoundary(input: {
   ) {
     throw new Error("Human Merge PR이 exact reviewed SHA에 결합되지 않았습니다");
   }
-  return Object.freeze({ ...pr });
+  if (!validCreator(pr.createdBy)) {
+    throw new Error("Human Merge PR 생성 identity가 올바르지 않습니다");
+  }
+  return Object.freeze({ ...pr, createdBy: Object.freeze({ ...pr.createdBy }) });
+}
+
+const APP_SLUG = /^[a-z0-9-]{1,100}$/;
+
+/** GitHub가 기록한 PR 작성자와 선언된 identity가 일치할 때만 Framework identity로 인정한다. */
+function validCreator(value: unknown): value is HumanMergePullRequestCreator {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const creator = value as Record<string, unknown>;
+  if (JSON.stringify(Object.keys(creator).sort()) !== JSON.stringify(["appSlug", "identity", "login"])) return false;
+  if (typeof creator.login !== "string" || creator.login.length === 0 || creator.login.length > 120) return false;
+  if (creator.identity === "GITHUB_APP") {
+    return typeof creator.appSlug === "string" && APP_SLUG.test(creator.appSlug) && creator.login === `${creator.appSlug}[bot]`;
+  }
+  if (creator.identity === "GITHUB_TOKEN") {
+    return creator.appSlug === null && creator.login === "github-actions[bot]";
+  }
+  return false;
 }
 
 export function createOrchestrationProvenance(input: {

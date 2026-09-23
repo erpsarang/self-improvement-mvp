@@ -101,6 +101,47 @@ test("PR은 Human-only Merge 경계이며 Orchestrator에는 merge/auto-merge/pu
   assert.doesNotMatch(workflow, /gh\s+pr\s+merge|enablePullRequestAutoMerge|auto-merge|AUTO_MERGE|git\s+push/);
 });
 
+test("MERGE_READY PR은 Framework 전용 GitHub App identity로 만들고 없으면 GITHUB_TOKEN으로 fallback 한다", () => {
+  // credential은 workflow_call secrets로 선언하고 Trusted Rail이 그 둘만 명시적으로 넘긴다.
+  assert.match(
+    workflow,
+    /workflow_call:\n(?:    #.*\n)*    secrets:\n      MERGE_READY_APP_ID:\n        required: false\n      MERGE_READY_APP_PRIVATE_KEY:\n        required: false/,
+  );
+  assert.match(
+    orchestrateSection,
+    /secrets:\n      MERGE_READY_APP_ID: \$\{\{ secrets\.MERGE_READY_APP_ID \}\}\n      MERGE_READY_APP_PRIVATE_KEY: \$\{\{ secrets\.MERGE_READY_APP_PRIVATE_KEY \}\}/,
+  );
+  assert.doesNotMatch(orchestrateSection, /secrets: inherit/);
+  assert.doesNotMatch(orchestrateSection, /TRUSTED_PUBLISH_TOKEN|CODEX_API_KEY/);
+
+  // 최소 권한 설치 토큰: 현재 repository scope, pull requests write + contents read, 자동 revoke.
+  assert.match(mergeSection, /if: env\.MERGE_READY_APP_CONFIGURED == 'true'/);
+  assert.match(mergeSection, /uses: actions\/create-github-app-token@v3/);
+  assert.match(mergeSection, /app-id: \$\{\{ secrets\.MERGE_READY_APP_ID \}\}/);
+  assert.match(mergeSection, /private-key: \$\{\{ secrets\.MERGE_READY_APP_PRIVATE_KEY \}\}/);
+  assert.match(mergeSection, /permission-pull-requests: write/);
+  assert.match(mergeSection, /permission-contents: read/);
+  assert.doesNotMatch(mergeSection, /permission-contents: write|permission-workflows|permission-administration|permission-issues/);
+  const appTokenStep = mergeSection.split("id: app_token")[1]?.split("\n      - name:")[0] ?? "";
+  assert.doesNotMatch(appTokenStep, /owner:|repositories:|skip-token-revoke/);
+
+  // PR 생성에만 쓰고, 없으면 github.token으로 fallback 한다.
+  assert.match(mergeSection, /github-token: \$\{\{ steps\.app_token\.outputs\.token \|\| github\.token \}\}/);
+  assert.match(mergeSection, /MERGE_READY_IDENTITY_KIND: \$\{\{ steps\.app_token\.outputs\.token != '' && 'GITHUB_APP' \|\| 'GITHUB_TOKEN' \}\}/);
+  assert.match(mergeSection, /PR 생성 identity/);
+
+  // identity는 실제 PR 작성자로 결정하고, Framework identity 밖의 작성자는 fail-closed 한다.
+  assert.match(mergeSection, /authorLogin === `\$\{appSlug\}\[bot\]`/);
+  assert.match(mergeSection, /authorLogin === 'github-actions\[bot\]'/);
+  assert.match(mergeSection, /unexpected Human Merge PR author/);
+  for (const output of ["pr_author_login", "pr_created_by_identity", "pr_created_by_app_slug"]) {
+    assert.match(mergeSection, new RegExp(`core\\.setOutput\\('${output}'`));
+  }
+  assert.match(recordSection, /MERGE_PR_CREATED_BY_IDENTITY: \$\{\{ needs\.merge_boundary\.outputs\.pr_created_by_identity \}\}/);
+  assert.match(recordSection, /MERGE_PR_CREATED_BY_LOGIN: \$\{\{ needs\.merge_boundary\.outputs\.pr_author_login \}\}/);
+  assert.match(recordSection, /MERGE_PR_CREATED_BY_APP_SLUG: \$\{\{ needs\.merge_boundary\.outputs\.pr_created_by_app_slug \}\}/);
+});
+
 test("Orchestration provenance는 same-run source REVIEW와 exact PR identity를 fresh trusted runner에서 기록한다", () => {
   assert.match(recordSection, /route와 record exact identity 비교/);
   assert.match(recordSection, /ORCHESTRATOR_RUN_ID: \$\{\{ github\.run_id \}\}/);

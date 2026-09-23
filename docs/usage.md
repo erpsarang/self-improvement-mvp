@@ -58,6 +58,41 @@ GitHub Secret: APP_CODEX_API_KEY
 - OpenAI Project의 spend limit은 알림/모니터링 경계로 취급하고, 실행을 강제로 막는 hard cap으로 가정하지 않는다.
 - Framework의 중복 AI call 방지, bounded retry, token ledger는 별도 runtime guardrail로 유지한다.
 
+## 2-1. Merge-Ready PR 생성 identity (Framework 전용 GitHub App)
+
+GitHub는 `github-actions[bot]`이 만든 PR의 workflow를 write 권한 사용자가 승인해야만 실행한다(2026-06 정책). 그대로 두면 Trusted Rail이 이미 exact SHA에서 검증한 후보의 MERGE_READY PR에서 사람이 "CI 실행 승인" 버튼을 한 번 더 눌러야 하는데, 이는 새로운 판단이 없는 Human Click이다. Framework는 이를 없애기 위해 MERGE_READY PR **생성만** 전담하는 최소 권한 GitHub App identity를 쓴다.
+
+```text
+Human PLAN-승인
+→ IMPLEMENT / SEAL / PUBLISH / VERIFY / REVIEW (Trusted Rail, 변경 없음)
+→ Human Merge PR 생성: Framework Merge-Ready App (`<app-slug>[bot]`)
+→ PR CI 자동 실행 (사람 Approve 없음)
+→ Human 최종 Merge
+```
+
+App 권한과 설치:
+
+- Repository permissions: **Pull requests: Read and write**, **Contents: Read-only**, Metadata: Read-only(자동). 나머지는 No access. merge(contents write)와 push는 구조적으로 불가능하다.
+- Webhook 비활성. 설치 대상은 Framework를 쓰는 저장소만 선택한다.
+- 각 저장소 secret: `MERGE_READY_APP_ID`(App 설정 화면의 App ID), `MERGE_READY_APP_PRIVATE_KEY`(App private key PEM 전체).
+
+동작:
+
+- `orchestrator.yml`의 PR boundary job이 `actions/create-github-app-token`으로 **현재 repository로만 scope된 1시간짜리 설치 토큰**을 발급받아 `pulls.create`에만 쓰고, job 종료 시 revoke 한다. 발급 시 `pull requests: write`, `contents: read`로 다시 축소한다.
+- Trusted Rail은 이 두 secret만 Orchestrator에 명시적으로 넘긴다(`secrets: inherit` 없음). Codex API key와 `TRUSTED_PUBLISH_TOKEN`은 Orchestrator에 보이지 않으며 그 역할도 바뀌지 않는다.
+- secret이 없으면 GITHUB_TOKEN(`github-actions[bot]`)으로 fallback 하여 이전과 같이 동작한다. secret이 있는데 무효하면 토큰 발급 step이 실패하고 Trusted Rail run이 멈춘다. 조용히 넘어가지 않는다.
+- PR 작성자가 App bot도 `github-actions[bot]`도 아니면(사람이 직접 만든 PR 등) MERGE_READY로 승격하지 않고 fail-closed 한다.
+
+Provenance:
+
+- PR 본문에 `PR 생성 identity` 줄이 들어가고, Orchestration provenance의 `mergeBoundary.createdBy`에 `{ identity: GITHUB_APP | GITHUB_TOKEN, login, appSlug }`가 기록된다. identity는 사용한 토큰이 아니라 GitHub가 기록한 실제 작성자 login으로 결정한다.
+- AI가 만든 PR은 항상 bot identity로 남고, 사람의 행위는 `PLAN-승인` 댓글과 최종 Merge에만 나타난다.
+
+지켜지는 경계:
+
+- `pull_request` 트리거로 PR이 열릴 때 실행되는 workflow는 secret을 참조하지 않는다(테스트로 고정). 그래서 후보 코드가 자동으로 CI에서 실행되어도 Trusted Rail VERIFY가 이미 감수하는 범위를 넘지 않는다.
+- Auto Merge는 없고 최종 Merge는 Human-only다.
+
 ## 3. v0.2 기본 흐름
 
 ```text

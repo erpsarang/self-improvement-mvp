@@ -46,23 +46,29 @@ function mergeBoundaryOrNull(shouldCreatePr: boolean): HumanMergePullRequest | n
   const baseBranch = optionalEnv("MERGE_PR_BASE_BRANCH");
   const headBranch = optionalEnv("MERGE_PR_HEAD_BRANCH");
   const headSha = optionalEnv("MERGE_PR_HEAD_SHA");
-  const provided = [number, url, baseBranch, headBranch, headSha].filter(
+  const createdByIdentity = optionalEnv("MERGE_PR_CREATED_BY_IDENTITY");
+  const createdByLogin = optionalEnv("MERGE_PR_CREATED_BY_LOGIN");
+  const createdByAppSlug = optionalEnv("MERGE_PR_CREATED_BY_APP_SLUG");
+  const provided = [number, url, baseBranch, headBranch, headSha, createdByIdentity, createdByLogin].filter(
     (value) => value !== undefined,
   ).length;
 
   if (!shouldCreatePr) {
-    if (provided !== 0) {
+    if (provided !== 0 || createdByAppSlug !== undefined) {
       throw new Error("MERGE_READY가 아닌 decision에는 Merge PR 환경값을 제공할 수 없습니다");
     }
     return null;
   }
-  if (provided !== 5) {
+  if (provided !== 7) {
     throw new Error("PASS decision에는 완전한 Merge PR identity가 필요합니다");
   }
 
   const prNumber = Number(number);
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
     throw new Error("MERGE_PR_NUMBER가 올바르지 않습니다");
+  }
+  if (createdByIdentity !== "GITHUB_APP" && createdByIdentity !== "GITHUB_TOKEN") {
+    throw new Error("MERGE_PR_CREATED_BY_IDENTITY가 올바르지 않습니다");
   }
   return {
     type: "HUMAN_PULL_REQUEST",
@@ -71,6 +77,12 @@ function mergeBoundaryOrNull(shouldCreatePr: boolean): HumanMergePullRequest | n
     baseBranch: baseBranch!,
     headBranch: headBranch!,
     headSha: headSha!.toLowerCase(),
+    // 실제 검증(작성자 login과 identity의 일치)은 createOrchestrationProvenance가 수행한다.
+    createdBy: {
+      identity: createdByIdentity,
+      login: createdByLogin!,
+      appSlug: createdByAppSlug === undefined || createdByAppSlug === "" ? null : createdByAppSlug,
+    },
   };
 }
 
