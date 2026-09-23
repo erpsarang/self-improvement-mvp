@@ -12,14 +12,28 @@ const scripts = [...workflow.matchAll(/          script: \|\n((?:            .*\
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const require = createRequire(import.meta.url);
 
-async function freeze(title: string, body: string, attempt = "1") {
+export interface FreezeOptions {
+  readonly attempt?: string;
+  readonly event?: string;
+  readonly actor?: string;
+  readonly user?: { login: string; id: number; type: string } | null;
+  readonly association?: string;
+}
+
+export async function freeze(title: string, body: string, attemptOrOptions: string | FreezeOptions = "1") {
+  const options: FreezeOptions = typeof attemptOrOptions === "string" ? { attempt: attemptOrOptions } : attemptOrOptions;
+  const attempt = options.attempt ?? "1";
+  const user = options.user === undefined ? { login: "member", id: 8370921, type: "User" } : options.user;
   const root = mkdtempSync(join(tmpdir(), "plan-provenance-"));
   const outputs: Record<string, string> = {};
   try {
     await new AsyncFunction("require", "process", "github", "context", "core", scripts[0])(
-      require, { env: { RUNNER_TEMP: root, ISSUE_NUMBER: "60", GITHUB_RUN_ID: "1234", GITHUB_RUN_ATTEMPT: attempt } },
+      require, { env: {
+        RUNNER_TEMP: root, ISSUE_NUMBER: "60", GITHUB_RUN_ID: "1234", GITHUB_RUN_ATTEMPT: attempt,
+        PLAN_INGRESS_EVENT: options.event ?? "issues", PLAN_INGRESS_ACTOR: options.actor ?? "member",
+      } },
       { rest: {
-        issues: { get: async () => ({ data: { number: 60, title, body } }) },
+        issues: { get: async () => ({ data: { number: 60, title, body, user, author_association: options.association ?? "OWNER" } }) },
         repos: { get: async () => ({ data: { default_branch: "main" } }), getCommit: async () => ({ data: { sha: "a".repeat(40) } }) },
       } },
       { repo: { owner: "example", repo: "app" }, sha: "b".repeat(40) },

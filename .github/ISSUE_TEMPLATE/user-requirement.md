@@ -24,6 +24,6 @@ assignees: ""
 
 ---
 
-Issue 저장 후 Actions → Read-only AI PLAN → Run workflow에서 Issue 번호를 입력합니다.
-결과는 실행 페이지의 plan-issue-* artifact에서 PLAN.md로 확인합니다.
-PLAN은 제안이며 코드 변경이나 구현을 시작하지 않습니다. SI-승인 댓글은 필요하지 않습니다.
+Issue를 저장하면 Read-only AI PLAN이 자동으로 시작되어 이 Issue에 댓글로 제안됩니다. 제목의 `[업무 요구]`는 입력 종류 표기이며, 저장소 구성원(OWNER/MEMBER/COLLABORATOR)이 만든 Issue만 자동 시작됩니다.
+사람이 직접 작성한 업무 요구는 그 자체로 유효한 Requirement입니다. LEARN이나 Improvement Candidate를 거칠 필요가 없습니다.
+PLAN은 제안이며 코드 변경이나 구현을 시작하지 않습니다. 진행하려면 PLAN을 읽고 `PLAN-승인` 댓글을 남기고, 진행하지 않으려면 사유를 남기고 Issue를 닫습니다.
