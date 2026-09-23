@@ -201,6 +201,22 @@ test("ready PLAN은 Human approval 전에 package-lock companion capacity와 exa
       () => validatePlan(missingChangeCandidate, f.target, context),
       /change candidate path is outside allowedPaths: src\/not-allowed\.ts/,
     );
+
+    // 숫자 분수·비율·날짜는 repository 경로가 아니다 (#240: "2.5/1.25"가 PLAN을 버리게 했다).
+    const numericFractions = {
+      ...base,
+      approach: ["주문수량 2.5/1.25 처럼 부족 수량을 표시한다", "비율 10/3 과 1/2.0 은 반올림한다", "납기 2026/10/15 형식을 유지한다"],
+      testStrategy: ["1/2.0 표시와 2.5/1.25 표시를 검증한다"],
+    };
+    assert.doesNotThrow(() => validatePlan(numericFractions, f.target, context));
+    const stillCatchesRealPath = {
+      ...numericFractions,
+      testStrategy: ["1/2.0 표시를 test/new-web.test.ts 에서 검증한다"],
+    };
+    assert.throws(
+      () => validatePlan(stillCatchesRealPath, f.target, context),
+      /exact path outside bounded implementation scope: test\/new-web\.test\.ts/,
+    );
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
