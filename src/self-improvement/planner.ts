@@ -524,7 +524,9 @@ function assertSafePlanPath(path: string): void {
   }
 }
 
-const EXPLICIT_PLAN_PATH = /(?:^|[\s`\"'(])((?:\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z0-9._-]+|(?:package(?:-lock)?\.json|tsconfig\.json|index\.html|README\.md))/g;
+// 확장자는 문자로 시작해야 한다. "2.5/1.25", "1/2.0" 같은 숫자 분수·비율을 repository 경로로 오인하면
+// 성공한 PLAN 호출이 통째로 버려진다 (#240).
+const EXPLICIT_PLAN_PATH = /(?:^|[\s`\"'(])((?:\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9._-]*|(?:package(?:-lock)?\.json|tsconfig\.json|index\.html|README\.md))/g;
 
 function explicitPlanPaths(values: readonly string[]): string[] {
   const paths: string[] = [];
