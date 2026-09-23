@@ -56,6 +56,8 @@ jobs:
         uses: actions/github-script@v7
         env:
           ISSUE_NUMBER: ${{ github.event_name == 'issues' && github.event.issue.number || inputs.issue_number }}
+          PLAN_INGRESS_EVENT: ${{ github.event_name }}
+          PLAN_INGRESS_ACTOR: ${{ github.actor }}
         with:
           script: |
             const fs = require('node:fs');
@@ -65,6 +67,23 @@ jobs:
             if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('Invalid issue number');
             const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: Number(raw) });
             if (issue.pull_request || !issue.body?.trim()) throw new Error('A requirement Issue with a body is required');
+            // Requirement source는 provenance다. 어디서 왔든 이후 lifecycle은 하나이며, 여기서는 기록만 한다.
+            // - HUMAN: 사람이 만든 Issue (issues 이벤트는 workflow if의 author association gate를 통과한 뒤에만 도달한다)
+            // - PRODUCT_EVALUATION: Trusted Product Evaluation이 남긴 PRODUCT_IMPROVEMENT marker가 있는 Issue
+            // - OTHER_TRUSTED_SOURCE: 그 외 자동화가 만든 Issue (trusted dispatch로만 PLAN에 도달한다)
+            const ingressEvent = process.env.PLAN_INGRESS_EVENT;
+            if (ingressEvent !== 'issues' && ingressEvent !== 'workflow_dispatch') throw new Error(`Unsupported PLAN ingress event: ${ingressEvent}`);
+            const marker = /<!-- ai-dev-framework:PRODUCT_IMPROVEMENT cycle-issue=([1-9]\d*) cycle-pr=([1-9]\d*) snapshot=([0-9a-f]{64}) -->/.exec(issue.body);
+            const author = { login: issue.user?.login ?? null, id: issue.user?.id ?? null, type: issue.user?.type ?? null, association: issue.author_association ?? null };
+            const source = {
+              kind: marker ? 'PRODUCT_EVALUATION' : author.type === 'User' ? 'HUMAN' : 'OTHER_TRUSTED_SOURCE',
+              ingress: ingressEvent,
+              trust: ingressEvent === 'issues'
+                ? { level: 'VERIFIED', by: 'issue-author-association', association: author.association }
+                : { level: 'VERIFIED', by: 'workflow-dispatch-authority', dispatchedBy: process.env.PLAN_INGRESS_ACTOR || null },
+              author,
+              ...(marker ? { productImprovement: { cycleIssue: Number(marker[1]), cyclePullRequest: Number(marker[2]), snapshotDigest: marker[3] } } : {}),
+            };
             const { data: repo } = await github.rest.repos.get(context.repo);
             const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: repo.default_branch });
             const output = path.join(process.env.RUNNER_TEMP, 'ai-plan');
@@ -81,6 +100,7 @@ jobs:
               },
               repository: `${context.repo.owner}/${context.repo.repo}`,
               targetSha: commit.sha,
+              source,
               workflow: { runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, sha: context.sha },
               artifactName: `plan-issue-${issue.number}-${process.env.GITHUB_RUN_ID}-attempt-${process.env.GITHUB_RUN_ATTEMPT}`,
             };
@@ -231,6 +251,7 @@ jobs:
               `Provenance: [PLAN-provenance.json](${process.env.PROVENANCE_URL})`,
               `Repository: ${identity.repository}`,
               `Frozen target SHA: \`${identity.targetSha}\``,
+              `Requirement source: ${identity.source.kind} (ingress: ${identity.source.ingress}, trust: ${identity.source.trust.by}${identity.source.kind === 'PRODUCT_EVALUATION' ? `, from cycle #${identity.source.productImprovement.cycleIssue}` : ''}) — 출처는 provenance일 뿐이며 이후 lifecycle은 동일합니다.`,
               `Requirement title/body SHA-256: \`${identity.requirement.digest}\``,
               `Workflow run: ${identity.workflow.runId} / attempt: ${identity.workflow.runAttempt}`,
               `PLAN artifact ID: ${process.env.PLAN_ARTIFACT_ID}`,

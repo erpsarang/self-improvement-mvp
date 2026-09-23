@@ -6,6 +6,8 @@
 
 사용자는 파일명이나 함수 구현 방법을 세세하게 지정할 필요가 없습니다. 무엇이 필요한지와 완료 조건을 명확히 적습니다.
 
+사람이 직접 작성한 `[업무 요구]` Issue는 그 자체로 유효한 Requirement입니다. 저장소 구성원이 만들면 Read-only AI PLAN이 자동으로 시작되며, LEARN이나 Improvement Candidate를 먼저 거칠 필요가 없습니다. Product Evaluation이 만든 `[Self-Improvement]` Issue도 같은 PLAN으로 들어갑니다. Issue의 출처는 PLAN provenance에 `source`로 기록될 뿐, 이후 승인·구현·검증·Merge 절차는 출처와 무관하게 동일합니다 (`docs/architecture.md` 3-1).
+
 예:
 
 ```markdown
@@ -249,6 +251,8 @@ LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candi
 사람이 의미 있는 candidate를 선택한 경우에만 **새 Requirement**로 만들어 다음 PLAN cycle을 시작합니다.
 
 즉 Self-Improvement도 자기 승인 구조가 아닙니다.
+
+이 경로는 AI가 evidence에서 후보를 발견했을 때를 위한 것이지, 사람이 이미 발견한 요구를 위한 관문이 아닙니다. 사람이 업무 요구를 직접 알고 있다면 `[업무 요구]` Issue로 바로 PLAN을 시작하는 것이 올바른 경로이며, 그것을 LEARN을 거치지 않았다는 이유로 막지 않습니다.
 
 ## 11-1. Product Evaluation과 Improvement Candidate Issue
 

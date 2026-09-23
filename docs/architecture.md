@@ -104,6 +104,34 @@ Product Evaluation은 배포된 App을 제품 관점으로 읽고 개선 후보 
 
 즉 **Self-Improvement = autonomous self-modification이 아니라 evidence-grounded improvement proposal**이다.
 
+## 3-1. Requirement Ingress: 출처는 provenance, lifecycle은 하나
+
+Requirement Issue는 여러 경로에서 들어올 수 있다.
+
+```text
+Human ─────────────────────┐
+Product Evaluation ────────┤→ Requirement Issue → Read-only AI PLAN → Human 판단 → PLAN_AUTHORIZE → IMPLEMENT → Trusted Rail → Human Merge
+향후 다른 trusted 자동화 ──┘
+```
+
+Framework Core에서 중요한 것은 **누가 Issue를 만들었는가가 아니라 그것이 유효한 Requirement인가**다. 따라서 다음 둘을 분리한다.
+
+| 구분 | 역할 | 어디에 남는가 |
+| --- | --- | --- |
+| `source` / provenance | `HUMAN`, `PRODUCT_EVALUATION`, `OTHER_TRUSTED_SOURCE`와 ingress(`issues` 이벤트 또는 trusted `workflow_dispatch`), 검증 근거 | PLAN identity, PLAN provenance artifact, PLAN 안내 댓글 |
+| development lifecycle | PLAN → `PLAN-승인` → PLAN_AUTHORIZE → IMPLEMENT → VERIFY → REVIEW → MERGE_READY → Human Merge | 모든 source에 동일한 workflow와 handler |
+
+원칙:
+
+1. **Ingress에서만 신뢰를 검증한다.** 사람이 만든 Issue는 저장소 구성원(OWNER/MEMBER/COLLABORATOR)이 만든 경우에만 자동 PLAN을 시작한다. Framework가 만든 Issue는 trusted workflow의 dispatch 권한으로만 PLAN에 도달한다. 이 경계가 무제한 외부 Issue에 AI 비용을 쓰는 것을 막는다.
+2. **경계를 통과한 뒤에는 출처로 lifecycle을 나누지 않는다.** PLAN 이후 어떤 trusted workflow도 Issue 제목 prefix나 source로 분기하지 않는다.
+3. **사람이 직접 쓴 Requirement는 1급 입력이다.** 사람이 업무 요구를 발견해 Issue로 적었다면 그것을 다시 Business Feedback → LEARN → Improvement Candidate → Human Adoption 경로로 돌려 AI가 재제안하게 만들지 않는다. 그 우회는 사람의 판단을 AI 호출로 대체하고 비용만 늘린다.
+4. **제목 prefix는 입력 종류 표기다.** `[업무 요구]`는 사람이 쓴 Requirement의 ingress 필터이고, `[Self-Improvement]`는 Product Evaluation 후보의 중복 판단과 기각 기억에 쓰인다. 둘 다 Framework Core의 다른 lifecycle을 뜻하지 않는다.
+
+`issues` 이벤트와 `workflow_dispatch`라는 두 진입 mechanism이 존재하는 이유는 설계가 아니라 플랫폼 제약이다. `GITHUB_TOKEN`으로 만든 Issue는 `issues` 이벤트를 발화시키지 않으므로 Framework가 만든 Issue는 dispatch로만 PLAN을 시작할 수 있다. 두 mechanism은 같은 PLAN job으로 수렴한다.
+
+이 구조는 기술에 종속되지 않는다. Ingress 검증과 PLAN 이후 lifecycle은 언어와 무관하며, 기술 종속은 PLAN Context 선택과 검증 명령에만 남는다.
+
 ## 4. AI 비용 경계
 
 AI 호출 비용은 운영 부가 정보가 아니라 Framework가 통제해야 하는 실행 자원이다.
