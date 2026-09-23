@@ -66,6 +66,8 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
     RUNNER_TEMP: root, PLAN_IDENTITY: JSON.stringify(identity), PLAN_ARTIFACT_ID: "456",
     PLAN_ARTIFACT_DIGEST: "c".repeat(64), PLAN_ARTIFACT_URL: "https://github.com/example/app/actions/runs/1234/artifacts/456",
     PROVENANCE_URL: "https://github.com/example/app/actions/runs/1234/artifacts/457",
+    PLAN_DECISION_PACKET: "### PLAN Decision Packet (사람이 읽는 판단 재료)\n\n**준비 상태:** `ready=true` — Blocking Question 없음.",
+    PLAN_READY: "true",
   };
   try {
     const bind = (values: typeof env) => new AsyncFunction("require", "process", "core", scripts[1])(require, { env: values }, { setOutput() {} });
@@ -77,13 +79,35 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
     await assert.rejects(bind({ ...env, PLAN_ARTIFACT_DIGEST: "" }), /exact uploaded PLAN identity/);
     await assert.rejects(bind({ ...env, PLAN_ARTIFACT_ID: "bad" }), /exact uploaded PLAN identity/);
     let comment: any;
-    await new AsyncFunction("process", "github", "context", scripts[2])(
-      { env }, { rest: { issues: { createComment: async (value: unknown) => { comment = value; } } } },
+    const pointer = (values: typeof env) => new AsyncFunction("process", "github", "context", scripts[2])(
+      { env: values }, { rest: { issues: { createComment: async (value: unknown) => { comment = value; } } } },
       { repo: { owner: "example", repo: "app" } },
     );
+    await pointer(env);
     assert.equal(comment.issue_number, 60);
     for (const value of [identity.artifactName, identity.requirement.digest, env.PLAN_ARTIFACT_DIGEST, env.PROVENANCE_URL, identity.targetSha]) assert.ok(comment.body.includes(value));
     assert.doesNotMatch(comment.body, /untrusted title|untrusted body/);
+
+    // Decision Packet은 trusted validation을 통과한 PLAN의 사람용 발췌로 pointer에 들어가되,
+    // PLAN_AUTHORIZE가 파싱하는 접두/Workflow run 줄 뒤, HumanStatus 앞에 위치한다.
+    const body: string = comment.body;
+    assert.ok(body.startsWith("## PLAN (AI 제안 — 구현 승인 아님)"));
+    const runLine = body.indexOf("Workflow run: 1234 / attempt: 1");
+    const packet = body.indexOf(env.PLAN_DECISION_PACKET);
+    const status = body.indexOf("### HumanStatus: PLAN");
+    assert.ok(runLine !== -1 && packet > runLine && status > packet);
+    assert.match(body, /\*\*다음 행동:\*\* 위 PLAN Decision Packet을 읽고/);
+
+    comment = undefined;
+    await pointer({ ...env, PLAN_READY: "false", PLAN_DECISION_PACKET: "### PLAN Decision Packet (사람이 읽는 판단 재료)\n\n**준비 상태:** `ready=false`" });
+    assert.match(comment.body, /\*\*다음 행동:\*\* 이 PLAN은 승인할 수 없습니다/);
+
+    // 판단 재료가 없으면 승인 가능한 pointer를 남기지 않는다.
+    comment = undefined;
+    await assert.rejects(pointer({ ...env, PLAN_DECISION_PACKET: "" }), /Missing PLAN Decision Packet/);
+    await assert.rejects(pointer({ ...env, PLAN_READY: "" }), /Missing PLAN Decision Packet/);
+    await assert.rejects(pointer({ ...env, PLAN_DECISION_PACKET: "not a packet" }), /Missing PLAN Decision Packet/);
+    assert.equal(comment, undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -17,7 +17,7 @@ const runtime = [
   'learn-input-pack', 'learn-report', 'learn-source-handler', 'learn-source',
   'orchestrator-handler', 'orchestrator', 'plan-authorization', 'plan-authorize-handler',
   'plan-bridge-patch', 'plan-business-context', 'plan-candidate-bridge-handler', 'plan-candidate-bridge',
-  'plan-context-policy', 'plan-explicit-path-context', 'plan-human-output-context',
+  'plan-context-policy', 'plan-decision-packet', 'plan-explicit-path-context', 'plan-human-output-context',
   'plan-implement-handoff-handler', 'plan-implement-handoff',
   'plan-implement-worker-handler', 'plan-implement-worker', 'plan-recovery-handler', 'plan-recovery',
   'plan-worker-ci-repair-handler',
@@ -40,7 +40,7 @@ test('production ownership is exactly the reviewed full bundle, with no digests 
     'package.json',
     'package-lock.json',
   ].sort();
-  assert.equal(expected.length, 73);
+  assert.equal(expected.length, 74);
   assert.deepEqual(value.entries.map(entry => entry.sourcePath).sort(), expected);
   for (const entry of value.entries) {
     const expectedTarget = entry.sourcePath === 'package.json' || entry.sourcePath === 'package-lock.json'

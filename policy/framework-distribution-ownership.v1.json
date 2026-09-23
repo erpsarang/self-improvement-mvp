@@ -50,6 +50,7 @@
     { "sourcePath": "src/self-improvement/plan-candidate-bridge-handler.ts", "targetPath": "src/self-improvement/plan-candidate-bridge-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-candidate-bridge.ts", "targetPath": "src/self-improvement/plan-candidate-bridge.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-context-policy.ts", "targetPath": "src/self-improvement/plan-context-policy.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/plan-decision-packet.ts", "targetPath": "src/self-improvement/plan-decision-packet.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-explicit-path-context.ts", "targetPath": "src/self-improvement/plan-explicit-path-context.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-human-output-context.ts", "targetPath": "src/self-improvement/plan-human-output-context.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-implement-handoff-handler.ts", "targetPath": "src/self-improvement/plan-implement-handoff-handler.ts", "classification": "required" },
