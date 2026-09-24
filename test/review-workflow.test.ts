@@ -119,3 +119,33 @@ test("Semantic REVIEW patch는 trusted package-lock.json만 제외하고 나머�
   // workflow 전체에서 제외 pathspec은 이 한 곳뿐이다.
   assert.equal((reviewWorkflow.match(/:\(top,exclude,literal\)/g) ?? []).length, 1);
 });
+
+test("PLAN 계보 REVIEW는 prepare와 fresh finalize 모두 승인된 PLAN artifact의 PLAN.json을 exact identity로 내려받아 심사 기준으로 쓴다 (#244 Rail run 35999983436)", () => {
+  for (const section of [prepareSection, finalizeSection]) {
+    const start = section.indexOf("- name: 승인된 PLAN artifact 다운로드");
+    assert.ok(start > 0);
+    const download = section.slice(start, section.indexOf("\n      - name:", start + 10));
+    assert.match(download, /if: steps\.review_source\.outputs\.authority_kind == 'PLAN_AUTHORIZE'/);
+    assert.match(download, /uses: actions\/download-artifact@v4/);
+    assert.match(download, /name: \$\{\{ steps\.review_source\.outputs\.plan_artifact_name \}\}/);
+    assert.match(download, /run-id: \$\{\{ steps\.review_source\.outputs\.plan_run_id \}\}/);
+    assert.match(download, /github-token: \$\{\{ github\.token \}\}/);
+
+    const checkStart = section.indexOf("- name: 승인된 PLAN artifact 구조 확인");
+    assert.ok(checkStart > start);
+    const check = section.slice(checkStart, section.indexOf("\n      - name:", checkStart + 10));
+    assert.match(check, /if: steps\.review_source\.outputs\.authority_kind == 'PLAN_AUTHORIZE'/);
+    assert.match(check, /-name PLAN\.json -print/);
+    assert.match(check, /\[ "\$\{#plan_files\[@\]\}" -ne 1 \]/);
+    assert.ok(check.includes('cp "${plan_files[0]}" "${RUNNER_TEMP}/review/plan.json"'));
+
+    // PLAN_AUTHORIZE artifact 검증 뒤, handler 호출 전에 온다.
+    assert.ok(section.indexOf("AUTHORIZE 또는 PLAN_AUTHORIZE artifact 구조 확인") < start);
+    assert.ok(checkStart < section.indexOf("review-handler.ts prepare") || checkStart < section.indexOf("review-handler.ts finalize"));
+    assert.match(section, /PLAN_JSON: \$\{\{ runner\.temp \}\}\/review\/plan\.json/);
+  }
+  // AI reviewer job은 PLAN artifact를 직접 받지 않는다. 승인 scope는 trusted prepare가 만든 prompt로만 전달된다.
+  assert.doesNotMatch(agentSection, /plan_artifact_name|PLAN_JSON|review-plan-source/);
+  // 권한은 그대로 read-only (기존 테스트가 고정).
+  assert.equal((reviewWorkflow.match(/승인된 PLAN artifact 다운로드/g) ?? []).length, 2);
+});

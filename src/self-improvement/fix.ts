@@ -342,3 +342,45 @@ export function createFixProvenance(input: {
     },
   });
 }
+
+/**
+ * untrusted FIX Worker prompt. PLAN 계보에서는 승인된 PLAN slice(allowedPaths/forbiddenChanges)가 그대로
+ * FIX의 경계다: BLOCKER 해결이 그 경계를 넘어야 한다면 FIX는 수정하지 않고 멈춘다. Issue 본문은 배경일 뿐이다.
+ */
+export function createFixWorkerPrompt(review: ReviewProvenance, fixAttempt: FixAttempt): string {
+  const blockers = localBlockers(review);
+  if (blockers.length === 0) throw new Error("수정할 LOCAL BLOCKER가 없습니다");
+  const scope = review.approvedPlanScope;
+  if (review.sourcePlanAuthorize && !scope) {
+    throw new Error("PLAN 계보 FIX에는 승인된 PLAN scope가 필요합니다");
+  }
+  const scopeLines = scope
+    ? [
+        "",
+        "승인된 PLAN slice (이 FIX의 경계):",
+        "- allowedPaths (이 밖의 파일은 절대 변경하지 마세요):",
+        ...scope.allowedPaths.map((path) => `  - ${path}`),
+        "- forbiddenChanges (이번 slice에서 손대지 않기로 승인된 것):",
+        ...(scope.forbiddenChanges.length === 0
+          ? ["  - 명시된 금지 변경 없음"]
+          : scope.forbiddenChanges.map((item) => `  - ${item}`)),
+        "- BLOCKER 해결이 allowedPaths 밖 변경이나 forbiddenChanges에 해당하는 변경을 요구하면 아무것도 수정하지 말고 그 이유만 출력하세요. 승인 범위를 넓히는 것은 사람의 재PLAN 몫입니다.",
+      ]
+    : [];
+  return [
+    "당신은 AI Development Framework의 untrusted FIX Worker입니다.",
+    `이번 작업은 FIX #${fixAttempt}이며 최대 허용 횟수는 2회입니다.`,
+    `아래 exact reviewed SHA ${review.reviewedHeadSha}에 존재하는 코드만 수정하세요.`,
+    "승인된 요구사항의 범위를 확대하거나 구조를 재설계하지 마세요.",
+    "아래 LOCAL BLOCKER만 해결하세요. FOLLOW_UP은 이번 FIX 범위가 아닙니다.",
+    "GitHub에 commit, push, branch 생성, PR 생성, merge를 시도하지 마세요.",
+    "SEAL, PUBLISH, VERIFY, REVIEW, MERGE_READY를 수행하지 마세요.",
+    "작업 디렉터리의 파일만 수정하고 필요한 테스트는 실행하세요.",
+    ...scopeLines,
+    "",
+    `Issue #${review.issueNumber}: ${review.requirements.title}`,
+    "",
+    "LOCAL BLOCKER:",
+    JSON.stringify(blockers, null, 2),
+  ].join("\n");
+}

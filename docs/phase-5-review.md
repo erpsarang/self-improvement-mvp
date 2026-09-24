@@ -93,6 +93,24 @@ review.json.requirementsDigest
 
 REVIEW는 branch 이름이나 최신 Issue 본문을 재해석해 identity를 바꾸지 않습니다.
 
+## 승인된 PLAN slice가 REVIEW authority다 (PLAN 계보)
+
+PLAN 계보 candidate(`sourcePlanBridge`)에서 사람이 `PLAN-승인`으로 승인한 것은 Issue 전체 목표가 아니라
+PLAN의 첫 bounded slice(`implementationScope`)입니다. 그래서 PLAN 계보 REVIEW는
+
+- trusted prepare와 fresh finalize가 PLAN_AUTHORIZE artifact에 기록된 exact PLAN artifact(run id, 이름)의 `PLAN.json`을
+  내려받아 Handoff·PLAN_AUTHORIZE와 같은 validator로 repository/frozen SHA에 묶어 검증하고,
+- Reviewer prompt의 심사 기준을 `requiredChanges` / `acceptanceCriteria` / `allowedPaths` / `forbiddenChanges` / `approach`로 두며,
+  Issue 본문은 배경 정보로만 줍니다. slice 밖 Issue 목표는 BLOCKER가 아니라 FOLLOW_UP이고, `allowedPaths` 밖 변경이나
+  `forbiddenChanges`에 해당하는 변경을 요구하는 finding은 만들지 않습니다. slice 자체가 잘못됐으면 LOCAL_FIX가 아니라
+  STRUCTURAL_CHANGE(사람의 재PLAN)입니다.
+- `review.json`에 `approvedPlanScope`를 기록합니다. Orchestrator와 FIX는 PLAN 계보에서 이 필드가 없거나 다른 PLAN artifact를
+  가리키면 fail-closed 하고, FIX Worker prompt는 같은 `allowedPaths` / `forbiddenChanges`를 경계로 받습니다.
+
+`PLAN.json`이 없으면 PLAN 계보 REVIEW는 만들어지지 않습니다. legacy AUTHORIZE 계보는 이전과 같이 Issue 요구 snapshot을 심사합니다.
+(관측 사례: #244 Trusted Rail run 35999983436에서 Reviewer가 Issue 전체 목표 기준으로 slice 밖 요구를 LOCAL BLOCKER로 냈고,
+FIX Worker가 승인 범위 밖 workflow를 수정했다.)
+
 ## Provider-neutral core
 
 현재 GitHub 실행 adapter에서는 AI Reviewer로 `openai/codex-action@v1`을 사용합니다. 그러나 core의 `SemanticReviewerOutput`과 `ReviewProvenance`는 특정 모델 이름에 종속되지 않습니다.

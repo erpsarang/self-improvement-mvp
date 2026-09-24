@@ -7,6 +7,7 @@ import {
 import {
   createSemanticReviewPrompt,
   createSemanticReviewProvenance,
+  resolveApprovedPlanScope,
   SEMANTIC_REVIEW_OUTPUT_SCHEMA,
   validateVerifiedCandidateForReview,
   validateVerifyProvenanceForReview,
@@ -62,6 +63,9 @@ if (command === "source") {
     writeOutput("plan_authorize_run_id", sourcePlanAuthorize.authorization.authorization.runId);
     writeOutput("plan_authorize_run_attempt", sourcePlanAuthorize.authorization.authorization.runAttempt);
     writeOutput("plan_authorize_artifact_name", sourcePlanAuthorize.artifact.name);
+    // 승인된 PLAN artifact(PLAN.json)는 PLAN 계보 REVIEW의 심사 기준이다. workflow가 exact run/name으로 내려받는다.
+    writeOutput("plan_run_id", sourcePlanAuthorize.authorization.plan.runId);
+    writeOutput("plan_artifact_name", sourcePlanAuthorize.authorization.plan.artifact.name);
     writeOutput("requirements_digest", sourcePlanBridge.bridge.requirement.digest);
   } else {
     const sourceAuthorization = validatedVerify.sourcePublish.sourceSeal.sourceAuthorization;
@@ -116,6 +120,11 @@ const reviewContext = sourcePlanBridge
     })();
 
 const validated = reviewContext.validated;
+// PLAN 계보: 승인된 PLAN.json이 없으면 prepare/finalize 모두 fail-closed. Issue 본문만으로 심사하지 않는다.
+const approvedPlan: unknown = reviewContext.authorityKind === "PLAN_AUTHORIZE"
+  ? parseJson(requiredEnv("PLAN_JSON"))
+  : undefined;
+const approvedPlanScope = resolveApprovedPlanScope(validated, approvedPlan);
 
 if (command === "prepare") {
   const runtimeDir = requiredEnv("REVIEW_RUNTIME_DIR");
@@ -127,6 +136,7 @@ if (command === "prepare") {
     baseSha: validated.verify.sourcePublish.baseSha,
     verifiedHeadSha: validated.verify.verifiedHeadSha,
     requirements: validated.requirements,
+    ...(approvedPlanScope ? { approvedPlan: approvedPlanScope } : {}),
   });
   const reviewInput = Object.freeze({
     repository,
@@ -137,7 +147,10 @@ if (command === "prepare") {
     requirements: validated.requirements,
     sourceVerifyArtifactName: verifyArtifactName,
     ...(reviewContext.authorityKind === "PLAN_AUTHORIZE"
-      ? { sourcePlanAuthorizeArtifactName: reviewContext.planAuthorizationArtifactName }
+      ? {
+          sourcePlanAuthorizeArtifactName: reviewContext.planAuthorizationArtifactName,
+          approvedPlanScope,
+        }
       : { sourceAuthorizationArtifactName: reviewContext.authorizationArtifactName }),
   });
 
@@ -180,6 +193,7 @@ const provenance = reviewContext.authorityKind === "PLAN_AUTHORIZE"
       verifyArtifactName,
       planAuthorization: reviewContext.planAuthorization,
       planAuthorizationArtifactName: reviewContext.planAuthorizationArtifactName,
+      approvedPlan,
       repository,
       reviewerOutput,
       rawReviewerOutput,

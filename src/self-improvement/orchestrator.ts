@@ -4,6 +4,7 @@ import {
 import { completedFixCount, nextFixAttempt, type FixAttempt } from "./fix.js";
 import { requirementDigest } from "./plan-authorization.js";
 import {
+  validateApprovedPlanReviewScopeShape,
   validateSemanticReviewerOutput,
   validateVerifyProvenanceForReview,
   type ReviewProvenance,
@@ -235,9 +236,14 @@ export function validateReviewForOrchestration(input: {
     ) {
       throw new Error("REVIEW PLAN_AUTHORIZE binding이 VERIFY chain과 일치하지 않습니다");
     }
+    // PLAN 계보 REVIEW는 승인된 slice를 심사 기준으로 기록해야 한다. 없으면 Issue 전체를 심사한 REVIEW이므로 거부한다.
+    const scope = validateApprovedPlanReviewScopeShape(review.approvedPlanScope);
+    if (JSON.stringify(scope.planArtifact) !== JSON.stringify(bridge.sourcePlanAuthorize.authorization.plan.artifact)) {
+      throw new Error("REVIEW 승인 PLAN scope가 VERIFY chain의 PLAN artifact와 일치하지 않습니다");
+    }
   } else {
     const compactAuthorization = seal.sourceAuthorization;
-    if (!compactAuthorization || review.sourcePlanAuthorize !== undefined) {
+    if (!compactAuthorization || review.sourcePlanAuthorize !== undefined || review.approvedPlanScope !== undefined) {
       throw new Error("legacy REVIEW AUTHORIZE binding이 올바르지 않습니다");
     }
     if (review.requirementsDigest !== compactAuthorization.requirementsDigest) {

@@ -5,6 +5,7 @@ import {
   FIX_REQUEST_WORKFLOW_PATH,
   createFixProvenance,
   createFixRequestProvenance,
+  createFixWorkerPrompt,
   fixRequestArtifactName,
   nextFixAttempt,
   validateFixRequestAgainstReview,
@@ -142,26 +143,7 @@ export async function createFixRequest(): Promise<void> {
 export async function prepareFix(): Promise<void> {
   await mkdir(required("FIX_RUNTIME_DIR"), { recursive: true });
   const { request, review } = await validateWorkerRequest();
-  const blockers = review.findings.filter(
-    (finding) => finding.severity === "BLOCKER" && finding.scope === "LOCAL",
-  );
-  if (blockers.length === 0) throw new Error("수정할 LOCAL BLOCKER가 없습니다");
-
-  const prompt = [
-    "당신은 AI Development Framework의 untrusted FIX Worker입니다.",
-    `이번 작업은 FIX #${request.fixAttempt}이며 최대 허용 횟수는 2회입니다.`,
-    `아래 exact reviewed SHA ${review.reviewedHeadSha}에 존재하는 코드만 수정하세요.`,
-    "승인된 요구사항의 범위를 확대하거나 구조를 재설계하지 마세요.",
-    "아래 LOCAL BLOCKER만 해결하세요. FOLLOW_UP은 이번 FIX 범위가 아닙니다.",
-    "GitHub에 commit, push, branch 생성, PR 생성, merge를 시도하지 마세요.",
-    "SEAL, PUBLISH, VERIFY, REVIEW, MERGE_READY를 수행하지 마세요.",
-    "작업 디렉터리의 파일만 수정하고 필요한 테스트는 실행하세요.",
-    "",
-    `Issue #${review.issueNumber}: ${review.requirements.title}`,
-    "",
-    "LOCAL BLOCKER:",
-    JSON.stringify(blockers, null, 2),
-  ].join("\n");
+  const prompt = createFixWorkerPrompt(review, request.fixAttempt);
 
   await writeFile("fix-prompt.txt", `${prompt}\n`);
   writeOutput("issue_number", review.issueNumber);
