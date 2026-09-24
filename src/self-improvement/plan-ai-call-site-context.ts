@@ -129,6 +129,7 @@ function leadingSpaces(line: string): number {
 /**
  * 첫 AI 호출 step(`uses: openai/codex-action`)이 속한 step 블록을 돌려준다.
  * 블록은 그 step의 `- ` 줄에서 시작해 같은 들여쓰기의 다음 step 또는 상위 key 직전에서 끝난다.
+ * 반환하는 startOffset은 `text.slice(startOffset, startOffset + content.length) === content`를 만족한다.
  * 한 workflow에 호출 step이 여러 개면(예: bounded IMPLEMENT Worker의 retry step) 첫 번째만 쓴다.
  */
 export function aiCallStepWindow(text: string, maxBytes: number): { content: string; startOffset: number } | null {
@@ -156,7 +157,9 @@ export function aiCallStepWindow(text: string, maxBytes: number): { content: str
   }
   while (end > usesIndex + 1 && lines[end - 1]!.trim() === "") end -= 1;
 
-  const startOffset = Buffer.byteLength(lines.slice(0, start).join("\n"), "utf8") + (start > 0 ? 1 : 0);
+  // startOffset은 다른 Context 모듈과 validatePlan이 쓰는 것과 같은 문자(UTF-16 code unit) 인덱스다.
+  // byte 오프셋을 넣으면 한글 step 이름이 앞에 있는 workflow에서 trusted 검증이 fail-closed 된다.
+  const startOffset = lines.slice(0, start).join("\n").length + (start > 0 ? 1 : 0);
   const content = trimUtf8(lines.slice(start, end).join("\n"), maxBytes);
   if (content.length === 0) return null;
   return { content, startOffset };
