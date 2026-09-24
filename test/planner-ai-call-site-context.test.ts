@@ -44,6 +44,8 @@ function workflow(name: string, steps: readonly string[], trailer = ""): string 
     "    runs-on: ubuntu-latest",
     "    steps:",
     "      - uses: actions/checkout@v4",
+    "      - name: 신뢰 control-plane checkout 확인 (한글 step 이름: byte 오프셋과 문자 인덱스가 달라진다)",
+    "        run: echo 준비",
     ...steps,
     "      - name: record",
     "        run: echo done",
@@ -112,7 +114,9 @@ test("aiCallStepWindow는 첫 AI 호출 step 블록만 잘라내고 startOffset�
   const text = workflow("PLAN Bounded IMPLEMENT Worker", [callStep("Untrusted bounded IMPLEMENT Worker", "low"), callStep("IMPLEMENT Worker retry", "low")]);
   const window = aiCallStepWindow(text, AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES);
   assert.ok(window);
-  assert.equal(Buffer.from(text, "utf8").subarray(window.startOffset, window.startOffset + Buffer.byteLength(window.content, "utf8")).toString("utf8"), window.content);
+  // validatePlan이 쓰는 검사와 동일: 문자 인덱스 slice가 content와 같아야 한다 (byte 오프셋이면 한글 앞에서 어긋난다).
+  assert.equal(text.slice(window.startOffset, window.startOffset + window.content.length), window.content);
+  assert.notEqual(Buffer.byteLength(text.slice(0, window.startOffset), "utf8"), window.startOffset, "fixture must contain non-ASCII before the call step");
   assert.match(window.content, /^      - name: Untrusted bounded IMPLEMENT Worker\n/);
   assert.match(window.content, /uses: openai\/codex-action@v1/);
   assert.match(window.content, /effort: low/);
@@ -152,8 +156,8 @@ test("Framework 자체 AI 실행 요구에서는 AI 호출 step 창이 evidence�
       assert.match(file.content, /uses: openai\/codex-action@v1/, file.path);
       assert.match(file.content, /effort: (?:low|medium)/, file.path);
       assert.ok(file.byteLength <= AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES, file.path);
-      const original = readFileSync(join(fixture.target, file.path));
-      assert.equal(original.subarray(file.startOffset, file.startOffset + file.byteLength).toString("utf8"), file.content, `${file.path} startOffset`);
+      const original = readFileSync(join(fixture.target, file.path), "utf8");
+      assert.equal(original.slice(file.startOffset, file.startOffset + file.content.length), file.content, `${file.path} startOffset`);
     }
     // 호출 지점은 evidence 앞쪽에 오고 evidenceId는 다시 E1..En으로 묶인다.
     assert.deepEqual(augmented.files.map((file) => file.evidenceId), augmented.files.map((_, index) => `E${index + 1}`));
@@ -219,5 +223,8 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
   for (const file of candidates) {
     assert.match(file.content, /uses: openai\/codex-action/, file.path);
     assert.ok(file.byteLength <= AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES, file.path);
+    // trusted validatePlan의 frozen repository 검사 (#244 run 35971708433 회귀: byte 오프셋이 문자 인덱스로 쓰였다).
+    const frozenText = readFileSync(join(target, file.path), "utf8");
+    assert.equal(frozenText.slice(file.startOffset, file.startOffset + file.content.length), file.content, `${file.path} evidence must match frozen repository`);
   }
 });
