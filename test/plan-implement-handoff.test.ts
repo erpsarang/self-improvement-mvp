@@ -2,15 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPlanAuthorizeArtifact, requirementDigest, type PlanAuthorizeArtifact } from "../src/self-improvement/plan-authorization.js";
 import {
+  approvedPlanEvidenceFrom,
   createPlanImplementContract,
   createPlanImplementHandoffManifest,
+  FULL_CONTEXT_MATERIALIZATION,
   PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
   PLAN_IMPLEMENT_MAX_PATCH_BYTES,
   planImplementHandoffArtifactName,
   validatePlanAuthorizeSource,
+  verifyApprovedPlanContext,
   verifyPlanAuthorizeArtifact,
   type PlanAuthorizeSourceRun,
 } from "../src/self-improvement/plan-implement-handoff.js";
+import { createHash } from "node:crypto";
+import type { PlanContextPack } from "../src/self-improvement/planner.js";
 
 const targetSha = "b".repeat(40);
 const requirementSnapshot = {
@@ -353,4 +358,77 @@ test("handoff identity는 approval, Contract, Context digest에 결합된다", (
     planImplementHandoffArtifactName(approved),
     "plan-implement-handoff-issue-83-plan-34727609462-attempt-2-approval-5649698571",
   );
+});
+
+test("handoff manifest는 Context 표현(full / plan-excerpt)을 provenance에 남기고 잘못된 표현은 거부한다", () => {
+  const approved = authorization();
+  const contract = createPlanImplementContract(approved, canonicalPlanArtifact(), requirementSnapshot);
+  const sourceArtifact = {
+    name: "plan-authorize-issue-83-plan-34727609462-attempt-2-approval-5649698571-run-34728260819-attempt-1",
+    id: 10309140730,
+    digest: "e".repeat(64),
+  };
+  const base = { authorization: approved, sourceArtifact, contract, contextDigest: "f".repeat(64) };
+
+  // 기본은 full이며 명시적 full과 같은 digest를 낸다 (기존 호출자 동작 유지).
+  const implicit = createPlanImplementHandoffManifest(base);
+  const explicitFull = createPlanImplementHandoffManifest({ ...base, contextMaterialization: FULL_CONTEXT_MATERIALIZATION });
+  assert.deepEqual(implicit, explicitFull);
+  assert.deepEqual(implicit.contextMaterialization, { representation: "full", excerptPaths: [], approvedPlanContextDigest: null });
+
+  // read-only contextPath만 발췌가 될 수 있고, 표현이 바뀌면 handoffDigest도 바뀐다.
+  const excerpt = createPlanImplementHandoffManifest({
+    ...base,
+    contextMaterialization: {
+      representation: "plan-excerpt",
+      excerptPaths: ["src/self-improvement/implement-contract.ts"],
+      approvedPlanContextDigest: "9".repeat(64),
+    },
+  });
+  assert.equal(excerpt.contextMaterialization.representation, "plan-excerpt");
+  assert.notEqual(excerpt.handoffDigest, implicit.handoffDigest);
+
+  const rejected: Array<[unknown, RegExp]> = [
+    [{ representation: "plan-excerpt", excerptPaths: ["src/self-improvement/human-status.ts"], approvedPlanContextDigest: "9".repeat(64) }, /read-only contextPath/],
+    [{ representation: "plan-excerpt", excerptPaths: ["docs/unlisted.md"], approvedPlanContextDigest: "9".repeat(64) }, /read-only contextPath/],
+    [{ representation: "plan-excerpt", excerptPaths: [], approvedPlanContextDigest: "9".repeat(64) }, /requires at least one excerpt path/],
+    [{ representation: "plan-excerpt", excerptPaths: ["src/self-improvement/implement-contract.ts"], approvedPlanContextDigest: null }, /SHA-256/],
+    [{ representation: "full", excerptPaths: ["src/self-improvement/implement-contract.ts"], approvedPlanContextDigest: null }, /cannot carry excerpt paths/],
+    [{ representation: "partial", excerptPaths: [], approvedPlanContextDigest: null }, /unsupported context materialization/],
+    [{ representation: "full", excerptPaths: [], approvedPlanContextDigest: null, extra: true }, /unexpected fields/],
+  ];
+  for (const [materialization, pattern] of rejected) {
+    assert.throws(
+      () => createPlanImplementHandoffManifest({ ...base, contextMaterialization: materialization as never }),
+      pattern,
+      JSON.stringify(materialization),
+    );
+  }
+});
+
+test("승인된 PLAN Context는 PLAN.json context digest와 승인 identity에 묶일 때만 IMPLEMENT 발췌 근거가 된다", () => {
+  const approved = authorization();
+  const content = "      - uses: openai/codex-action@v1\n        with:\n          effort: medium\n";
+  const file = {
+    evidenceId: "E1",
+    path: ".github/workflows/plan.yml",
+    startOffset: 120,
+    byteLength: Buffer.byteLength(content, "utf8"),
+    digestAlgorithm: "sha256" as const,
+    contentDigest: createHash("sha256").update(content, "utf8").digest("hex"),
+    content,
+  };
+  const payload = { schemaVersion: 1 as const, kind: "trusted-plan-context-pack" as const, repository: approved.repository, sha: approved.targetSha, files: [file], totalBytes: file.byteLength };
+  const planContext: PlanContextPack = { ...payload, digestAlgorithm: "sha256", contextDigest: createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex") };
+  const planJson = canonicalPlanArtifact(readyPlan, { context: { digestAlgorithm: "sha256", digest: planContext.contextDigest, evidence: [], totalBytes: file.byteLength } });
+
+  const verified = verifyApprovedPlanContext(planJson, planContext, approved);
+  assert.deepEqual(approvedPlanEvidenceFrom(verified), [{ path: file.path, startOffset: 120, content, contentDigest: file.contentDigest }]);
+
+  // digest 불일치, identity 불일치, 위변조된 context는 거부한다.
+  assert.throws(() => verifyApprovedPlanContext(canonicalPlanArtifact(), planContext, approved), /context digest does not match/);
+  const otherRepo = { ...planContext, repository: "erpsarang/other" };
+  assert.throws(() => verifyApprovedPlanContext(planJson, otherRepo, approved), /digest mismatch|not bound/);
+  const forged = { ...planContext, files: [{ ...file, content: `${content}// forged\n` }] };
+  assert.throws(() => verifyApprovedPlanContext(planJson, forged, approved), /digest|byte length/);
 });

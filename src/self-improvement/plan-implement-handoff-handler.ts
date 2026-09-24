@@ -5,17 +5,21 @@ import { join } from "node:path";
 import { createImplementContextPack } from "./context-pack.js";
 import { verifyImplementContract, type ImplementContract } from "./implement-contract.js";
 import {
+  approvedPlanEvidenceFrom,
   createPlanImplementContract,
   createPlanImplementHandoffManifest,
+  FULL_CONTEXT_MATERIALIZATION,
   PLAN_AUTHORIZE_WORKFLOW_PATH,
   PLAN_WORKFLOW_PATH,
   planImplementHandoffArtifactName,
   validatePlanAuthorizeSource,
+  verifyApprovedPlanContext,
   verifyPlanAuthorizeArtifact,
   type PlanAuthorizeArtifactMetadata,
   type PlanAuthorizeSourceRun,
 } from "./plan-implement-handoff.js";
 import { planAuthorizeArtifactName, type PlanAuthorizeArtifact } from "./plan-authorization.js";
+import { verifyPlanContextPack, type PlanContextPack } from "./planner.js";
 import { createSinglePassPrompt, WORKER_OUTPUT_SCHEMA } from "./single-pass-worker.js";
 
 interface SourceRecord {
@@ -69,6 +73,11 @@ async function api<T>(path: string): Promise<T> {
 }
 
 async function readArtifactJson(artifactId: number, fileName: string): Promise<unknown> {
+  const files = await readArtifactJsonFiles(artifactId, [fileName]);
+  return files.get(fileName);
+}
+
+async function readArtifactJsonFiles(artifactId: number, fileNames: readonly string[]): Promise<Map<string, unknown>> {
   const token = required("GITHUB_TOKEN");
   const { owner, repo } = repositoryParts();
   const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/artifacts/${artifactId}/zip`, {
@@ -88,11 +97,16 @@ async function readArtifactJson(artifactId: number, fileName: string): Promise<u
     writeFileSync(zipPath, Buffer.from(await response.arrayBuffer()));
     const listing = spawnSync("unzip", ["-Z1", zipPath], { encoding: "utf8" });
     if (listing.status !== 0) throw new Error(`artifact ${artifactId} is not a readable ZIP`);
-    const exact = listing.stdout.split(/\r?\n/).filter((entry) => entry === fileName);
-    if (exact.length !== 1) throw new Error(`${fileName} must exist exactly once in artifact ${artifactId}`);
-    const extracted = spawnSync("unzip", ["-p", zipPath, fileName], { encoding: "utf8" });
-    if (extracted.status !== 0 || !extracted.stdout.trim()) throw new Error(`${fileName} is unreadable`);
-    return JSON.parse(extracted.stdout) as unknown;
+    const entries = listing.stdout.split(/\r?\n/);
+    const result = new Map<string, unknown>();
+    for (const fileName of fileNames) {
+      const exact = entries.filter((entry) => entry === fileName);
+      if (exact.length !== 1) throw new Error(`${fileName} must exist exactly once in artifact ${artifactId}`);
+      const extracted = spawnSync("unzip", ["-p", zipPath, fileName], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      if (extracted.status !== 0 || !extracted.stdout.trim()) throw new Error(`${fileName} is unreadable`);
+      result.set(fileName, JSON.parse(extracted.stdout) as unknown);
+    }
+    return result;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -113,6 +127,8 @@ async function prepare(): Promise<void> {
   const authorizationPath = required("PLAN_AUTHORIZE_JSON");
   const authorization = verifyPlanAuthorizeArtifact(JSON.parse(readFileSync(authorizationPath, "utf8")));
   if (authorization.repository !== repository) throw new Error("PLAN_AUTHORIZE repository mismatch");
+  // fail-closed 시 사람이 보는 STOPPED 댓글을 어느 Issue에 남길지 workflow가 알 수 있게 먼저 기록한다.
+  output("issue_number", String(authorization.requirement.issueNumber));
 
   const sourceArtifact: PlanAuthorizeArtifactMetadata = {
     name: required("SOURCE_ARTIFACT_NAME"),
@@ -191,13 +207,17 @@ async function prepare(): Promise<void> {
     body: requirementIssue.body ?? null,
   };
 
-  const planJson = await readArtifactJson(authorization.plan.artifact.id, "PLAN.json");
+  const planFiles = await readArtifactJsonFiles(authorization.plan.artifact.id, ["PLAN.json", "PLAN-context.json"]);
+  const planJson = planFiles.get("PLAN.json");
   const contract = createPlanImplementContract(authorization, planJson, requirementSnapshot);
   verifyImplementContract(contract);
+  // 승인된 PLAN이 실제로 본 evidence. 같은 artifact에서 읽고 PLAN.json의 context digest에 묶는다.
+  const planContext = verifyApprovedPlanContext(planJson, planFiles.get("PLAN-context.json"), authorization);
 
   const sourceRecord: SourceRecord = { authorization, sourceArtifact };
   writeFileSync(join(directory, "contract.json"), JSON.stringify(contract, null, 2));
   writeFileSync(join(directory, "source.json"), JSON.stringify(sourceRecord, null, 2));
+  writeFileSync(join(directory, "plan-context.json"), JSON.stringify(planContext, null, 2));
 
   output("base_sha", contract.baseSha);
   output("artifact_name", planImplementHandoffArtifactName(authorization));
@@ -212,14 +232,29 @@ function buildContext(): void {
   const source = JSON.parse(readFileSync(join(directory, "source.json"), "utf8")) as SourceRecord;
   const authorization = verifyPlanAuthorizeArtifact(source.authorization);
 
-  const context = createImplementContextPack(contract, targetRoot, observedBaseSha);
+  // prepare가 검증해 둔 승인 PLAN Context. 다시 검증하고 PLAN.json 없이도 identity를 authorization에 묶는다.
+  const planContext = JSON.parse(readFileSync(join(directory, "plan-context.json"), "utf8")) as PlanContextPack;
+  verifyPlanContextPack(planContext);
+  if (planContext.repository !== authorization.repository || planContext.sha !== authorization.targetSha) {
+    throw new Error("approved PLAN context is not bound to approved PLAN identity");
+  }
+
+  const context = createImplementContextPack(contract, targetRoot, observedBaseSha, {
+    approvedPlanEvidence: approvedPlanEvidenceFrom(planContext),
+  });
+  const excerptPaths = context.files.filter((file) => file.state === "excerpt").map((file) => file.path);
+  const contextMaterialization = excerptPaths.length === 0
+    ? FULL_CONTEXT_MATERIALIZATION
+    : { representation: "plan-excerpt" as const, excerptPaths, approvedPlanContextDigest: planContext.contextDigest };
   const prompt = createSinglePassPrompt(contract, context);
   const manifest = createPlanImplementHandoffManifest({
     authorization,
     sourceArtifact: source.sourceArtifact,
     contract,
     contextDigest: context.contextDigest,
+    contextMaterialization,
   });
+  output("context_representation", contextMaterialization.representation);
 
   writeFileSync(join(directory, "context.json"), JSON.stringify(context, null, 2));
   writeFileSync(join(directory, "prompt.md"), prompt);
@@ -227,7 +262,18 @@ function buildContext(): void {
   writeFileSync(join(directory, "handoff.json"), JSON.stringify(manifest, null, 2));
 }
 
+function recordRejection(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  output("rejected", "true");
+  output("rejection_reason", message.replace(/`/g, "'").replace(/\r?\n/g, " "));
+}
+
 const command = process.argv[2];
-if (command === "prepare") await prepare();
-else if (command === "context") buildContext();
-else throw new Error("usage: plan-implement-handoff-handler.ts <prepare|context>");
+try {
+  if (command === "prepare") await prepare();
+  else if (command === "context") buildContext();
+  else throw new Error("usage: plan-implement-handoff-handler.ts <prepare|context>");
+} catch (error) {
+  recordRejection(error);
+  throw error;
+}

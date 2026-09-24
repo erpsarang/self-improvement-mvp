@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: write # fail-closed 시 Requirement Issue에 STOPPED 상태 댓글 하나만 남긴다
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -166,6 +167,7 @@ jobs:
 
       - name: exact-SHA Context Pack 생성
         if: steps.source.outputs.should_run == 'true'
+        id: context
         working-directory: control
         shell: bash
         env:
@@ -190,3 +192,50 @@ jobs:
             ${{ runner.temp }}/plan-implement-handoff/handoff.json
             ${{ runner.temp }}/plan-implement-handoff/source.json
           if-no-files-found: error
+
+      # Handoff가 fail-closed 하면 Actions 로그에만 남고 Issue는 침묵했다 (self-improvement-mvp #244 run 35976744079).
+      # 사람이 Issue만 보고도 멈춘 이유와 다음 행동을 알 수 있게 STOPPED 댓글 하나를 남긴다. IMPLEMENT는 시작되지 않는다.
+      - name: fail-closed 사유를 Requirement Issue에 남김
+        if: >-
+          failure() &&
+          steps.source.outputs.should_run == 'true' &&
+          steps.prepare.outputs.issue_number != '' &&
+          (steps.prepare.outputs.rejected == 'true' || steps.context.outputs.rejected == 'true')
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
+          REJECTION_STAGE: ${{ steps.context.outputs.rejected == 'true' && 'IMPLEMENT Context Pack 생성' || '승인 PLAN 검증 / ImplementContract 생성' }}
+          REJECTION_REASON: ${{ steps.context.outputs.rejected == 'true' && steps.context.outputs.rejection_reason || steps.prepare.outputs.rejection_reason }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
+              core.setFailed('invalid issue number for STOPPED comment');
+              return;
+            }
+            const markerPrefix = `<!-- self-improvement:PLAN_IMPLEMENT_HANDOFF_REJECTED source-artifact=${process.env.SOURCE_ARTIFACT_NAME} `;
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            if (existing.some((comment) => typeof comment.body === 'string' && comment.body.includes(markerPrefix))) {
+              core.info('handoff rejection already recorded for this PLAN_AUTHORIZE artifact');
+              return;
+            }
+            const body = [
+              `${markerPrefix}run-id=${context.runId} run-attempt=${process.env.GITHUB_RUN_ATTEMPT} -->`,
+              '## IMPLEMENT Handoff가 fail-closed로 중단됨',
+              `중단 단계: ${process.env.REJECTION_STAGE}`,
+              `검증 메시지: \`${process.env.REJECTION_REASON}\``,
+              '승인된 PLAN은 그대로이지만 IMPLEMENT Worker는 시작되지 않았고 후보·PR도 만들어지지 않았습니다.',
+              '### HumanStatus: STOPPED',
+              '**현재 상황:** 승인된 PLAN을 IMPLEMENT로 넘기는 trusted 단계가 검증에서 거부되어 fail-closed 했습니다. 구현·검증·리뷰의 성공을 뜻하지 않습니다.',
+              `**다음 행동:** 검증 메시지가 Framework 결함이면 Framework를 고친 뒤 이 Issue를 다시 PLAN하세요(main이 바뀌면 재승인 필요). PLAN 범위 문제면 Issue 본문을 보완하고 Actions → Read-only AI PLAN을 다시 실행한 뒤 새 Decision Packet을 읽고 승인 여부를 결정하세요. 자세한 로그: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n\n');
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body,
+            });

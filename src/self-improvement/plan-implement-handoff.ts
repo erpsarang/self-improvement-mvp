@@ -9,6 +9,8 @@ import {
   toApprovedPlanIdentity,
   type PlanAuthorizeArtifact,
 } from "./plan-authorization.js";
+import type { ApprovedPlanEvidence } from "./context-pack.js";
+import { verifyPlanContextPack, type PlanContextPack } from "./planner.js";
 
 export const PLAN_AUTHORIZE_WORKFLOW_PATH = ".github/workflows/plan-authorize.yml" as const;
 export const PLAN_WORKFLOW_PATH = ".github/workflows/plan.yml" as const;
@@ -74,7 +76,24 @@ export interface PlanImplementHandoffPayload {
   readonly approvalCommentId: number;
   readonly contractDigest: string;
   readonly contextDigest: string;
+  /**
+   * IMPLEMENT Context가 contextPaths를 어떻게 표현했는지. "full"은 전체 파일, "plan-excerpt"는 예산 초과로
+   * 승인된 PLAN evidence 발췌를 재사용한 경우이며 그때 어떤 경로가 발췌인지와 근거가 된 PLAN Context digest를 남긴다.
+   */
+  readonly contextMaterialization: PlanImplementContextMaterialization;
 }
+
+export interface PlanImplementContextMaterialization {
+  readonly representation: "full" | "plan-excerpt";
+  readonly excerptPaths: readonly string[];
+  readonly approvedPlanContextDigest: string | null;
+}
+
+export const FULL_CONTEXT_MATERIALIZATION: PlanImplementContextMaterialization = Object.freeze({
+  representation: "full",
+  excerptPaths: Object.freeze([]) as readonly string[],
+  approvedPlanContextDigest: null,
+});
 
 export interface PlanImplementHandoffManifest extends PlanImplementHandoffPayload {
   readonly digestAlgorithm: "sha256";
@@ -299,11 +318,46 @@ export function planImplementHandoffArtifactName(authorization: PlanAuthorizeArt
   return `plan-implement-handoff-issue-${trusted.requirement.issueNumber}-plan-${trusted.plan.runId}-attempt-${trusted.plan.runAttempt}-approval-${trusted.approval.commentId}`;
 }
 
+function validateContextMaterialization(
+  value: PlanImplementContextMaterialization | undefined,
+  contract: ImplementContract,
+): PlanImplementContextMaterialization {
+  const materialization = value ?? FULL_CONTEXT_MATERIALIZATION;
+  if (!record(materialization)) throw new Error("contextMaterialization must be an object");
+  const keys = Object.keys(materialization).sort();
+  if (JSON.stringify(keys) !== JSON.stringify(["approvedPlanContextDigest", "excerptPaths", "representation"])) {
+    throw new Error("contextMaterialization has unexpected fields");
+  }
+  const excerptPaths = exactArray("contextMaterialization.excerptPaths", materialization.excerptPaths, PLAN_IMPLEMENT_MAX_FILES, true);
+  if (new Set(excerptPaths).size !== excerptPaths.length) throw new Error("contextMaterialization.excerptPaths must be unique");
+  const allowed = new Set(contract.scope.allowedPaths);
+  const readOnly = new Set(contract.scope.contextPaths);
+  for (const path of excerptPaths) {
+    if (allowed.has(path) || !readOnly.has(path)) throw new Error(`excerpt path must be a read-only contextPath: ${path}`);
+  }
+  if (materialization.representation === "full") {
+    if (excerptPaths.length !== 0 || materialization.approvedPlanContextDigest !== null) {
+      throw new Error("full context materialization cannot carry excerpt paths or a PLAN context digest");
+    }
+  } else if (materialization.representation === "plan-excerpt") {
+    if (excerptPaths.length === 0) throw new Error("plan-excerpt materialization requires at least one excerpt path");
+    assertDigest("contextMaterialization.approvedPlanContextDigest", materialization.approvedPlanContextDigest);
+  } else {
+    throw new Error("unsupported context materialization representation");
+  }
+  return {
+    representation: materialization.representation,
+    excerptPaths: [...excerptPaths],
+    approvedPlanContextDigest: materialization.approvedPlanContextDigest,
+  };
+}
+
 export function createPlanImplementHandoffManifest(input: {
   readonly authorization: PlanAuthorizeArtifact;
   readonly sourceArtifact: PlanAuthorizeArtifactMetadata;
   readonly contract: ImplementContract;
   readonly contextDigest: string;
+  readonly contextMaterialization?: PlanImplementContextMaterialization;
 }): PlanImplementHandoffManifest {
   const authorization = verifyPlanAuthorizeArtifact(input.authorization);
   assertDigest("source PLAN_AUTHORIZE artifact digest", input.sourceArtifact.digest);
@@ -313,6 +367,7 @@ export function createPlanImplementHandoffManifest(input: {
   if (input.contract.repository !== authorization.repository || input.contract.baseSha !== authorization.targetSha) {
     throw new Error("IMPLEMENT contract is not bound to approved PLAN identity");
   }
+  const contextMaterialization = validateContextMaterialization(input.contextMaterialization, input.contract);
 
   const payload: PlanImplementHandoffPayload = {
     schemaVersion: 1,
@@ -333,7 +388,37 @@ export function createPlanImplementHandoffManifest(input: {
     approvalCommentId: authorization.approval.commentId,
     contractDigest: input.contract.contractDigest,
     contextDigest: input.contextDigest,
+    contextMaterialization,
   };
   const handoffDigest = createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
   return { ...payload, digestAlgorithm: "sha256", handoffDigest };
+}
+
+/**
+ * 승인된 PLAN artifact의 PLAN-context.json을 PLAN.json의 context digest와 승인 identity에 묶어 검증한다.
+ * 이것이 사람이 승인한 PLAN이 실제로 본 evidence이며, IMPLEMENT Context가 예산을 넘을 때
+ * read-only contextPath를 발췌로 materialize하는 유일한 근거다 (self-improvement-mvp #244 Handoff run 35976744079).
+ */
+export function verifyApprovedPlanContext(planJson: unknown, planContext: unknown, authorization: PlanAuthorizeArtifact): PlanContextPack {
+  const trusted = verifyPlanAuthorizeArtifact(authorization);
+  const context = planContext as PlanContextPack;
+  verifyPlanContextPack(context);
+  if (!record(planJson) || !record(planJson.context) || context.contextDigest !== planJson.context.digest) {
+    throw new Error("approved PLAN context digest does not match PLAN.json");
+  }
+  if (context.repository !== trusted.repository || context.sha !== trusted.targetSha) {
+    throw new Error("approved PLAN context is not bound to approved PLAN identity");
+  }
+  return context;
+}
+
+/** 승인된 PLAN Context의 evidence를 IMPLEMENT Context Pack 발췌 입력으로 투영한다 (내용은 그대로, 필드만 좁힌다). */
+export function approvedPlanEvidenceFrom(context: PlanContextPack): ApprovedPlanEvidence[] {
+  verifyPlanContextPack(context);
+  return context.files.map((file) => ({
+    path: file.path,
+    startOffset: file.startOffset,
+    content: file.content,
+    contentDigest: file.contentDigest,
+  }));
 }

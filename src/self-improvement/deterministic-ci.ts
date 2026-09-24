@@ -114,6 +114,8 @@ function verifyLiveFile(root: string, file: ContextFile): string {
     if (existsSync(absolute)) throw new Error(`expected missing path now exists: ${file.path}`);
     return absolute;
   }
+  // 발췌는 read-only contextPath에만 존재한다. 후보 변경 경로가 되면 exact base가 없으므로 fail-closed.
+  if (file.state === "excerpt") throw new Error(`read-only excerpt context cannot be a candidate path: ${file.path}`);
 
   if (!existsSync(absolute)) throw new Error(`expected present path is missing: ${file.path}`);
   const stat = lstatSync(absolute);

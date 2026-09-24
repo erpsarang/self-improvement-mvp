@@ -61,7 +61,7 @@ test('does not publish additional IMPLEMENT or VERIFY summaries', () => {
   }
 });
 
-test('STOPPED is published only by the PLAN_AUTHORIZE fail-closed path, with a reason and next action', () => {
+test('STOPPED is published only by the PLAN_AUTHORIZE and Handoff fail-closed paths, with a reason and next action', () => {
   assert.doesNotMatch(`${plan}\n${orchestrator}`, /HumanStatus: STOPPED/);
   const failureGate = position(authorize, "if: failure() && steps.authorize.outputs.rejected == 'true'");
   const reason = position(authorize, '거부 사유: ${process.env.REJECTION_REASON}');
@@ -69,6 +69,15 @@ test('STOPPED is published only by the PLAN_AUTHORIZE fail-closed path, with a r
   const nextAction = position(authorize, '**다음 행동:** ${process.env.REJECTION_NEXT_ACTION}');
   assert.ok(failureGate < reason && reason < stopped && stopped < nextAction);
   assert.equal(authorize.match(/HumanStatus: STOPPED/g)?.length, 1);
+
+  // Handoff fail-closed (예: Context Pack 예산 초과)도 Issue에 보여야 한다 (self-improvement-mvp #244 run 35976744079).
+  const handoff = read('.github/workflows/plan-implement-handoff.yml');
+  const handoffGate = position(handoff, "steps.prepare.outputs.rejected == 'true' || steps.context.outputs.rejected == 'true'");
+  const handoffReason = position(handoff, '검증 메시지: \\`${process.env.REJECTION_REASON}\\`');
+  const handoffStopped = position(handoff, '### HumanStatus: STOPPED');
+  const handoffNext = position(handoff, '**다음 행동:** 검증 메시지가 Framework 결함이면');
+  assert.ok(handoffGate < handoffReason && handoffReason < handoffStopped && handoffStopped < handoffNext);
+  assert.equal(handoff.match(/HumanStatus: STOPPED/g)?.length, 1);
 });
 
 test('PLAN pointer carries the Decision Packet between provenance fields and HumanStatus, and fails closed without it', () => {
