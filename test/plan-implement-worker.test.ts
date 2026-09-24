@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -261,4 +262,77 @@ test("candidate artifact 이름은 source handoff와 Worker run attempt를 모�
     }),
     "bounded-worker-candidate-issue-83-plan-34730034257-approval-5649914569-handoff-34730300737-attempt-1-worker-34740000000-attempt-3",
   );
+});
+
+// #244 Worker run 35997858096: Handoff가 plan-excerpt 표현으로 pack을 만들었는데 Worker가 full로 재계산해 manifest mismatch로 멈췄다.
+// Worker는 Context 표현을 pack에서 다시 도출해 같은 manifest를 얻어야 한다.
+function excerptFixture() {
+  const approved = authorization();
+  const contract = createImplementContract({
+    requirement: approved.requirement,
+    repository: approved.repository,
+    targetSha: approved.targetSha,
+    plan: approved.plan,
+    approval: approved.approval,
+  }, {
+    allowedPaths: ["README.md"],
+    contextPaths: ["docs/reference.md"],
+    requiredChanges: ["README 첫 제목 아래에 상태 설명 한 줄을 추가한다"],
+    forbiddenChanges: ["README.md 외 파일 변경 금지"],
+    validationCommands: ["npm test"],
+    maxFilesChanged: 1,
+    maxContextBytes: 2_048,
+    maxPatchBytes: 50_000,
+  });
+
+  const root = mkdtempSync(join(tmpdir(), "plan-worker-excerpt-"));
+  mkdirSync(join(root, "docs"));
+  writeFileSync(join(root, "README.md"), "# Framework\n\n기존 설명\n");
+  const reference = `# 참고 (한글 포함)\n${"x".repeat(3000)}\n## 핵심 절\n핵심 문장.\n${"y".repeat(3000)}\n`;
+  writeFileSync(join(root, "docs", "reference.md"), reference);
+  const start = reference.indexOf("## 핵심 절");
+  const excerpt = reference.slice(start, start + "## 핵심 절\n핵심 문장.".length);
+  const evidence = [{ path: "docs/reference.md", startOffset: start, content: excerpt, contentDigest: createHash("sha256").update(excerpt, "utf8").digest("hex") }];
+  const context = createImplementContextPack(contract, root, targetSha, { approvedPlanEvidence: evidence });
+  rmSync(root, { recursive: true, force: true });
+  assert.equal(context.files.find((file) => file.path === "docs/reference.md")?.state, "excerpt");
+
+  const sourcePlanAuthorizeArtifact = { name: planAuthorizeArtifactName(approved), id: 10309133636, digest: "e".repeat(64) };
+  const approvedPlanContextDigest = "7".repeat(64);
+  const handoff = createPlanImplementHandoffManifest({
+    authorization: approved,
+    sourceArtifact: sourcePlanAuthorizeArtifact,
+    contract,
+    contextDigest: context.contextDigest,
+    contextMaterialization: { representation: "plan-excerpt", excerptPaths: ["docs/reference.md"], approvedPlanContextDigest },
+  });
+  const source = { authorization: approved, sourceArtifact: sourcePlanAuthorizeArtifact };
+  const prompt = createSinglePassPrompt(contract, context);
+  return { contract, context, handoff, source, prompt, approvedPlanContextDigest };
+}
+
+test("plan-excerpt Context를 가진 handoff bundle은 Worker가 표현을 pack에서 재도출해 exact 검증한다", () => {
+  const { contract, context, handoff, source, prompt, approvedPlanContextDigest } = excerptFixture();
+  const bundle = verifyPlanImplementWorkerBundle({ contract, context, handoff, source, prompt, schema: WORKER_OUTPUT_SCHEMA });
+  assert.equal(bundle.handoff.handoffDigest, handoff.handoffDigest);
+  assert.deepEqual(bundle.handoff.contextMaterialization, {
+    representation: "plan-excerpt",
+    excerptPaths: ["docs/reference.md"],
+    approvedPlanContextDigest,
+  });
+});
+
+test("Context 표현과 어긋나는 handoff manifest는 Worker 실행 전에 fail-closed 한다", () => {
+  const { contract, context, handoff, source, prompt } = excerptFixture();
+  const run = (manifest: unknown) => verifyPlanImplementWorkerBundle({ contract, context, handoff: manifest, source, prompt, schema: WORKER_OUTPUT_SCHEMA });
+
+  // pack에는 발췌가 있는데 manifest가 full이라고 주장.
+  const full = createPlanImplementHandoffManifest({ authorization: source.authorization, sourceArtifact: source.sourceArtifact, contract, contextDigest: context.contextDigest });
+  assert.throws(() => run(full), /handoff manifest mismatch/);
+  // 근거 PLAN Context digest가 빠짐.
+  assert.throws(() => run({ ...handoff, contextMaterialization: { ...handoff.contextMaterialization, approvedPlanContextDigest: null } }), /handoff manifest mismatch/);
+  // 발췌 경로 목록 위조 (digest는 그대로).
+  assert.throws(() => run({ ...handoff, contextMaterialization: { ...handoff.contextMaterialization, excerptPaths: [] } }), /handoff manifest mismatch/);
+  // 표현만 바꿈.
+  assert.throws(() => run({ ...handoff, contextMaterialization: { ...handoff.contextMaterialization, representation: "full" } }), /handoff manifest mismatch/);
 });
