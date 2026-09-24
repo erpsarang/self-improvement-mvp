@@ -177,6 +177,29 @@ jobs:
             exit 1
           fi
 
+      - name: 승인된 PLAN artifact 다운로드
+        if: steps.review_source.outputs.authority_kind == 'PLAN_AUTHORIZE'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.review_source.outputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/review-plan-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.review_source.outputs.plan_run_id }}
+
+      - name: 승인된 PLAN artifact 구조 확인
+        if: steps.review_source.outputs.authority_kind == 'PLAN_AUTHORIZE'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # PLAN artifact는 PLAN.json / PLAN.md / PLAN-context.json / identity.json을 담는다. REVIEW는 PLAN.json 하나만 쓴다.
+          mapfile -t plan_files < <(find "${RUNNER_TEMP}/review-plan-source" -type f -name PLAN.json -print)
+          if [ "${#plan_files[@]}" -ne 1 ]; then
+            echo "approved PLAN artifact must contain exactly one PLAN.json" >&2
+            exit 1
+          fi
+          cp "${plan_files[0]}" "${RUNNER_TEMP}/review/plan.json"
+
       - name: 승인 요구사항 재검증 및 REVIEW input 생성
         id: prepare_review
         run: npm exec -- tsx src/self-improvement/review-handler.ts prepare
@@ -187,6 +210,7 @@ jobs:
           AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.authorization_artifact_name }}
           PLAN_AUTHORIZE_JSON: ${{ runner.temp }}/review/plan-authorize.json
           PLAN_AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.plan_authorize_artifact_name }}
+          PLAN_JSON: ${{ runner.temp }}/review/plan.json
           REVIEW_REPOSITORY: ${{ github.repository }}
           REVIEW_RUNTIME_DIR: ${{ runner.temp }}/review/input
           REVIEW_RUN_ID: ${{ github.run_id }}
@@ -523,6 +547,29 @@ jobs:
             exit 1
           fi
 
+      - name: 승인된 PLAN artifact 다운로드
+        if: steps.review_source.outputs.authority_kind == 'PLAN_AUTHORIZE'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.review_source.outputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/review-plan-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.review_source.outputs.plan_run_id }}
+
+      - name: 승인된 PLAN artifact 구조 확인
+        if: steps.review_source.outputs.authority_kind == 'PLAN_AUTHORIZE'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # PLAN artifact는 PLAN.json / PLAN.md / PLAN-context.json / identity.json을 담는다. REVIEW는 PLAN.json 하나만 쓴다.
+          mapfile -t plan_files < <(find "${RUNNER_TEMP}/review-plan-source" -type f -name PLAN.json -print)
+          if [ "${#plan_files[@]}" -ne 1 ]; then
+            echo "approved PLAN artifact must contain exactly one PLAN.json" >&2
+            exit 1
+          fi
+          cp "${plan_files[0]}" "${RUNNER_TEMP}/review/plan.json"
+
       - name: current 또는 이전 Reviewer output artifact 선택
         id: reviewer_artifact
         uses: actions/github-script@v7
@@ -603,6 +650,7 @@ jobs:
           AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.authorization_artifact_name }}
           PLAN_AUTHORIZE_JSON: ${{ runner.temp }}/review/plan-authorize.json
           PLAN_AUTHORIZE_ARTIFACT_NAME: ${{ steps.review_source.outputs.plan_authorize_artifact_name }}
+          PLAN_JSON: ${{ runner.temp }}/review/plan.json
           REVIEW_REPOSITORY: ${{ github.repository }}
           REVIEWER_OUTPUT_JSON: ${{ runner.temp }}/review/reviewer.json
           REVIEWER_OUTPUT_ARTIFACT_NAME: ${{ steps.reviewer_artifact.outputs.name }}
