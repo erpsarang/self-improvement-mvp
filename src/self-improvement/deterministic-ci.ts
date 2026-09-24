@@ -71,6 +71,8 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const FORBIDDEN_COMMAND_CHARS = /[\n\r;&|<>`$'"\\]/;
 const MAX_LOG_BYTES = 32 * 1024;
 const LOG_TRUNCATION_MARKER = "\n...[truncated middle]...\n";
+const FAILURE_BLOCKS_MARKER = "\n...[truncated middle; failing test blocks from the omitted range follow]...\n";
+const TAP_NOT_OK = /^( *)not ok \d+\b/;
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
@@ -176,25 +178,83 @@ export function applyCandidateToExactBase(
   return prepared.map(({ change }) => change.path).sort((a, b) => a.localeCompare(b));
 }
 
+function utf8HeadEnd(bytes: Buffer, end: number): number {
+  let index = Math.max(0, Math.min(end, bytes.byteLength));
+  while (index > 0 && index < bytes.byteLength && (bytes[index]! & 0xc0) === 0x80) index -= 1;
+  return index;
+}
+
+function utf8TailStart(bytes: Buffer, start: number): number {
+  let index = Math.max(0, Math.min(start, bytes.byteLength));
+  while (index < bytes.byteLength && (bytes[index]! & 0xc0) === 0x80) index += 1;
+  return index;
+}
+
+function headTail(bytes: Buffer, availableBytes: number): { headEnd: number; tailStart: number } {
+  const headBudget = Math.floor(availableBytes / 4);
+  const tailBudget = availableBytes - headBudget;
+  return {
+    headEnd: utf8HeadEnd(bytes, headBudget),
+    tailStart: utf8TailStart(bytes, bytes.byteLength - tailBudget),
+  };
+}
+
+/**
+ * TAP `not ok` 줄과 그 YAML 진단 블록(`---` … `...`)을 byte 범위로 찾는다.
+ * node --test는 실패 상세를 실행 순서대로 중간에 찍고 마지막 요약(`# fail N`)에는 실패 이름을 다시 찍지 않는다.
+ */
+function tapFailureBlocks(value: string): Array<{ start: number; end: number; text: string }> {
+  const lines = value.split("\n");
+  const blocks: Array<{ start: number; end: number; text: string }> = [];
+  let offset = 0;
+  const lineStarts = lines.map((line) => {
+    const start = offset;
+    offset += Buffer.byteLength(line, "utf8") + 1;
+    return start;
+  });
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = TAP_NOT_OK.exec(lines[index]!);
+    if (!match) continue;
+    const yamlIndent = `${match[1]}  `;
+    let last = index;
+    if (lines[index + 1] === `${yamlIndent}---`) {
+      for (let cursor = index + 2; cursor < lines.length; cursor += 1) {
+        last = cursor;
+        if (lines[cursor] === `${yamlIndent}...`) break;
+      }
+    }
+    const text = lines.slice(index, last + 1).join("\n");
+    blocks.push({ start: lineStarts[index]!, end: lineStarts[index]! + Buffer.byteLength(text, "utf8"), text });
+    index = last;
+  }
+  return blocks;
+}
+
 function truncateLog(value: string): string {
   const bytes = Buffer.from(value, "utf8");
   if (bytes.byteLength <= MAX_LOG_BYTES) return value;
 
   const markerBytes = Buffer.byteLength(LOG_TRUNCATION_MARKER, "utf8");
-  const availableBytes = MAX_LOG_BYTES - markerBytes;
-  const headBudget = Math.floor(availableBytes / 4);
-  const tailBudget = availableBytes - headBudget;
+  const plain = headTail(bytes, MAX_LOG_BYTES - markerBytes);
 
-  let headEnd = headBudget;
-  let tailStart = bytes.byteLength - tailBudget;
+  // 버려질 가운데 구간에 걸친 실패 블록만 따로 보존한다. 없으면 기존 head/tail 표현과 byte 단위로 같다.
+  // #244 Worker run 36008671173: 실패 테스트 1개가 가운데에서 잘려 repair Worker 두 번이 원인을 보지 못했다.
+  const omittedFailures = tapFailureBlocks(value).filter((block) => block.end > plain.headEnd && block.start < plain.tailStart);
+  if (omittedFailures.length === 0) {
+    return bytes.subarray(0, plain.headEnd).toString("utf8") + LOG_TRUNCATION_MARKER + bytes.subarray(plain.tailStart).toString("utf8");
+  }
 
-  while (headEnd > 0 && (bytes[headEnd]! & 0xc0) === 0x80) headEnd -= 1;
-  while (tailStart < bytes.byteLength && (bytes[tailStart]! & 0xc0) === 0x80) tailStart += 1;
+  const availableBytes = MAX_LOG_BYTES - markerBytes - Buffer.byteLength(FAILURE_BLOCKS_MARKER, "utf8");
+  const failureBytes = Buffer.from(omittedFailures.map((block) => block.text).join("\n"), "utf8");
+  const failureEnd = utf8HeadEnd(failureBytes, Math.floor(availableBytes / 2));
+  const kept = headTail(bytes, availableBytes - failureEnd);
 
   return (
-    bytes.subarray(0, headEnd).toString("utf8")
+    bytes.subarray(0, kept.headEnd).toString("utf8")
+    + FAILURE_BLOCKS_MARKER
+    + failureBytes.subarray(0, failureEnd).toString("utf8")
     + LOG_TRUNCATION_MARKER
-    + bytes.subarray(tailStart).toString("utf8")
+    + bytes.subarray(kept.tailStart).toString("utf8")
   );
 }
 

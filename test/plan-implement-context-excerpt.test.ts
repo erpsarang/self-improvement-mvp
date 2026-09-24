@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createImplementContextPack, verifyImplementContextPack } from "../src/self-improvement/context-pack.js";
 import { createImplementContract, type ApprovedPlanIdentity } from "../src/self-improvement/implement-contract.js";
@@ -29,8 +29,20 @@ const identity: ApprovedPlanIdentity = {
   approval: { commentId: 5810805042, approverUserId: 8370921 },
 };
 
+// 실제 repo를 target으로 쓰므로 "새 파일" allowedPaths는 repo에 절대 생기지 않는 fixture 전용 경로여야 한다.
+// #244의 실제 경로(src/ai-execution-policy.ts 등)를 쓰면 #244 candidate가 그 파일을 만드는 순간 이 테스트가
+// 'present'로 실패하고, 그 테스트는 allowedPaths 밖이라 Worker가 고칠 수 없다 (#244 Worker run 36008671173).
+const NEW_FILE_FIXTURE_PATHS = [
+  "src/__fixture-never-created__/plan-excerpt-policy.ts",
+  "test/__fixture-never-created__/plan-excerpt-policy.test.ts",
+  "docs/__fixture-never-created__/plan-excerpt-policy.md",
+] as const;
+
 test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인된 PLAN evidence 발췌로 80KB 안에 들어간다", () => {
   const target = process.cwd();
+  for (const path of NEW_FILE_FIXTURE_PATHS) {
+    assert.equal(existsSync(join(target, path)), false, `${path} must stay a fixture-only path that never exists in the repository`);
+  }
   const callSites = aiCallSiteCandidates(REQUIREMENT, target).filter((file) => !/-smoke\.yml$/.test(file.path));
   assert.ok(callSites.length >= 7, `expected the lifecycle call sites, got ${callSites.map((file) => file.path).join(", ")}`);
   const packageJson = readFileSync(join(target, "package.json"), "utf8");
@@ -41,9 +53,9 @@ test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인�
   const contextPaths = evidence.map((file) => file.path).slice(0, 8);
 
   const contract = createImplementContract(identity, {
-    allowedPaths: ["src/ai-execution-policy.ts", "test/ai-execution-policy.test.ts", "docs/ai-execution-policy.md"],
+    allowedPaths: [...NEW_FILE_FIXTURE_PATHS],
     contextPaths,
-    requiredChanges: ["src/ai-execution-policy.ts에 단계별 실행 정책 검증과 비교를 구현한다"],
+    requiredChanges: [`${NEW_FILE_FIXTURE_PATHS[0]}에 단계별 실행 정책 검증과 비교를 구현한다`],
     forbiddenChanges: ["기존 workflow 및 실제 AI 실행 경로 변경"],
     validationCommands: ["npm test"],
     maxFilesChanged: 3,

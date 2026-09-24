@@ -293,3 +293,70 @@ test("bounded log representation과 evidence digest는 deterministic하게 결�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+const FAILURE_BLOCKS_MARKER = "\n...[truncated middle; failing test blocks from the omitted range follow]...\n";
+
+function tapOk(index: number): string {
+  return `# Subtest: passing test ${index}\nok ${index} - passing test ${index}\n  ---\n  duration_ms: 0.1\n  type: 'test'\n  ...\n`;
+}
+
+test("가운데에서 잘릴 TAP 실패 블록은 32KiB 안에 따로 보존된다 (#244 Worker run 36008671173)", () => {
+  const failure = [
+    "not ok 275 - #244 모양: 새 파일 3개 + lifecycle workflow contextPaths",
+    "  ---",
+    "  duration_ms: 29.177411",
+    "  failureType: 'testCodeFailure'",
+    "  error: |-",
+    "    docs/ai-execution-policy.md is a new file",
+    "    + 'present'",
+    "    - 'missing'",
+    "  code: 'ERR_ASSERTION'",
+    "  ...",
+  ].join("\n");
+  const nested = [
+    "    not ok 2 - nested subtest",
+    "      ---",
+    "      error: 'nested failure detail'",
+    "      ...",
+  ].join("\n");
+  const head = "> npm test\nTAP version 13\n";
+  const before = Array.from({ length: 150 }, (_, index) => tapOk(index + 1)).join("");
+  const after = Array.from({ length: 150 }, (_, index) => tapOk(index + 400)).join("");
+  const summary = "1..556\n# tests 556\n# pass 554\n# fail 2\n";
+  const input = `${head}${before}${failure}\n${before}${nested}\n${after}${summary}`;
+  assert.ok(Buffer.byteLength(input, "utf8") > BOOTSTRAP_LOG_LIMIT);
+
+  // 이전 head/tail 표현이었다면 실패 상세가 빠졌다: 재현 조건 고정.
+  const oldRepresentation =
+    Buffer.from(input, "utf8").subarray(0, BOOTSTRAP_HEAD_BYTES).toString("utf8") +
+    BOOTSTRAP_LOG_MARKER +
+    Buffer.from(input, "utf8").subarray(Buffer.byteLength(input, "utf8") - BOOTSTRAP_TAIL_BYTES).toString("utf8");
+  assert.ok(!oldRepresentation.includes("is a new file"));
+
+  const result = validateBoundedLogs(input, input);
+  for (const stream of [result.commands[0]?.stdout, result.commands[0]?.stderr]) {
+    assert.ok(stream);
+    assert.ok(Buffer.byteLength(stream, "utf8") <= BOOTSTRAP_LOG_LIMIT);
+    assert.ok(stream.startsWith(head));
+    assert.ok(stream.endsWith(summary));
+    assert.ok(stream.includes(FAILURE_BLOCKS_MARKER));
+    assert.ok(stream.includes(BOOTSTRAP_LOG_MARKER));
+    assert.ok(stream.includes(failure), "the whole failing block with its YAML diagnostics is kept");
+    assert.ok(stream.includes(nested), "indented nested failures are kept too");
+    assert.equal(stream.includes("�"), false);
+  }
+  assert.deepEqual(validateBoundedLogs(input, input).commands, result.commands, "deterministic");
+});
+
+test("보존할 실패 블록이 예산의 절반을 넘으면 잘라서 32KiB와 UTF-8 경계를 지킨다", () => {
+  const detail = Array.from({ length: 3000 }, (_, index) => `    detail 한글 ${index}`).join("\n");
+  const failure = `not ok 7 - huge failure\n  ---\n  error: |-\n${detail}\n  ...`;
+  const input = `HEAD\n${"m".repeat(20 * 1024)}\n${failure}\n${"z".repeat(20 * 1024)}\n# fail 1\n`;
+  const result = validateBoundedLogs(input, input);
+  const stream = result.commands[0]?.stdout ?? "";
+  assert.ok(Buffer.byteLength(stream, "utf8") <= BOOTSTRAP_LOG_LIMIT);
+  assert.ok(stream.startsWith("HEAD\n"));
+  assert.ok(stream.endsWith("# fail 1\n"));
+  assert.ok(stream.includes(`${FAILURE_BLOCKS_MARKER}not ok 7 - huge failure\n`));
+  assert.equal(stream.includes("�"), false);
+});
