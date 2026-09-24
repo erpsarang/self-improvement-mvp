@@ -14,6 +14,7 @@ import {
 import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations } from "./plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
 import { augmentPlanContextWithExplicitPaths } from "./plan-explicit-path-context.js";
+import { augmentPlanContextWithAiCallSites } from "./plan-ai-call-site-context.js";
 import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
 import { renderPlanDecisionPacket, writeGithubOutput, type PlanDecisionInput } from "./plan-decision-packet.js";
 
@@ -41,7 +42,9 @@ if (command === "prepare") {
   const humanContext = needsHumanOutputPlanContext(requirement)
     ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, businessContext)
     : businessContext;
-  const context = augmentPlanContextWithExplicitPaths(requirement, target, humanContext);
+  // Framework 자체 요구가 AI 실행 정책을 다루면 AI 호출 step 창을 결정적으로 넣는다 (canonical Framework tree에서만 발동).
+  const aiCallSiteContext = augmentPlanContextWithAiCallSites(requirement, target, humanContext);
+  const context = augmentPlanContextWithExplicitPaths(requirement, target, aiCallSiteContext);
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,

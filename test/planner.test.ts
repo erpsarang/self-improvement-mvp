@@ -346,6 +346,11 @@ test("PLAN prompt는 allowedPaths가 repository-relative path이며 filesystem �
     assert.match(prompt, /추가·수정·생성할 파일을 언급하면 repository-relative exact path를 쓰고 반드시 allowedPaths에 포함/);
     assert.match(prompt, /package-lock\.json companion을 추가할 수 있도록 8개 bounded slot 중 최소 1개를 비워두세요/);
     assert.match(prompt, /필요한 변경 파일이 8개 안에 들어오지 않으면 범위를 줄이세요/);
+    // 외부 사실은 추측하지 않고, 외부 사실 없이 구현·검증 가능한 첫 bounded slice만 ready=true로 제안한다 (#244).
+    assert.match(prompt, /Context Pack에 없는 외부 사실\(모델 식별자, 가격, 사용량 필드, 외부 서비스 동작 등\)은 추측하거나 가정하지 마세요/);
+    assert.match(prompt, /외부 사실 없이 독립적으로 구현·검증 가능한 첫 bounded slice가 있으면 그 slice만 implementationScope\(ready=true\)로 제안하세요/);
+    assert.match(prompt, /slice 밖의 나머지 요구는 questions가 아니라 approach에 '후속 범위'로 명시하고/);
+    assert.match(prompt, /그런 slice가 전혀 없을 때만 implementationScope\.ready=false로 반환하세요/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

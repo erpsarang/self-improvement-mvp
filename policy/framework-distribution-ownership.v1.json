@@ -43,6 +43,7 @@
     { "sourcePath": "src/self-improvement/learn-source.ts", "targetPath": "src/self-improvement/learn-source.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/orchestrator-handler.ts", "targetPath": "src/self-improvement/orchestrator-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/orchestrator.ts", "targetPath": "src/self-improvement/orchestrator.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/plan-ai-call-site-context.ts", "targetPath": "src/self-improvement/plan-ai-call-site-context.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-authorization.ts", "targetPath": "src/self-improvement/plan-authorization.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-authorize-handler.ts", "targetPath": "src/self-improvement/plan-authorize-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-bridge-patch.ts", "targetPath": "src/self-improvement/plan-bridge-patch.ts", "classification": "required" },

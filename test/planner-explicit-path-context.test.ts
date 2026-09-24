@@ -74,5 +74,7 @@ test("PLAN Context explicit path augmentation은 byte budget을 넘지 않고 �
 
 test("planner prepare pipeline은 explicit path augmentation을 최종 Context 우선순위 단계로 적용한다", () => {
   const handler = readFileSync(join(process.cwd(), "src/self-improvement/planner-handler.ts"), "utf8");
-  assert.match(handler, /const context = augmentPlanContextWithExplicitPaths\(requirement, target, humanContext\);/);
+  // AI call-site 보강은 explicit path 보강 앞에서 끝나고, explicit path가 최종 우선순위를 가진다.
+  assert.match(handler, /const aiCallSiteContext = augmentPlanContextWithAiCallSites\(requirement, target, humanContext\);/);
+  assert.match(handler, /const context = augmentPlanContextWithExplicitPaths\(requirement, target, aiCallSiteContext\);/);
 });
