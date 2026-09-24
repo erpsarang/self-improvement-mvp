@@ -101,18 +101,28 @@ jobs:
               throw new Error('Trusted LEARN Source must execute at the exact current default branch SHA');
             }
 
-            const { data: frameworkFile } = await github.rest.repos.getContent({
-              ...context.repo,
-              path: 'FRAMEWORK.md',
-              ref: context.sha,
-            });
-            if (Array.isArray(frameworkFile) || frameworkFile.type !== 'file' || !frameworkFile.content) {
-              throw new Error('FRAMEWORK.md file is required');
+            // canonical Framework repo 자신은 FRAMEWORK.md(배포본 표식)를 갖지 않는다. 그 source는 지금 실행 중인
+            // exact default branch SHA다. 판별은 파일 부재가 아니라 저장소 identity로 한다: FRAMEWORK.md가 없는
+            // App 배포본은 계속 fail-closed 한다 (#244 Human Merge PR #253 → LEARN Source run 36018384350).
+            const CANONICAL_FRAMEWORK_REPOSITORY = 'erpsarang/self-improvement-mvp';
+            let frameworkSourceSha;
+            if (`${context.repo.owner}/${context.repo.repo}` === CANONICAL_FRAMEWORK_REPOSITORY) {
+              frameworkSourceSha = context.sha;
+            } else {
+              const { data: frameworkFile } = await github.rest.repos.getContent({
+                ...context.repo,
+                path: 'FRAMEWORK.md',
+                ref: context.sha,
+              });
+              if (Array.isArray(frameworkFile) || frameworkFile.type !== 'file' || !frameworkFile.content) {
+                throw new Error('FRAMEWORK.md file is required');
+              }
+              const frameworkText = Buffer.from(frameworkFile.content, 'base64').toString('utf8');
+              const frameworkMatch = frameworkText.match(/^- Framework source SHA: `([0-9a-f]{40,64})`$/m);
+              if (!frameworkMatch) throw new Error('FRAMEWORK.md must contain one canonical Framework source SHA');
+              frameworkSourceSha = frameworkMatch[1];
             }
-            const frameworkText = Buffer.from(frameworkFile.content, 'base64').toString('utf8');
-            const frameworkMatch = frameworkText.match(/^- Framework source SHA: `([0-9a-f]{40,64})`$/m);
-            if (!frameworkMatch) throw new Error('FRAMEWORK.md must contain one canonical Framework source SHA');
-            const frameworkSourceSha = frameworkMatch[1];
+            if (!/^[0-9a-f]{40,64}$/.test(frameworkSourceSha || '')) throw new Error('Framework source SHA is invalid');
 
             const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: issueNumber });
             if (issue.pull_request || !issue.body?.trim()) throw new Error('exact requirement Issue with body is required');
