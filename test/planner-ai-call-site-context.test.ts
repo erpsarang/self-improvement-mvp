@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,13 @@ import {
   isCanonicalFrameworkTarget,
 } from "../src/self-improvement/plan-ai-call-site-context.js";
 import { needsAiExecutionPlanContext } from "../src/self-improvement/plan-context-policy.js";
-import { PLAN_CONTEXT_MAX_FILES, selectPlanContext, verifyPlanContextPack } from "../src/self-improvement/planner.js";
+import {
+  PLAN_CONTEXT_MAX_FILES,
+  selectPlanContext,
+  verifyPlanContextPack,
+  type PlanContextFile,
+  type PlanContextPack,
+} from "../src/self-improvement/planner.js";
 
 // self-improvement-mvp #244: Framework 자체 요구. 기본 선택은 AI 호출 지점 8곳 중 1곳만 문맥에 넣었다.
 const FRAMEWORK_AI_COST_REQUIREMENT = [
@@ -64,7 +71,10 @@ function makeTarget(packageName: string): Fixture {
   mkdirSync(join(target, ".github", "workflows"), { recursive: true });
   mkdirSync(join(target, "src", "self-improvement"), { recursive: true });
   mkdirSync(join(target, "test"), { recursive: true });
-  writeFileSync(join(target, "package.json"), JSON.stringify({ name: packageName, private: true, type: "module" }, null, 2));
+  writeFileSync(
+    join(target, "package.json"),
+    JSON.stringify({ name: packageName, private: true, type: "module", scripts: { build: "tsc --noEmit", test: "npm run build && node --test --import tsx test/*.test.ts" } }, null, 2),
+  );
   writeFileSync(join(target, "tsconfig.json"), "{}\n");
   writeFileSync(join(target, ".github", "workflows", "plan.yml"), workflow("Read-only AI PLAN", [callStep("Untrusted read-only AI Planner", "medium")]));
   writeFileSync(join(target, ".github", "workflows", "semantic-review.yml"), workflow("Semantic REVIEW", [callStep("Untrusted read-only Semantic Reviewer", "medium")]));
@@ -78,6 +88,38 @@ function makeTarget(packageName: string): Fixture {
   writeFileSync(join(target, "src", "self-improvement", "planner.ts"), "export const PLAN = 'PLAN';\n");
   writeFileSync(join(target, "test", "learn-handler.test.ts"), "import { model } from '../src/self-improvement/learn-handler.js';\nvoid model;\n");
   return { root, target };
+}
+
+/** 기존 pack의 파일 목록을 바꿔 trusted Context Pack을 다시 묶는다 (evidenceId E1..En, digest 재계산). */
+function repack(context: PlanContextPack, files: readonly PlanContextFile[]): PlanContextPack {
+  const rebound = files.map((file, index) => ({ ...file, evidenceId: `E${index + 1}` }));
+  const payload = {
+    schemaVersion: 1 as const,
+    kind: "trusted-plan-context-pack" as const,
+    repository: context.repository,
+    sha: context.sha,
+    files: rebound,
+    totalBytes: rebound.reduce((sum, file) => sum + file.byteLength, 0),
+  };
+  const pack: PlanContextPack = {
+    ...payload,
+    digestAlgorithm: "sha256",
+    contextDigest: createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex"),
+  };
+  verifyPlanContextPack(pack);
+  return pack;
+}
+
+/** 기본 선택기가 마지막 슬롯에서 남은 예산만큼 잘라 넣은 모양: #244 run 36005345836의 package.json은 offset 231부터 2바이트("ci")였다. */
+function truncatedExcerpt(file: PlanContextFile, text: string, startOffset: number, bytes: number): PlanContextFile {
+  const content = text.slice(startOffset, startOffset + bytes);
+  return {
+    ...file,
+    startOffset,
+    byteLength: Buffer.byteLength(content, "utf8"),
+    contentDigest: createHash("sha256").update(content, "utf8").digest("hex"),
+    content,
+  };
 }
 
 test("needsAiExecutionPlanContext는 AI 주체어와 실행 관심사가 함께 있을 때만 true다", () => {
@@ -150,6 +192,9 @@ test("Framework 자체 AI 실행 요구에서는 AI 호출 step 창이 evidence�
     assert.ok(!paths.includes(".github/workflows/ci.yml"), "workflows without an AI call step are not call sites");
     assert.ok(!paths.includes(".github/workflows/notes.md"));
     assert.ok(paths.includes("package.json"), `project context is retained: ${paths.join(", ")}`);
+    const packageFile = augmented.files.find((file) => file.path === "package.json")!;
+    assert.equal(packageFile.content, readFileSync(join(fixture.target, "package.json"), "utf8"), "package.json is the whole file, not a leftover excerpt");
+    assert.equal(packageFile.startOffset, 0);
     assert.ok(augmented.files.length <= 6);
 
     for (const file of augmented.files.filter((entry) => entry.path.startsWith(".github/workflows/"))) {
@@ -205,6 +250,100 @@ test("호출 지점이 슬롯보다 많아도 기존 선택에 최소 1슬롯을
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
+});
+
+test("기본 pack의 package.json이 남은 예산에 잘린 excerpt여도 보강은 frozen target에서 다시 읽어 전체를 넣는다", () => {
+  // #244 PLAN run 36005345836 / 36005912970: 기본 선택이 80,000바이트를 다 쓴 뒤 package.json이 2바이트로 들어갔고,
+  // 보강이 그 excerpt를 그대로 보존해 Planner가 test/build script를 보지 못했다(validationCommands=[] → fail-closed).
+  const fixture = makeTarget("self-improvement-mvp");
+  try {
+    const base = selectPlanContext(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, "erpsarang/self-improvement-mvp", "e".repeat(40));
+    const packageText = readFileSync(join(fixture.target, "package.json"), "utf8");
+    const tsconfigText = readFileSync(join(fixture.target, "tsconfig.json"), "utf8");
+    const basePackage = base.files.find((file) => file.path === "package.json");
+    assert.ok(basePackage, "fixture base selection must include package.json");
+    const truncated = repack(base, base.files.map((file) => {
+      if (file.path === "package.json") return truncatedExcerpt(file, packageText, packageText.indexOf("private"), 2);
+      if (file.path === "tsconfig.json") return truncatedExcerpt(file, tsconfigText, 0, 1);
+      return file;
+    }));
+    assert.equal(truncated.files.find((file) => file.path === "package.json")!.byteLength, 2);
+
+    const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, truncated);
+    verifyPlanContextPack(augmented);
+    const packageFile = augmented.files.find((file) => file.path === "package.json");
+    assert.ok(packageFile, "package.json stays in the pack");
+    assert.equal(packageFile.content, packageText);
+    assert.equal(packageFile.startOffset, 0);
+    assert.equal(packageFile.byteLength, Buffer.byteLength(packageText, "utf8"));
+    assert.equal(packageFile.contentDigest, createHash("sha256").update(packageText, "utf8").digest("hex"));
+    // Planner가 검증 명령을 판단할 근거가 보인다.
+    assert.equal((JSON.parse(packageFile.content) as { scripts: Record<string, string> }).scripts.test, "npm run build && node --test --import tsx test/*.test.ts");
+    // 기존 선택이 tsconfig.json을 골랐다면 그것도 다시 읽는다.
+    if (truncated.files.some((file) => file.path === "tsconfig.json")) {
+      assert.equal(augmented.files.find((file) => file.path === "tsconfig.json")?.content, tsconfigText);
+    }
+    // bootstrap은 호출 지점 바로 뒤, 나머지 기존 선택보다 앞에 온다.
+    const callSiteCount = augmented.files.filter((file) => /uses: openai\/codex-action/.test(file.content)).length;
+    assert.equal(augmented.files[callSiteCount]!.path, "package.json");
+    assert.deepEqual(augmented.files.map((file) => file.evidenceId), augmented.files.map((_, index) => `E${index + 1}`));
+    assert.equal(augmented.totalBytes, augmented.files.reduce((sum, file) => sum + file.byteLength, 0));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("기본 pack에 package.json이 없어도 canonical Framework target이면 보강이 package.json을 넣는다", () => {
+  const fixture = makeTarget("self-improvement-mvp");
+  try {
+    const base = selectPlanContext(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, "erpsarang/self-improvement-mvp", "f".repeat(40));
+    const without = repack(base, base.files.filter((file) => file.path !== "package.json" && file.path !== "tsconfig.json"));
+    assert.ok(!without.files.some((file) => file.path === "package.json"));
+
+    const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, without);
+    verifyPlanContextPack(augmented);
+    const packageFile = augmented.files.find((file) => file.path === "package.json");
+    assert.ok(packageFile, "package.json is added from the frozen target");
+    assert.equal(packageFile.content, readFileSync(join(fixture.target, "package.json"), "utf8"));
+    // tsconfig.json은 기존 선택이 고르지 않았으면 새로 넣지 않는다 (bootstrap 보강은 package.json에 한정).
+    assert.ok(!augmented.files.some((file) => file.path === "tsconfig.json"));
+    assert.ok(augmented.files.length <= PLAN_CONTEXT_MAX_FILES);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("실제 canonical repo에서 #244 모양의 2바이트 package.json excerpt는 보강 후 test/build script가 보이는 전체 파일이 된다", () => {
+  const target = process.cwd();
+  const packageText = readFileSync(join(target, "package.json"), "utf8");
+  const seed: PlanContextFile = {
+    evidenceId: "E1",
+    path: "src/self-improvement/plan-context-policy.ts",
+    startOffset: 0,
+    byteLength: 0,
+    digestAlgorithm: "sha256",
+    contentDigest: "",
+    content: "",
+  };
+  const policyText = readFileSync(join(target, seed.path), "utf8");
+  const base = repack(
+    { schemaVersion: 1, kind: "trusted-plan-context-pack", repository: "erpsarang/self-improvement-mvp", sha: "834554908df9796373b2ad010092cc61087cdc82", files: [], totalBytes: 0, digestAlgorithm: "sha256", contextDigest: "0".repeat(64) },
+    [
+      truncatedExcerpt(seed, policyText, 0, Math.min(policyText.length, 2_000)),
+      truncatedExcerpt({ ...seed, path: "package.json" }, packageText, 231, 2),
+    ],
+  );
+  assert.equal(base.files[1]!.content, "ci");
+
+  const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, target, base);
+  verifyPlanContextPack(augmented);
+  const packageFile = augmented.files.find((file) => file.path === "package.json");
+  assert.ok(packageFile);
+  assert.equal(packageFile.content, packageText);
+  const scripts = (JSON.parse(packageFile.content) as { scripts: Record<string, string> }).scripts;
+  assert.equal(typeof scripts.test, "string");
+  assert.equal(typeof scripts.build, "string");
+  assert.equal(packageText.slice(packageFile.startOffset, packageFile.startOffset + packageFile.content.length), packageFile.content);
 });
 
 test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 모두 문맥에 넣는다", () => {

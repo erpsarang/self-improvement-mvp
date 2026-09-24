@@ -204,8 +204,51 @@ function rebind(repository: string, sha: string, files: readonly PlanContextFile
   return pack;
 }
 
+/** 검증 명령(npm test / npm run build) 판단에 필요한 project bootstrap context. package.json이 먼저다. */
+const PROJECT_BOOTSTRAP_PATHS: readonly string[] = ["package.json", "tsconfig.json"];
+
 function isProtectedProjectContext(path: string): boolean {
-  return path === "package.json" || path === "tsconfig.json";
+  return PROJECT_BOOTSTRAP_PATHS.includes(path);
+}
+
+function bootstrapExcerpt(text: string, terms: readonly string[], maxBytes: number): { content: string; startOffset: number } {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return { content: text, startOffset: 0 };
+  const lower = text.toLowerCase();
+  const indexes = terms.map((term) => lower.indexOf(term)).filter((index) => index >= 0);
+  const focus = indexes.length > 0 ? Math.min(...indexes) : 0;
+  const estimatedChars = Math.min(text.length, maxBytes);
+  const startOffset = Math.max(0, focus - Math.floor(estimatedChars / 3));
+  return { content: trimUtf8(text.slice(startOffset), maxBytes), startOffset };
+}
+
+/**
+ * bootstrap context를 이전 pack의 excerpt를 복사하지 않고 frozen target에서 다시 읽는다.
+ *
+ * 기본 선택기는 package.json을 마지막 슬롯에 "남은 바이트만큼" 잘라 넣으므로 예산이 꽉 찬 pack에서는
+ * 2바이트 excerpt가 될 수 있다(#244 PLAN run 36005345836, 36005912970: Planner가 test/build script를 보지 못해
+ * validationCommands=[] → trusted 검증 fail-closed). 이 보강은 큰 파일을 밀어내 예산을 되돌려 주므로,
+ * 그 예산으로 bootstrap 파일을 다시 잘라 넣는다. 파일이 작으면(실제 326B) 전체가 들어간다.
+ */
+function projectBootstrapFile(target: string, path: string, terms: readonly string[], maxBytes: number): PlanContextFile | null {
+  const absolute = join(target, path);
+  if (!existsSync(absolute)) return null;
+  const stat = lstatSync(absolute);
+  if (stat.isSymbolicLink()) throw new Error(`AI call-site context refuses symlink: ${path}`);
+  if (!stat.isFile()) return null;
+  const text = decodeText(absolute);
+  if (text === null) return null;
+  const part = bootstrapExcerpt(text, terms, maxBytes);
+  const byteLength = Buffer.byteLength(part.content, "utf8");
+  if (byteLength < 1 || byteLength > PLAN_CONTEXT_MAX_FILE_BYTES) return null;
+  return {
+    evidenceId: "E1",
+    path,
+    startOffset: part.startOffset,
+    byteLength,
+    digestAlgorithm: "sha256",
+    contentDigest: createHash("sha256").update(part.content, "utf8").digest("hex"),
+    content: part.content,
+  };
 }
 
 /** AI 호출 step을 가진 workflow를 요구 관련도 순으로 돌려준다 (동점은 path 순). */
@@ -254,18 +297,30 @@ export function augmentPlanContextWithAiCallSites(
 
   const candidatePaths = new Set(candidates.map((file) => file.path));
   const retained = context.files.filter((file) => !candidatePaths.has(file.path));
+  const retainedPaths = new Set(retained.map((file) => file.path));
   const files: PlanContextFile[] = [...candidates];
   let totalBytes = files.reduce((sum, file) => sum + file.byteLength, 0);
-
-  // 호출 지점 창은 작으므로(기본 3KB) 기존 선택은 예산이 허용하는 만큼 유지한다. package.json/tsconfig.json은 먼저 지킨다.
-  const ordered = [
-    ...retained.filter((file) => isProtectedProjectContext(file.path)),
-    ...retained.filter((file) => !isProtectedProjectContext(file.path)),
-  ];
-  for (const file of ordered) {
-    if (files.length >= maxFiles || totalBytes + file.byteLength > maxBytes) continue;
+  const seen = new Set(candidatePaths);
+  const add = (file: PlanContextFile | null): void => {
+    if (!file || seen.has(file.path) || files.length >= maxFiles || totalBytes + file.byteLength > maxBytes) return;
     files.push(file);
+    seen.add(file.path);
     totalBytes += file.byteLength;
+  };
+
+  // 호출 지점 창은 작으므로(기본 3KB) 기존 선택은 예산이 허용하는 만큼 유지한다. bootstrap context를 먼저 지킨다.
+  // package.json은 canonical Framework target이면 기존 pack에 없었어도 넣고(바이트 예산에 밀려 잘린 경우),
+  // tsconfig.json은 기존 선택이 골랐을 때만 유지한다. 둘 다 이전 excerpt를 복사하지 않고 frozen target에서 다시 읽는다.
+  const terms = requirementTerms(requirement);
+  for (const path of PROJECT_BOOTSTRAP_PATHS) {
+    if (path !== "package.json" && !retainedPaths.has(path)) continue;
+    const remaining = maxBytes - totalBytes;
+    if (remaining < 1) break;
+    add(projectBootstrapFile(target, path, terms, Math.min(PLAN_CONTEXT_MAX_FILE_BYTES, remaining)));
+  }
+  for (const file of retained) {
+    if (isProtectedProjectContext(file.path)) continue;
+    add(file);
   }
 
   return rebind(context.repository, context.sha, files);
