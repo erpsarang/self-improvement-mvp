@@ -93,6 +93,15 @@ jobs:
           persist-credentials: false
           path: control
 
+      - name: Framework runtime layout 준비
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - name: Node 설정
         if: steps.source.outputs.should_run == 'true'
         uses: actions/setup-node@v4
