@@ -228,6 +228,7 @@ jobs:
           prompt-file: ${{ runner.temp }}/learn-request/learn-prompt.md
           output-schema-file: ${{ runner.temp }}/learn-request/learn-output.schema.json
           output-file: ${{ runner.temp }}/learner-output/learner.json
+          model: gpt-6-luna
           effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
