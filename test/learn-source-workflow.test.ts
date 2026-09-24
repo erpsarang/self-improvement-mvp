@@ -51,3 +51,26 @@ test("Completed Cycle과 LEARN Input Pack을 같은 successful source run artifa
   assert.match(workflow, /steps\.upload_completed\.outputs\.artifact-id/);
   assert.match(workflow, /steps\.upload_input\.outputs\.artifact-id/);
 });
+
+test("canonical Framework repo는 실행 중인 exact SHA를 Framework source로 쓰고, App 배포본은 FRAMEWORK.md를 계속 요구한다 (#244 LEARN Source run 36018384350)", () => {
+  const freeze = workflow.slice(workflow.indexOf("- name: exact GitHub cycle facts와 source artifact 선택"), workflow.indexOf("- name: exact orchestration provenance 다운로드"));
+  assert.ok(freeze.length > 0);
+
+  // 판별은 저장소 identity다. 파일 부재(404)를 canonical로 해석하지 않는다.
+  assert.match(freeze, /const CANONICAL_FRAMEWORK_REPOSITORY = 'erpsarang\/self-improvement-mvp';/);
+  assert.match(freeze, /if \(`\$\{context\.repo\.owner\}\/\$\{context\.repo\.repo\}` === CANONICAL_FRAMEWORK_REPOSITORY\) \{\n\s+frameworkSourceSha = context\.sha;\n\s+\} else \{/);
+  assert.doesNotMatch(freeze, /catch\s*\(/, "a missing FRAMEWORK.md must never be swallowed");
+  assert.doesNotMatch(freeze, /status\s*===?\s*404/);
+
+  // App 분기: FRAMEWORK.md를 exact SHA에서 읽고 형식이 틀리면 fail-closed.
+  const appBranch = freeze.slice(freeze.indexOf("} else {"));
+  assert.match(appBranch, /path: 'FRAMEWORK\.md',\n\s+ref: context\.sha,/);
+  assert.match(appBranch, /throw new Error\('FRAMEWORK\.md file is required'\)/);
+  assert.match(appBranch, /throw new Error\('FRAMEWORK\.md must contain one canonical Framework source SHA'\)/);
+
+  // 두 분기 모두 같은 SHA 형식 검사를 거쳐 facts에 기록된다.
+  assert.match(freeze, /if \(!\/\^\[0-9a-f\]\{40,64\}\$\/\.test\(frameworkSourceSha \|\| ''\)\) throw new Error\('Framework source SHA is invalid'\);/);
+  assert.ok(freeze.indexOf("Framework source SHA is invalid") < freeze.indexOf("frameworkSourceSha,\n"));
+  // canonical source SHA는 default branch exact SHA 고정 검사 뒤에서만 결정된다.
+  assert.ok(freeze.indexOf("context.sha !== currentDefault.commit.sha") < freeze.indexOf("frameworkSourceSha = context.sha"));
+});
