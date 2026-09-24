@@ -8,6 +8,7 @@ import {
   type ImplementContract,
 } from "./implement-contract.js";
 import {
+  FULL_CONTEXT_MATERIALIZATION,
   createPlanImplementHandoffManifest,
   planImplementHandoffArtifactName,
   verifyPlanAuthorizeArtifact,
@@ -155,13 +156,25 @@ export function verifyPlanImplementWorkerBundle(input: {
     throw new Error("handoff source authorization is not bound to contract identity");
   }
 
+  // Context 표현은 Handoff가 만든 pack에서 다시 도출한다: 발췌 경로는 pack의 excerpt 파일과 정확히 같아야 하고,
+  // 근거가 된 승인 PLAN Context digest는 manifest가 들고 온 값을 검증해 그대로 묶는다 (#244 Worker run 35997858096).
+  if (!record(input.handoff)) throw new Error("handoff manifest mismatch");
+  const excerptPaths = context.files.filter((file) => file.state === "excerpt").map((file) => file.path);
+  const presented = record(input.handoff.contextMaterialization) ? input.handoff.contextMaterialization : {};
+  const approvedPlanContextDigest = excerptPaths.length > 0 ? presented.approvedPlanContextDigest : null;
+  if (excerptPaths.length > 0 && typeof approvedPlanContextDigest !== "string") {
+    throw new Error("handoff manifest mismatch: excerpt context without approved PLAN context digest");
+  }
   const expectedHandoff = createPlanImplementHandoffManifest({
     authorization: source.authorization,
     sourceArtifact: source.sourceArtifact,
     contract,
     contextDigest: context.contextDigest,
+    contextMaterialization: excerptPaths.length === 0
+      ? FULL_CONTEXT_MATERIALIZATION
+      : { representation: "plan-excerpt", excerptPaths, approvedPlanContextDigest: approvedPlanContextDigest as string },
   });
-  if (!record(input.handoff) || JSON.stringify(input.handoff) !== JSON.stringify(expectedHandoff)) {
+  if (JSON.stringify(input.handoff) !== JSON.stringify(expectedHandoff)) {
     throw new Error("handoff manifest mismatch");
   }
 
