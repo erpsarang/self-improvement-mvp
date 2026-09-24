@@ -164,6 +164,15 @@ jobs:
           persist-credentials: false
           path: control-prep
 
+      - name: Framework runtime layout 준비
+        if: steps.source.outputs.should_run == 'true'
+        working-directory: control-prep
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - name: Node 설정
         if: steps.source.outputs.should_run == 'true'
         uses: actions/setup-node@v4
@@ -326,6 +335,15 @@ jobs:
           persist-credentials: false
           path: control-validate-0
 
+      - name: Framework runtime layout 준비
+        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
+        working-directory: control-validate-0
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - name: Trusted validation dependencies 설치 0
         if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
@@ -487,6 +505,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
           path: control-validate-retry
+
+      - name: Framework runtime layout 준비
+        working-directory: control-validate-retry
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
 
       - name: Node 설정 retry
         uses: actions/setup-node@v4
@@ -748,6 +774,14 @@ jobs:
           persist-credentials: false
           path: control-validate-1
 
+      - name: Framework runtime layout 준비
+        working-directory: control-validate-1
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - name: Node 설정
         uses: actions/setup-node@v4
         with:
@@ -914,6 +948,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
           path: control-validate-2
+
+      - name: Framework runtime layout 준비
+        working-directory: control-validate-2
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
 
       - name: Node 설정
         uses: actions/setup-node@v4

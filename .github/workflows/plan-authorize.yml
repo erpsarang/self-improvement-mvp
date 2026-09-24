@@ -25,6 +25,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Framework runtime layout 준비
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

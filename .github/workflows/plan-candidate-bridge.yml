@@ -273,6 +273,14 @@ jobs:
           persist-credentials: false
           path: bridge-control
 
+      - name: Framework runtime layout 준비
+        working-directory: bridge-control
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - name: Node 설정
         uses: actions/setup-node@v4
         with:

@@ -43,6 +43,14 @@ jobs:
           persist-credentials: false
           path: planner-control
 
+      - name: Framework runtime layout 준비
+        working-directory: planner-control
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -164,6 +172,14 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           path: planner-control-validation
+
+      - name: Framework runtime layout 준비
+        working-directory: planner-control-validation
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
 
       - name: Fresh Target checkout at frozen SHA for validation
         uses: actions/checkout@v4
