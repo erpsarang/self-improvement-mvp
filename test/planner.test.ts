@@ -345,12 +345,66 @@ test("PLAN prompt는 allowedPaths가 repository-relative path이며 filesystem �
     assert.match(prompt, /implementationScope\.ready=true이면 questions는 반드시 빈 배열/);
     assert.match(prompt, /추가·수정·생성할 파일을 언급하면 repository-relative exact path를 쓰고 반드시 allowedPaths에 포함/);
     assert.match(prompt, /package-lock\.json companion을 추가할 수 있도록 8개 bounded slot 중 최소 1개를 비워두세요/);
-    assert.match(prompt, /필요한 변경 파일이 8개 안에 들어오지 않으면 범위를 줄이세요/);
-    // 외부 사실은 추측하지 않고, 외부 사실 없이 구현·검증 가능한 첫 bounded slice만 ready=true로 제안한다 (#244).
+    assert.match(prompt, /필요한 변경 파일이 8개 안에 들어오지 않으면 명시적 Issue 완료선을 훼손하지 않는 범위에서만 축소하세요/);
+    // 외부 사실 추측 금지와 일반 요구의 첫 slice 전략은 유지한다 (#244, #273).
     assert.match(prompt, /Context Pack에 없는 외부 사실\(모델 식별자, 가격, 사용량 필드, 외부 서비스 동작 등\)은 추측하거나 가정하지 마세요/);
+    assert.match(prompt, /명시적 Issue 완료선이 없는 일반 요구에만 첫 bounded slice 전략을 적용하세요/);
     assert.match(prompt, /외부 사실 없이 독립적으로 구현·검증 가능한 첫 bounded slice가 있으면 그 slice만 implementationScope\(ready=true\)로 제안하세요/);
-    assert.match(prompt, /slice 밖의 나머지 요구는 questions가 아니라 approach에 '후속 범위'로 명시하고/);
-    assert.match(prompt, /그런 slice가 전혀 없을 때만 implementationScope\.ready=false로 반환하세요/);
+    assert.match(prompt, /이 일반 요구에서는 slice 밖의 나머지 요구는 questions가 아니라 approach에 '후속 범위'로 명시하고/);
+    assert.match(prompt, /이 일반 요구에서는 그런 slice가 전혀 없을 때만 implementationScope\.ready=false로 반환하세요/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// These are prompt-policy contracts, not assertions about an AI-generated PLAN.
+// Exclude echoed user/context data so it cannot satisfy policy assertions.
+function promptPolicy(requirement: string, context: PlanContextPack): string {
+  const prompt = createPlanPrompt(requirement, context);
+  const marker = "\n사용자 요구(JSON 문자열):";
+  assert.ok(prompt.includes(marker));
+  return prompt.slice(0, prompt.indexOf(marker));
+}
+
+test("general requirement retains a small independently verifiable ready slice", () => {
+  const f = fixture();
+  try {
+    const requirement = "orders 검색과 집계 기능을 개선하고 싶다";
+    const context = selectPlanContext(requirement, f.target, "example/orders", "a".repeat(40));
+    const policy = promptPolicy(requirement, context);
+    assert.match(policy, /명시적 Issue 완료선이 없는 일반 요구에만 첫 bounded slice 전략을 적용하세요/);
+    assert.match(policy, /외부 사실 없이 독립적으로 구현·검증 가능한 첫 bounded slice가 있으면 그 slice만 implementationScope\(ready=true\)로 제안하세요/);
+    assert.match(policy, /이 일반 요구에서는 slice 밖의 나머지 요구는 questions가 아니라 approach에 '후속 범위'로 명시하고/);
+    assert.match(policy, /명시적 Issue 완료선이 없는 일반 요구에서는 그런 사실이 필요한 부분은 이번 slice에 넣지 말고 후속 범위로 남기세요/);
+    assert.match(policy, /이 일반 요구에서는 외부 사실이 없어 요구 전체를 한 번에 구현할 수 없다는 것만으로는 blocking question을 만들지 마세요/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("explicit Issue completion forbids A-only and A+B partial ready plans and E2E deferral", () => {
+  const f = fixture();
+  try {
+    const requirement = "이번 Issue 안에서 orders A → B → C와 실제 E2E 검증까지 완료해야 한다. 일부만 구현하고 나머지를 후속 범위로 미루면 완료가 아니다.";
+    const context = selectPlanContext(requirement, f.target, "example/orders", "a".repeat(40));
+    const policy = promptPolicy(requirement, context);
+    assert.match(policy, /같은 Issue 안에 반드시 완료해야 한다고 명시한 단계, 연결, 실제 E2E 검증 등 완료조건 또는 종료선을 먼저 식별하세요/);
+    assert.match(policy, /Human Requirement의 명시적 Issue 완료선 > bounded slice 최소화/);
+    assert.match(policy, /명시적 Issue 완료선이 있으면 필수 단계나 실제 E2E 조건을 제외한 partial slice를 implementationScope\(ready=true\)로 제안하지 마세요/);
+    assert.match(policy, /A만 또는 A\+B만 구현하고 C나 실제 E2E를 후속 범위\/후속 Issue로 미루거나 mock-only로 대체하는 ready=true는 금지/);
+    assert.doesNotMatch(policy, /그런 사실이 필요한 부분은 이번 slice에 넣지 말고 후속 범위로 남기세요\. 외부 사실이 없어/);
+    assert.doesNotMatch(policy, /필요한 변경 파일이 8개 안에 들어오지 않으면 범위를 줄이세요/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("feasible explicit completion is proposed in full within existing bounded limits", () => {
+  const f = fixture();
+  try {
+    const requirement = "이번 Issue 안에서 orders A → B → C 연결과 실제 E2E까지 완료한다. 필요한 구현과 검증 방법을 Context에서 확인할 수 있으면 전체를 제안한다.";
+    const context = selectPlanContext(requirement, f.target, "example/orders", "a".repeat(40));
+    const policy = promptPolicy(requirement, context);
+    assert.match(policy, /전체 완료선을 현재 Context Pack, allowedPaths 최대 8개 및 기존 안전 한계, 확정 가능한 검증 방법 안에서 담을 수 있으면 전체 완료선을 포함한 implementationScope\(ready=true\)를 제안하세요/);
+    assert.match(policy, /requiredChanges와 acceptanceCriteria에 모든 필수 완료조건을 반영하고 testStrategy에 실제 검증 방법을 명시하세요/);
+    assert.match(policy, /Human Requirement에 없는 작업을 추가하지 말고 완료선을 충족하는 가장 작은 범위를 선택하세요/);
+    assert.match(policy, /기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 파일이어야/);
+    assert.match(policy, /implementationScope\.ready=true이면 questions는 반드시 빈 배열 \[\]이어야 합니다/);
+    assert.equal(PLAN_SCHEMA.properties.implementationScope.properties.allowedPaths.maxItems, 8);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
