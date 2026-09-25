@@ -11,6 +11,7 @@ import {
   type PlanContextPack,
   type PlanContextPackPayload,
 } from "./planner.js";
+import { strongestDirectTest } from "./plan-business-context.js";
 
 interface ExplicitPathContextBudget {
   readonly maxFiles?: number;
@@ -159,6 +160,22 @@ export function augmentPlanContextWithExplicitPaths(
     explicitBytes += file.byteLength;
   }
   if (explicit.length === 0) return context;
+
+  // 명시된 변경 대상 App source의 기존 직접 테스트를 함께 넣는다 (#124 규칙과 같은 판별, source당 최대 1개).
+  // 앞선 보강(AI 호출 지점 등)이 pack을 다시 만들며 업무 관계 보강이 보호한 source/직접 테스트 쌍을 버릴 수 있어,
+  // 마지막 단계에서 Planner가 그 테스트를 실제로 보도록 보장한다 (#259 재PLAN run 36086224421).
+  const explicitPaths = new Set(explicit.map((file) => file.path));
+  for (const file of [...explicit]) {
+    if (explicit.length >= maxFiles || explicitBytes >= maxBytes) break;
+    const testPath = strongestDirectTest(target, file.path);
+    if (!testPath || explicitPaths.has(testPath)) continue;
+    const remaining = maxBytes - explicitBytes;
+    const test = explicitContextFile(target, testPath, terms, Math.min(maxFileBytes, remaining));
+    if (!test) continue;
+    explicit.push(test);
+    explicitPaths.add(testPath);
+    explicitBytes += test.byteLength;
+  }
 
   const files = [...explicit];
   const paths = new Set(files.map((file) => file.path));

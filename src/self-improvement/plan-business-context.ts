@@ -177,16 +177,28 @@ function importedRuntimeSources(testPath: string, testText: string, sourcePaths:
   return result.sort((a, b) => sourceAffinity(testPath, b) - sourceAffinity(testPath, a) || a.localeCompare(b));
 }
 
+/**
+ * App runtime source의 가장 강한 기존 직접 테스트(해당 source를 import하는 exact-stem 테스트)를 돌려준다.
+ * #124의 보호 규칙과 같은 판별이다. Framework source이거나 그런 테스트가 없으면 null이다.
+ */
+export function strongestDirectTest(target: string, sourcePath: string): string | null {
+  if (!isRuntimeSource(sourcePath) || isFrameworkSource(sourcePath)) return null;
+  const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
+  if (!sourcePaths.includes(sourcePath)) return null;
+  const direct = walkFiles(target, "test")
+    .filter(isTestLike)
+    .filter((path) => sourceAffinity(path, sourcePath) === 2)
+    .sort((a, b) => a.localeCompare(b))
+    .find((path) => {
+      const text = decodeText(join(target, path));
+      return text !== null && importedRuntimeSources(path, text, sourcePaths).includes(sourcePath);
+    });
+  return direct ?? null;
+}
+
 function selectedRelationProtection(target: string, context: PlanContextPack): ReadonlySet<string> {
   const contextPaths = new Set(context.files.map((file) => file.path));
   const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
-  const allTests = walkFiles(target, "test")
-    .filter(isTestLike)
-    .map((path) => {
-      const text = decodeText(join(target, path));
-      return text === null ? null : { path, text };
-    })
-    .filter((entry): entry is { path: string; text: string } => entry !== null);
   const protectedPaths = new Set<string>();
 
   for (const file of context.files) {
@@ -206,14 +218,10 @@ function selectedRelationProtection(target: string, context: PlanContextPack): R
   // direct test so trusted scope validation can still require evidence for that
   // existing test path.
   for (const file of context.files) {
-    if (!isRuntimeSource(file.path) || isFrameworkSource(file.path)) continue;
-    const direct = allTests
-      .filter((test) => importedRuntimeSources(test.path, test.text, sourcePaths).includes(file.path))
-      .sort((a, b) => sourceAffinity(b.path, file.path) - sourceAffinity(a.path, file.path) || a.path.localeCompare(b.path))
-      .find((test) => sourceAffinity(test.path, file.path) === 2);
+    const direct = strongestDirectTest(target, file.path);
     if (!direct) continue;
     protectedPaths.add(file.path);
-    protectedPaths.add(direct.path);
+    protectedPaths.add(direct);
   }
   return protectedPaths;
 }
