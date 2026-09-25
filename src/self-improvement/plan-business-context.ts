@@ -153,6 +153,48 @@ function relativeImportSpecifiers(path: string, text: string): string[] {
   return result;
 }
 
+
+function isImportMetaUrl(node: ts.Expression | undefined): boolean {
+  return !!node
+    && ts.isPropertyAccessExpression(node)
+    && node.name.text === "url"
+    && ts.isMetaProperty(node.expression)
+    && node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+    && node.expression.name.text === "meta";
+}
+
+/**
+ * VM/test harness가 source를 정적 import하지 않고 파일 내용 자체를 읽어 실행하는 관계를 찾는다.
+ * 오탐을 피하기 위해 readFileSync(new URL("<relative literal>", import.meta.url), ...) 형태만 인정한다.
+ */
+function relativeLiteralSourceReadSpecifiers(path: string, text: string): string[] {
+  const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKind(path));
+  const result: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const readFileSyncCall = ts.isIdentifier(node.expression) && node.expression.text === "readFileSync";
+      const first = node.arguments[0];
+      if (
+        readFileSyncCall
+        && first
+        && ts.isNewExpression(first)
+        && ts.isIdentifier(first.expression)
+        && first.expression.text === "URL"
+        && first.arguments?.length === 2
+        && ts.isStringLiteralLike(first.arguments[0]!)
+        && first.arguments[0]!.text.startsWith(".")
+        && isImportMetaUrl(first.arguments[1])
+      ) {
+        const specifier = first.arguments[0]!.text;
+        if (!result.includes(specifier)) result.push(specifier);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return result;
+}
+
 function pathStem(path: string): string {
   const name = modulePathIdentity(path).split("/").at(-1) ?? "";
   return name.replace(/\.(?:test|spec)$/i, "");
@@ -166,15 +208,29 @@ function sourceAffinity(testPath: string, sourcePath: string): number {
   return 0;
 }
 
-function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
+function runtimeSourcesFromSpecifiers(
+  testPath: string,
+  specifiers: readonly string[],
+  sourcePaths: readonly string[],
+): string[] {
   const identities = new Map(sourcePaths.map((path) => [modulePathIdentity(path), path] as const));
   const result: string[] = [];
-  for (const specifier of relativeImportSpecifiers(testPath, testText)) {
+  for (const specifier of specifiers) {
     const resolved = normalize(join(dirname(testPath), specifier)).replace(/\\/g, "/");
     const source = identities.get(modulePathIdentity(resolved));
     if (source && !result.includes(source)) result.push(source);
   }
   return result.sort((a, b) => sourceAffinity(testPath, b) - sourceAffinity(testPath, a) || a.localeCompare(b));
+}
+
+// 테스트 파일에서는 source를 읽어 VM에서 실행하는 harness도 import와 같은 영향 관계다 (#281).
+// source 사이의 의존 분석 의미는 바꾸지 않도록 테스트 파일에만 적용한다.
+// 이 관계는 이미 Context에 있는 파일 사이에서만 쓰인다. Context 보호 목록을 늘리면 8개 한도를 넘어
+// 업무 Context 보강 전체가 생략되므로 보호 목록에는 더하지 않는다 (#282 실제 App 트리 재현).
+function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
+  const specifiers = relativeImportSpecifiers(testPath, testText);
+  if (isTestLike(testPath)) specifiers.push(...relativeLiteralSourceReadSpecifiers(testPath, testText));
+  return runtimeSourcesFromSpecifiers(testPath, specifiers, sourcePaths);
 }
 
 /**
