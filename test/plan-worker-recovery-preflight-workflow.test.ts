@@ -57,6 +57,31 @@ test("Recovery Preflight는 approved base 이후 명시된 Framework recovery �
   assert.match(workflow, /recovery requires fresh PLAN; non-approved drift/);
 });
 
+test("Framework Sync의 FRAMEWORK.md 표식 변경은 허용하고 제품 파일 drift는 계속 fresh PLAN으로 보낸다 (App #228 run 36171222735)", () => {
+  const literal = /const allowedFiles = new Set\(\[([\s\S]*?)\]\);/.exec(workflow);
+  assert.ok(literal, "allowedFiles literal must exist");
+  const allowed = new Set([...literal[1]!.matchAll(/'([^']+)'/g)].map((match) => match[1]!));
+  const rejected = (files: { status: string; filename: string }[]) =>
+    files.filter((file) => !["added", "modified"].includes(file.status) || !allowed.has(file.filename));
+
+  // #228 관측 drift: Framework Sync PR #229가 바꾼 두 파일
+  assert.deepEqual(
+    rejected([
+      { status: "modified", filename: ".github/workflows/plan-implement-worker.yml" },
+      { status: "modified", filename: "FRAMEWORK.md" },
+    ]),
+    [],
+  );
+  assert.deepEqual(
+    rejected([{ status: "modified", filename: "src/index.ts" }]).map((file) => file.filename),
+    ["src/index.ts"],
+  );
+  assert.deepEqual(
+    rejected([{ status: "removed", filename: "FRAMEWORK.md" }]).map((file) => file.filename),
+    ["FRAMEWORK.md"],
+  );
+});
+
 test("검증 성공 시 provenance가 포함된 RECOVERY_READY artifact만 만든다", () => {
   assert.match(workflow, /kind: 'trusted-worker-recovery-ready'/);
   assert.match(workflow, /sourceMarkerCommentId/);
