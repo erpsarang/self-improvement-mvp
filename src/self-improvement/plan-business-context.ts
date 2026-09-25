@@ -153,6 +153,48 @@ function relativeImportSpecifiers(path: string, text: string): string[] {
   return result;
 }
 
+
+function isImportMetaUrl(node: ts.Expression | undefined): boolean {
+  return !!node
+    && ts.isPropertyAccessExpression(node)
+    && node.name.text === "url"
+    && ts.isMetaProperty(node.expression)
+    && node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+    && node.expression.name.text === "meta";
+}
+
+/**
+ * VM/test harness가 source를 정적 import하지 않고 파일 내용 자체를 읽어 실행하는 관계를 찾는다.
+ * 오탐을 피하기 위해 readFileSync(new URL("<relative literal>", import.meta.url), ...) 형태만 인정한다.
+ */
+function relativeLiteralSourceReadSpecifiers(path: string, text: string): string[] {
+  const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKind(path));
+  const result: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const readFileSyncCall = ts.isIdentifier(node.expression) && node.expression.text === "readFileSync";
+      const first = node.arguments[0];
+      if (
+        readFileSyncCall
+        && first
+        && ts.isNewExpression(first)
+        && ts.isIdentifier(first.expression)
+        && first.expression.text === "URL"
+        && first.arguments?.length === 2
+        && ts.isStringLiteralLike(first.arguments[0]!)
+        && first.arguments[0]!.text.startsWith(".")
+        && isImportMetaUrl(first.arguments[1])
+      ) {
+        const specifier = first.arguments[0]!.text;
+        if (!result.includes(specifier)) result.push(specifier);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return result;
+}
+
 function pathStem(path: string): string {
   const name = modulePathIdentity(path).split("/").at(-1) ?? "";
   return name.replace(/\.(?:test|spec)$/i, "");
@@ -166,15 +208,31 @@ function sourceAffinity(testPath: string, sourcePath: string): number {
   return 0;
 }
 
-function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
+function runtimeSourcesFromSpecifiers(
+  testPath: string,
+  specifiers: readonly string[],
+  sourcePaths: readonly string[],
+): string[] {
   const identities = new Map(sourcePaths.map((path) => [modulePathIdentity(path), path] as const));
   const result: string[] = [];
-  for (const specifier of relativeImportSpecifiers(testPath, testText)) {
+  for (const specifier of specifiers) {
     const resolved = normalize(join(dirname(testPath), specifier)).replace(/\\/g, "/");
     const source = identities.get(modulePathIdentity(resolved));
     if (source && !result.includes(source)) result.push(source);
   }
   return result.sort((a, b) => sourceAffinity(testPath, b) - sourceAffinity(testPath, a) || a.localeCompare(b));
+}
+
+function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
+  return runtimeSourcesFromSpecifiers(
+    testPath,
+    [...relativeImportSpecifiers(testPath, testText), ...relativeLiteralSourceReadSpecifiers(testPath, testText)],
+    sourcePaths,
+  );
+}
+
+function literalReadRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
+  return runtimeSourcesFromSpecifiers(testPath, relativeLiteralSourceReadSpecifiers(testPath, testText), sourcePaths);
 }
 
 /**
@@ -222,6 +280,18 @@ function selectedRelationProtection(target: string, context: PlanContextPack): R
     if (!direct) continue;
     protectedPaths.add(file.path);
     protectedPaths.add(direct);
+  }
+  // 일부 UI/VM harness는 runtime source를 import하지 않고 readFileSync(new URL(..., import.meta.url))로
+  // 파일 자체를 읽어 transpile/execute한다. 이 literal AST 관계도 실제 변경 영향이므로 Context에 보호한다.
+  const tests = walkFiles(target, "test").filter(isTestLike).sort((a, b) => a.localeCompare(b));
+  for (const file of context.files) {
+    if (!isRuntimeSource(file.path) || isFrameworkSource(file.path)) continue;
+    for (const testPath of tests) {
+      const text = decodeText(join(target, testPath));
+      if (text === null || !literalReadRuntimeSources(testPath, text, sourcePaths).includes(file.path)) continue;
+      protectedPaths.add(file.path);
+      protectedPaths.add(testPath);
+    }
   }
   return protectedPaths;
 }
