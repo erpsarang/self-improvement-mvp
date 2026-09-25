@@ -77,7 +77,7 @@ export function assertOutsideTarget(target: string, output: string): void {
   }
 }
 
-function isFrameworkApplicationTarget(target: string, repository: string): boolean {
+export function isFrameworkApplicationTarget(target: string, repository: string): boolean {
   if (existsSync(join(target, "FRAMEWORK.md"))) return true;
   const ownershipPath = join(target, "policy", "framework-distribution-ownership.v1.json");
   if (!existsSync(ownershipPath)) return false;
