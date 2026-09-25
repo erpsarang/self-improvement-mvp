@@ -107,3 +107,11 @@ test("planner model은 AI Planner step의 model 입력에만 연결되고 호출
   assert.doesNotMatch(workflow, /gpt-6-astra/);
   assert.match(workflow, /core\.setOutput\('planner_model', productImprovementCandidate \? 'gpt-6-luna' : ''\);/);
 });
+
+test("AI Planner는 Codex CLI를 exact version으로 설치해 latest 배포 경합에 영향받지 않는다 (run 36087088194)", () => {
+  const plannerStep = workflow.slice(workflow.indexOf("- name: Read-only bounded AI Planner"), workflow.indexOf("- name: Fresh Framework checkout for trusted validation"));
+  const pins = [...plannerStep.matchAll(/\n          codex-version: "([^"]*)"\n/g)].map((match) => match[1]);
+  assert.deepEqual(pins, ["0.156.1"]);
+  assert.match(pins[0] ?? "", /^\d+\.\d+\.\d+$/, "empty/latest/range는 platform optional dependency 누락을 재현할 수 있다");
+  assert.equal((workflow.match(/codex-version:/g) ?? []).length, 1, "AI 호출 step 하나에만 적용");
+});
