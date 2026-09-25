@@ -449,3 +449,104 @@ test("브라우저 Web 신규 기능 PLAN은 package.json과 tsconfig.json을 �
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("App PLAN Context는 Framework-owned 경로를 8-slot 후보에서 제외하고 App 경로를 보존한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-app-framework-filter-"));
+  try {
+    mkdirSync(join(root, "src", "self-improvement"), { recursive: true });
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    mkdirSync(join(root, "policy"), { recursive: true });
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "test"), { recursive: true });
+
+    writeFileSync(join(root, "FRAMEWORK.md"), "# installed framework\n");
+    writeFileSync(
+      join(root, "policy", "framework-distribution-ownership.v1.json"),
+      JSON.stringify({ schemaVersion: 1, sourceRepository: "erpsarang/self-improvement-mvp", entries: [] }),
+    );
+    writeFileSync(join(root, "package.json"), '{"scripts":{"test":"node --test"}}\n');
+    writeFileSync(join(root, "tsconfig.json"), "{}\n");
+    writeFileSync(
+      join(root, "src", "web-main.ts"),
+      "import { parseCsvUpload } from './order-csv.js'; export function analyzeFiles() { return parseCsvUpload; }\n",
+    );
+    writeFileSync(
+      join(root, "src", "order-csv.ts"),
+      "import { enrichOrder } from './decision-context.js'; export function parseCsvUpload() { return enrichOrder; }\n",
+    );
+    writeFileSync(
+      join(root, "src", "decision-context.ts"),
+      "export interface DecisionContextProvider { getAvailableQuantity(id: string): unknown } export function enrichOrder() {}\n",
+    );
+    writeFileSync(
+      join(root, "test", "web-main-file-change.test.ts"),
+      "import { analyzeFiles } from '../src/web-main.js'; test('file change', () => void analyzeFiles);\n",
+    );
+    writeFileSync(
+      join(root, "src", "self-improvement", "state.ts"),
+      "export const frameworkNoise = '주문 CSV 고객 기준 CSV 자재 재고 기준 CSV 화면 분석';\n",
+    );
+    writeFileSync(
+      join(root, ".github", "workflows", "plan.yml"),
+      "name: 주문 CSV 고객 기준 CSV 자재 재고 기준 CSV PLAN\n",
+    );
+    writeFileSync(
+      join(root, ".github", "workflows", "product-evaluation.yml"),
+      "name: 주문 CSV 고객 기준 CSV 자재 재고 기준 CSV Product Evaluation\n",
+    );
+
+    const requirement = [
+      "주문 CSV와 고객 기준 CSV, 자재/재고 기준 CSV를 분리해 분석한다.",
+      "기존 화면 연결은 `src/web-main.ts`와 `test/web-main-file-change.test.ts`를 사용한다.",
+      "DecisionContextProvider로 기준을 조회해 기존 Analyzer 판정 결과를 표시한다.",
+    ].join("\n");
+
+    const pack = selectPlanContext(
+      requirement,
+      root,
+      "erpsarang/sales-order-exception-analyzer",
+      "d".repeat(40),
+      { maxFiles: 8, maxBytes: 80_000, maxFileBytes: 20_000 },
+    );
+    const paths = pack.files.map((file) => file.path);
+
+    assert.ok(paths.includes("src/web-main.ts"), `missing UI runtime: ${paths.join(", ")}`);
+    assert.ok(paths.includes("test/web-main-file-change.test.ts"), `missing UI test: ${paths.join(", ")}`);
+    assert.ok(paths.some((path) => path === "src/order-csv.ts" || path === "src/decision-context.ts"), `missing business runtime: ${paths.join(", ")}`);
+    assert.ok(!paths.some((path) => path.startsWith("src/self-improvement/")), `Framework source leaked: ${paths.join(", ")}`);
+    assert.ok(!paths.some((path) => path.startsWith(".github/")), `Framework workflow leaked: ${paths.join(", ")}`);
+    assert.ok(!paths.some((path) => path.startsWith("policy/")), `Framework policy leaked: ${paths.join(", ")}`);
+    assert.ok(!paths.includes("FRAMEWORK.md"), `Framework marker leaked: ${paths.join(", ")}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Framework canonical repo 자체 PLAN에서는 Framework-owned 경로를 제외하지 않는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-canonical-framework-context-"));
+  try {
+    mkdirSync(join(root, "src", "self-improvement"), { recursive: true });
+    mkdirSync(join(root, "policy"), { recursive: true });
+    writeFileSync(
+      join(root, "policy", "framework-distribution-ownership.v1.json"),
+      JSON.stringify({ schemaVersion: 1, sourceRepository: "erpsarang/self-improvement-mvp", entries: [] }),
+    );
+    writeFileSync(
+      join(root, "src", "self-improvement", "planner.ts"),
+      "export function selectPlanContext() { return 'Framework PLAN Context selector'; }\n",
+    );
+
+    const pack = selectPlanContext(
+      "Framework의 `src/self-improvement/planner.ts` PLAN Context selector를 수정한다.",
+      root,
+      "erpsarang/self-improvement-mvp",
+      "e".repeat(40),
+      { maxFiles: 4, maxBytes: 20_000, maxFileBytes: 8_000 },
+    );
+
+    assert.ok(pack.files.some((file) => file.path === "src/self-improvement/planner.ts"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

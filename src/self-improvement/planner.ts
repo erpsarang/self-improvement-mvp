@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { TextDecoder } from "node:util";
+import { isFrameworkOwnedPath } from "./product-evaluation.js";
 
 export const PLAN_CONTEXT_MAX_FILES = 8;
 export const PLAN_CONTEXT_MAX_BYTES = 80_000;
@@ -73,6 +74,18 @@ export function assertOutsideTarget(target: string, output: string): void {
   const rel = relative(realpathSync(target), realpathSync(output));
   if (rel === "" || (!rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && rel !== ".." && !isAbsolute(rel))) {
     throw new Error("Planner output must be outside target repository");
+  }
+}
+
+function isFrameworkApplicationTarget(target: string, repository: string): boolean {
+  if (existsSync(join(target, "FRAMEWORK.md"))) return true;
+  const ownershipPath = join(target, "policy", "framework-distribution-ownership.v1.json");
+  if (!existsSync(ownershipPath)) return false;
+  try {
+    const value = JSON.parse(readFileSync(ownershipPath, "utf8")) as { sourceRepository?: unknown };
+    return typeof value.sourceRepository === "string" && value.sourceRepository !== repository;
+  } catch {
+    return false;
   }
 }
 
@@ -418,10 +431,13 @@ export function selectPlanContext(
   const terms = requirementTerms(requirement);
   const anchors = requirementAnchors(requirement);
   const pathAnchors = requirementPathAnchors(requirement);
-  const candidates = repositoryPaths(target).map((path) => {
-    const text = decodeText(join(target, path));
-    return text === null ? null : { path, text, score: scoreContext(path, text, terms) };
-  }).filter((value): value is { path: string; text: string; score: number } => value !== null);
+  const frameworkApplicationTarget = isFrameworkApplicationTarget(target, repository);
+  const candidates = repositoryPaths(target)
+    .filter((path) => !frameworkApplicationTarget || !isFrameworkOwnedPath(path))
+    .map((path) => {
+      const text = decodeText(join(target, path));
+      return text === null ? null : { path, text, score: scoreContext(path, text, terms) };
+    }).filter((value): value is { path: string; text: string; score: number } => value !== null);
 
   candidates.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   const projectContextPaths = projectBootstrapContextPaths(requirement, candidates);
