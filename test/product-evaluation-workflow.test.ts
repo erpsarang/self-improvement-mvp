@@ -132,3 +132,19 @@ test("prepare는 사람이 not_planned로 닫은 후보만 읽어 평가 입력�
   assert.doesNotMatch(workflow, /issues\.update|issues\.createComment/);
   assert.equal(workflow.split("openai/codex-action@v1").length - 1, 2);
 });
+
+test("제품 파일을 바꾸지 않은 cycle은 AI Evaluator를 호출하지 않고 사유를 남긴다", () => {
+  const prepare = workflow.slice(workflow.indexOf("\n  prepare:\n"), workflow.indexOf("\n  evaluator:\n"));
+  const evaluator = workflow.slice(workflow.indexOf("\n  evaluator:\n"), workflow.indexOf("\n  finalize:\n"));
+  // 변경 경로는 이 Human Merge PR에서만 읽고, 조회 실패나 상한 도달은 평가 쪽으로 기운다.
+  assert.match(prepare, /github\.paginate\(github\.rest\.pulls\.listFiles, \{\n\s+\.\.\.context\.repo,\n\s+pull_number: prNumber,/);
+  assert.match(prepare, /file\.previous_filename \? \[file\.filename, file\.previous_filename\]/);
+  assert.match(prepare, /complete: files\.length > 0 && files\.length < 3000/);
+  assert.match(prepare, /let changedPaths = \{ complete: false, paths: \[\] \};/);
+  assert.match(prepare, /PRODUCT_CHANGED_PATHS_JSON: \$\{\{ runner\.temp \}\}\/product-evaluation\/changed-paths\.json/);
+  assert.match(prepare, /should_evaluate: \$\{\{ steps\.prepare\.outputs\.should_evaluate \}\}/);
+  assert.match(evaluator, /if: needs\.prepare\.result == 'success' && needs\.prepare\.outputs\.should_evaluate == 'true'/);
+  // finalize는 evaluator 성공에만 묶여 있어 생략 시 Issue 생성이나 자동 PLAN도 일어나지 않는다.
+  assert.match(workflow, /if: needs\.prepare\.result == 'success' && needs\.evaluator\.result == 'success'/);
+  assert.equal(workflow.split("openai/codex-action@v1").length - 1, 2);
+});

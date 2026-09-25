@@ -5,6 +5,7 @@ import {
   createProductEvaluationReport,
   createProductSnapshot,
   decideImprovementIssue,
+  decideProductEvaluationNeed,
   productEvaluationReportArtifactName,
   productSnapshotArtifactName,
   verifyProductEvaluationReport,
@@ -84,6 +85,17 @@ if (command === "prepare") {
   writeOutput("snapshot_artifact_name", productSnapshotArtifactName(snapshot));
   writeOutput("file_count", snapshot.fileCount);
   writeOutput("rejected_candidate_count", snapshot.rejectedCandidates.length);
+
+  // 제품 파일을 바꾸지 않은 cycle은 AI 평가를 생략한다. 사유는 사람이 볼 수 있게 남긴다.
+  const changedPathsPath = process.env.PRODUCT_CHANGED_PATHS_JSON;
+  const need = decideProductEvaluationNeed(
+    changedPathsPath && existsSync(changedPathsPath) ? parseJson<unknown>(changedPathsPath) : null,
+  );
+  writeOutput("should_evaluate", need.needed ? "true" : "false");
+  console.log(`Product Evaluation: ${need.reason}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Product Evaluation\n\n${need.reason}\n`, "utf8");
+  }
   process.exit(0);
 }
 
