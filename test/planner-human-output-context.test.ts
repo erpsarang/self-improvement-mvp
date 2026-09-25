@@ -290,3 +290,75 @@ test("Web App UI 요구는 Framework human-output surface를 추가하지 않고
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("App target의 Human-output 보강은 PLAN 문구가 있어도 Framework-owned 경로를 다시 삽입하지 않는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-app-human-output-filter-"));
+  try {
+    mkdirSync(join(root, "src", "self-improvement"), { recursive: true });
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "test"), { recursive: true });
+
+    writeFileSync(join(root, "FRAMEWORK.md"), "# installed framework\n");
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "example-app", scripts: { test: "node --test", build: "tsc --noEmit" } }, null, 2),
+    );
+    writeFileSync(join(root, "tsconfig.json"), "{}\n");
+    writeFileSync(
+      join(root, "src", "web-main.ts"),
+      "import { parseCsvUpload } from './order-csv.js'; export const run = parseCsvUpload;\n",
+    );
+    writeFileSync(
+      join(root, "src", "order-csv.ts"),
+      "import { enrichOrder } from './decision-context.js'; export function parseCsvUpload() { return enrichOrder; }\n",
+    );
+    writeFileSync(
+      join(root, "src", "decision-context.ts"),
+      "export interface DecisionContextProvider { getAvailableQuantity(id: string): unknown } export function enrichOrder() {}\n",
+    );
+    writeFileSync(
+      join(root, "test", "web-main-file-change.test.ts"),
+      "import { run } from '../src/web-main.js'; test('file change', () => void run);\n",
+    );
+    writeFileSync(
+      join(root, ".github", "workflows", "plan.yml"),
+      "name: PLAN\nscript: |\n  await github.rest.issues.createComment({ body: 'PLAN 제안' });\n",
+    );
+    writeFileSync(
+      join(root, "src", "self-improvement", "state.ts"),
+      "export const WORKFLOW_STATES = ['PLAN', 'IMPLEMENT'];\n",
+    );
+    writeFileSync(
+      join(root, "src", "self-improvement", "implement-contract.ts"),
+      "export interface ImplementContract { allowedPaths: readonly string[] }\n",
+    );
+
+    const requirement = [
+      "주문 CSV와 고객 기준 CSV, 자재/재고 기준 CSV를 분리해 분석한다.",
+      "PLAN Context 보완: `src/web-main.ts`, `test/web-main-file-change.test.ts`를 포함한다.",
+      "재PLAN 시 DecisionContextProvider와 기존 Analyzer 연결까지 판단한다.",
+    ].join("\n");
+
+    const selected = selectPlanContext(
+      requirement,
+      root,
+      "erpsarang/example-app",
+      "f".repeat(40),
+      { maxFiles: 8, maxBytes: 80_000, maxFileBytes: 20_000 },
+    );
+    const business = augmentPlanContextWithBusinessRelations(requirement, root, selected);
+    const augmented = augmentPlanContextWithHumanOutputSurfaces(requirement, root, business);
+    const paths = augmented.files.map((file) => file.path);
+
+    assert.doesNotThrow(() => verifyPlanContextPack(augmented));
+    assert.ok(paths.includes("src/web-main.ts"), `missing App UI runtime: ${paths.join(", ")}`);
+    assert.ok(paths.includes("test/web-main-file-change.test.ts"), `missing App UI test: ${paths.join(", ")}`);
+    assert.ok(!paths.includes(".github/workflows/plan.yml"), `Framework workflow reinserted: ${paths.join(", ")}`);
+    assert.ok(!paths.includes("src/self-improvement/state.ts"), `Framework state reinserted: ${paths.join(", ")}`);
+    assert.ok(!paths.includes("src/self-improvement/implement-contract.ts"), `Framework contract reinserted: ${paths.join(", ")}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
