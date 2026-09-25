@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations } from "../src/self-improvement/plan-business-context.js";
+import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
 import { PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
 
 const SHA = "621b8415c52c87facc45b27c7f06a85b7fb3d27b";
@@ -101,28 +102,19 @@ test("bounded slot이 모자라면 조용히 넘기지 않고 fail-closed 한다
   assert.throws(() => applyImpactedTestCompanions(target, context, raw), /cannot hold existing tests that import changed sources/);
 });
 
-
-test("literal readFileSync VM harness는 변경 source의 impacted companion으로 포함하고 문자열·주석은 무시한다", () => {
-  const root = mkdtempSync(join(tmpdir(), "planner-literal-read-companion-"));
+/** sales-order-exception-analyzer #221 모양: 기존 VM harness가 source를 import 대신 파일로 읽어 실행한다. */
+function literalReadFixture(withHarness: boolean): string {
+  const root = mkdtempSync(join(tmpdir(), "planner-literal-read-"));
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, "test"), { recursive: true });
   const write = (path: string, text: string) => writeFileSync(join(root, path), text);
-
-  write("src/web-main.ts", "export const render = () => 'ready';\n");
+  write("src/web-main.ts", "import { parse } from './order-csv.js';\nexport const render = () => parse().length;\n");
   write("src/order-csv.ts", "export const parse = () => [];\n");
-  write(
-    "test/web-main-file-change.test.ts",
-    "import { render } from '../src/web-main.js';\ntest('web', () => render());\n",
-  );
-  write(
-    "test/exception-stock-display.test.ts",
-    [
-      "import { readFileSync } from 'node:fs';",
-      "import { runInNewContext } from 'node:vm';",
-      "const source = readFileSync(new URL('../src/web-main.ts', import.meta.url), 'utf8');",
-      "runInNewContext(source, {});",
-    ].join("\n"),
-  );
+  write("src/order-csv-template.ts", "import { parse } from './order-csv.js';\nexport const template = () => parse();\n");
+  write("test/web-main-file-change.test.ts", "import { render } from '../src/web-main.js';\ntest('web', () => render());\n");
+  write("test/order-csv.test.ts", "import { parse } from '../src/order-csv.js';\ntest('csv', () => parse());\n");
+  write("test/order-csv-provenance.test.ts", "import { parse } from '../src/order-csv.js';\ntest('provenance', () => parse());\n");
+  write("test/order-csv-template.test.ts", "import { template } from '../src/order-csv-template.js';\ntest('template', () => template());\n");
   write(
     "test/decoy.test.ts",
     [
@@ -131,25 +123,61 @@ test("literal readFileSync VM harness는 변경 source의 impacted companion으�
       "void marker;",
     ].join("\n"),
   );
+  if (withHarness) {
+    write(
+      "test/exception-stock-display.test.ts",
+      [
+        "import { readFileSync } from 'node:fs';",
+        "import { runInNewContext } from 'node:vm';",
+        "const source = readFileSync(new URL('../src/web-main.ts', import.meta.url), 'utf8');",
+        "runInNewContext(source, {});",
+      ].join("\n"),
+    );
+  }
   write("package.json", "{ \"name\": \"fixture\", \"type\": \"module\", \"scripts\": { \"test\": \"node --test\" } }\n");
+  return root;
+}
 
-  const requirement = [
-    "src/web-main.ts 화면 흐름을 변경하고 기존 테스트 영향을 함께 반영한다.",
-    "src/order-csv.ts 계약은 유지한다.",
-  ].join("\n");
-  const selected = selectPlanContext(requirement, root, "erpsarang/example-app", SHA);
-  const context = augmentPlanContextWithBusinessRelations(requirement, root, selected);
-  const contextPaths = context.files.map((file) => file.path);
+/** 사람이 Issue 본문에 경로를 backtick으로 적은 경우와 같은 Context를 만든다 (명시 경로가 먼저 들어간다). */
+function contextFromPaths(root: string, paths: readonly string[]): PlanContextPack {
+  const requirement = `${literalReadRequirement}\n${paths.map((path) => `\`${path}\``).join("\n")}`;
+  const selected = selectPlanContext(requirement, root, "erpsarang/sales-order-exception-analyzer", SHA);
+  const context = augmentPlanContextWithExplicitPaths(requirement, root, selected);
+  for (const path of paths) assert.ok(context.files.some((file) => file.path === path), `context must contain ${path}`);
+  return context;
+}
 
-  assert.ok(contextPaths.includes("src/web-main.ts"), `missing source: ${contextPaths.join(", ")}`);
-  assert.ok(contextPaths.includes("test/exception-stock-display.test.ts"), `literal-read harness missing: ${contextPaths.join(", ")}`);
+const literalReadRequirement = "src/web-main.ts 화면 흐름을 세 CSV 입력으로 바꾸고 src/order-csv.ts 기준 파싱을 연결한다.";
 
-  const raw = readyPlan(context, ["src/web-main.ts"]);
-  const { plan, companions } = applyImpactedTestCompanions(root, context, raw);
-  assert.ok(companions.includes("test/exception-stock-display.test.ts"), `missing impacted harness: ${companions.join(", ")}`);
-  assert.equal(companions.includes("test/decoy.test.ts"), false);
+function literalReadPlan(context: PlanContextPack, allowedPaths: readonly string[]) {
+  const raw = readyPlan(context, allowedPaths);
+  // readyPlan 기본 requiredChanges는 classics fixture 경로를 언급하므로 이 fixture의 문장으로 바꾼다.
+  (raw.implementationScope as { requiredChanges: string[] }).requiredChanges = ["화면 흐름을 세 CSV 입력으로 바꾼다"];
+  return raw;
+}
 
-  const scope = plan.implementationScope as { allowedPaths: string[] };
-  assert.ok(scope.allowedPaths.includes("test/exception-stock-display.test.ts"));
+test("Context에 있는 literal readFileSync VM harness는 변경 source의 impacted companion이 되고 문자열·주석 decoy는 아니다 (#281)", () => {
+  const root = literalReadFixture(true);
+  const context = contextFromPaths(root, [
+    "src/web-main.ts",
+    "test/exception-stock-display.test.ts",
+    "test/decoy.test.ts",
+    "package.json",
+  ]);
+  const { plan, companions } = applyImpactedTestCompanions(root, context, literalReadPlan(context, ["src/web-main.ts"]));
+  assert.ok(companions.includes("test/exception-stock-display.test.ts"), companions.join(", "));
+  assert.equal(companions.includes("test/decoy.test.ts"), false, "문자열·주석 속 같은 문구는 관계가 아니다");
+  assert.ok((plan.implementationScope as { allowedPaths: string[] }).allowedPaths.includes("test/exception-stock-display.test.ts"));
   assert.doesNotThrow(() => validatePlan(plan, root, context));
+});
+
+test("literal readFileSync harness가 있어도 업무 Context 보강 결과는 바뀌지 않는다 (8개 한도 초과로 보강이 통째로 생략되지 않음)", () => {
+  const withHarness = literalReadFixture(true);
+  const without = literalReadFixture(false);
+  const augmented = (root: string) => {
+    const selected = selectPlanContext(literalReadRequirement, root, "erpsarang/sales-order-exception-analyzer", SHA);
+    return augmentPlanContextWithBusinessRelations(literalReadRequirement, root, selected).files.map((file) => file.path);
+  };
+  const harnessPaths = augmented(withHarness).filter((path) => path !== "test/exception-stock-display.test.ts");
+  assert.deepEqual(harnessPaths, augmented(without).filter((path) => path !== "test/exception-stock-display.test.ts"));
 });

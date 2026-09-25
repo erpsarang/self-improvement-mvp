@@ -223,16 +223,14 @@ function runtimeSourcesFromSpecifiers(
   return result.sort((a, b) => sourceAffinity(testPath, b) - sourceAffinity(testPath, a) || a.localeCompare(b));
 }
 
+// 테스트 파일에서는 source를 읽어 VM에서 실행하는 harness도 import와 같은 영향 관계다 (#281).
+// source 사이의 의존 분석 의미는 바꾸지 않도록 테스트 파일에만 적용한다.
+// 이 관계는 이미 Context에 있는 파일 사이에서만 쓰인다. Context 보호 목록을 늘리면 8개 한도를 넘어
+// 업무 Context 보강 전체가 생략되므로 보호 목록에는 더하지 않는다 (#282 실제 App 트리 재현).
 function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
-  return runtimeSourcesFromSpecifiers(
-    testPath,
-    [...relativeImportSpecifiers(testPath, testText), ...relativeLiteralSourceReadSpecifiers(testPath, testText)],
-    sourcePaths,
-  );
-}
-
-function literalReadRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
-  return runtimeSourcesFromSpecifiers(testPath, relativeLiteralSourceReadSpecifiers(testPath, testText), sourcePaths);
+  const specifiers = relativeImportSpecifiers(testPath, testText);
+  if (isTestLike(testPath)) specifiers.push(...relativeLiteralSourceReadSpecifiers(testPath, testText));
+  return runtimeSourcesFromSpecifiers(testPath, specifiers, sourcePaths);
 }
 
 /**
@@ -280,18 +278,6 @@ function selectedRelationProtection(target: string, context: PlanContextPack): R
     if (!direct) continue;
     protectedPaths.add(file.path);
     protectedPaths.add(direct);
-  }
-  // 일부 UI/VM harness는 runtime source를 import하지 않고 readFileSync(new URL(..., import.meta.url))로
-  // 파일 자체를 읽어 transpile/execute한다. 이 literal AST 관계도 실제 변경 영향이므로 Context에 보호한다.
-  const tests = walkFiles(target, "test").filter(isTestLike).sort((a, b) => a.localeCompare(b));
-  for (const file of context.files) {
-    if (!isRuntimeSource(file.path) || isFrameworkSource(file.path)) continue;
-    for (const testPath of tests) {
-      const text = decodeText(join(target, testPath));
-      if (text === null || !literalReadRuntimeSources(testPath, text, sourcePaths).includes(file.path)) continue;
-      protectedPaths.add(file.path);
-      protectedPaths.add(testPath);
-    }
   }
   return protectedPaths;
 }
