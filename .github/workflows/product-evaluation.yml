@@ -107,6 +107,7 @@ jobs:
       human_merge_pr: ${{ steps.prepare.outputs.human_merge_pr }}
       snapshot_digest: ${{ steps.prepare.outputs.snapshot_digest }}
       file_count: ${{ steps.prepare.outputs.file_count }}
+      should_evaluate: ${{ steps.prepare.outputs.should_evaluate }}
       request_artifact_name: ${{ steps.names.outputs.request_artifact_name }}
       request_artifact_id: ${{ steps.upload.outputs.artifact-id }}
       request_artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -182,6 +183,22 @@ jobs:
                 deployedSha,
               }, null, 2),
             );
+
+            // 이 cycle이 바꾼 경로. 제품 파일을 하나도 바꾸지 않았음이 확실할 때만 AI 평가를 생략한다.
+            // 조회 실패나 API 상한(3000개) 도달은 complete=false로 두어 지금처럼 평가한다.
+            let changedPaths = { complete: false, paths: [] };
+            try {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                ...context.repo,
+                pull_number: prNumber,
+                per_page: 100,
+              });
+              const paths = files.flatMap((file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]);
+              changedPaths = { complete: files.length > 0 && files.length < 3000, paths };
+            } catch (error) {
+              core.warning('Human Merge PR 변경 파일을 읽지 못해 Product Evaluation을 생략하지 않습니다');
+            }
+            fs.writeFileSync(path.join(output, 'changed-paths.json'), JSON.stringify(changedPaths, null, 2));
 
       - name: 사람이 기각한 후보 수집
         uses: actions/github-script@v7
@@ -264,6 +281,7 @@ jobs:
           PRODUCT_CYCLE_FACTS_JSON: ${{ runner.temp }}/product-evaluation/facts.json
           PRODUCT_TARGET_ROOT: ${{ github.workspace }}/product-target
           REJECTED_CANDIDATES_JSON: ${{ runner.temp }}/product-evaluation/rejected-candidates.json
+          PRODUCT_CHANGED_PATHS_JSON: ${{ runner.temp }}/product-evaluation/changed-paths.json
           PRODUCT_EVALUATION_RUNTIME_DIR: ${{ runner.temp }}/product-evaluation/request
 
       - name: 평가 요청 artifact 이름 고정
@@ -287,7 +305,8 @@ jobs:
   evaluator:
     name: isolated read-only AI Product Evaluator
     needs: prepare
-    if: needs.prepare.result == 'success'
+    # 제품 파일을 바꾸지 않은 cycle은 직전 평가와 같은 제품이므로 AI를 호출하지 않는다.
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.should_evaluate == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -284,6 +284,51 @@ function isProductSnapshotPath(path: string): boolean {
   return hasProductTextExtension(path);
 }
 
+/** Human Merge PR이 바꾼 경로 목록. trusted workflow가 GitHub API로 읽어 전달한다. */
+export interface ChangedPathsEvidence {
+  /** 목록이 PR의 변경 전체를 담았는지. 조회 실패나 API 상한 도달이면 false다. */
+  readonly complete: boolean;
+  /** 변경된 경로와, 이름이 바뀐 파일의 이전 경로. */
+  readonly paths: readonly string[];
+}
+
+export interface ProductEvaluationNeed {
+  readonly needed: boolean;
+  readonly reason: string;
+}
+
+function isPlainRelativePath(path: unknown): path is string {
+  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\\") &&
+    !/[\u0000-\u001f\u007f]/.test(path) &&
+    !path.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+}
+
+/**
+ * 이 cycle이 제품 snapshot 대상 파일을 하나도 바꾸지 않았음이 확실할 때만 평가를 생략한다.
+ * 그때 snapshot은 직전 평가와 같은 제품이므로 AI 평가를 반복하지 않는다 (#275: Framework 경로만 바꾼 cycle).
+ * 목록을 확정할 수 없거나 경로가 이상하면 지금처럼 평가한다.
+ */
+export function decideProductEvaluationNeed(evidence: unknown): ProductEvaluationNeed {
+  const value = evidence as Partial<ChangedPathsEvidence> | null;
+  if (
+    typeof value !== "object" || value === null || value.complete !== true ||
+    !Array.isArray(value.paths) || value.paths.length === 0
+  ) {
+    return { needed: true, reason: "변경 파일 목록을 확정할 수 없어 평가합니다" };
+  }
+  if (!value.paths.every(isPlainRelativePath)) {
+    return { needed: true, reason: "확인할 수 없는 변경 경로가 있어 평가합니다" };
+  }
+  const productPaths = value.paths.filter(isProductSnapshotPath);
+  if (productPaths.length > 0) {
+    return { needed: true, reason: `제품 파일 ${productPaths.length}개가 바뀌어 평가합니다` };
+  }
+  return {
+    needed: false,
+    reason: `제품 파일 변경 없음: 바뀐 파일 ${value.paths.length}개가 모두 Framework 소유, 테스트 또는 생성 파일이라 평가를 생략합니다`,
+  };
+}
+
 /** README, 화면, 제품 소스를 먼저 담아 예산이 모자라도 제품의 핵심이 남도록 한다. */
 function snapshotPriority(path: string): number {
   if (path === "README.md") return 0;

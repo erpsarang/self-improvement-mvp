@@ -9,6 +9,7 @@ import {
   createProductEvaluationReport,
   createProductSnapshot,
   decideImprovementIssue,
+  decideProductEvaluationNeed,
   isFrameworkOwnedPath,
   PRODUCT_EVALUATION_BUDGET,
   productEvaluationReportArtifactName,
@@ -442,4 +443,46 @@ test("기각된 후보와 같은 제목은 닫힌 Issue여도 결정적으로 �
   ]);
   assert.equal(decision.action, "skip");
   assert.match(decision.action === "skip" ? decision.reason : "", /같은 제목의 Issue가 이미 있습니다: #11/);
+});
+
+test("제품 파일을 하나도 바꾸지 않은 cycle만 AI 평가를 생략한다 (실제 Human Merge PR 기준)", () => {
+  const skipped = {
+    "#256 (#255)": [".github/workflows/learn.yml"],
+    "#258 (#257)": [".github/workflows/product-evaluation.yml"],
+    "#275 (#273)": ["src/self-improvement/planner.ts", "test/planner-blocking-questions-contract.test.ts", "test/planner.test.ts"],
+    "lockfile/policy only": ["package-lock.json", "policy/framework-distribution-ownership.v1.json", "FRAMEWORK.md"],
+  };
+  for (const [name, paths] of Object.entries(skipped)) {
+    const need = decideProductEvaluationNeed({ complete: true, paths });
+    assert.equal(need.needed, false, name);
+    assert.match(need.reason, /제품 파일 변경 없음/);
+  }
+  const evaluated = {
+    "#263 (#259)": ["src/ai-cost-comparison.ts", "test/ai-cost-comparison.test.ts"],
+    "#276 (#272)": [".github/workflows/ai-usage-collect.yml", "src/ai-usage-collect.ts", "test/ai-usage-collect.test.ts"],
+    "#184 (#181)": ["docs/distribution-manifest.md", "src/self-improvement/distribution-manifest.ts"],
+    "README only": ["README.md"],
+    "screen only": ["index.html"],
+    "renamed out of product": [".archive/old-name.ts", "src/old-name.ts"],
+  };
+  for (const [name, paths] of Object.entries(evaluated)) {
+    assert.equal(decideProductEvaluationNeed({ complete: true, paths }).needed, true, name);
+  }
+});
+
+test("변경 파일 목록을 확정할 수 없거나 경로가 이상하면 지금처럼 평가한다", () => {
+  for (const evidence of [
+    null,
+    undefined,
+    {},
+    { complete: false, paths: [".github/workflows/learn.yml"] },
+    { complete: true, paths: [] },
+    { complete: true, paths: "src/self-improvement/planner.ts" },
+    { complete: true, paths: ["../README.md"] },
+    { complete: true, paths: ["/etc/passwd"] },
+    { complete: true, paths: ["src\\self-improvement\\x.ts"] },
+    { complete: true, paths: [42] },
+  ]) {
+    assert.equal(decideProductEvaluationNeed(evidence).needed, true, JSON.stringify(evidence));
+  }
 });
