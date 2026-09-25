@@ -193,3 +193,93 @@ test("실제 repo에서 #259 요구의 prepare pipeline Context에 test/ai-cost-
   assert.ok(pack.files.length <= 8);
   rmSync(target, { recursive: true, force: true });
 });
+
+test("backtick으로 명시한 루트 파일은 실재 일반 파일일 때만 Context에 들어간다 (#273)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-explicit-root-"));
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "package.json"), "{\"scripts\":{\"test\":\"node --test\"}}\n");
+    writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
+    const requirement = "`src/a.ts`와 `package.json`을 본다. `missing.json`, `src`, `ready`는 파일이 아니다.";
+    // 재현 조건: 앞 단계 Context에는 package.json이 없다 (run 36114594331에서는 workflow 발췌가 자리를 채웠다).
+    const base = selectPlanContext(requirement, root, "example/framework", "c".repeat(40), { maxFiles: 1 });
+    assert.ok(!base.files.some((file) => file.path === "package.json"), base.files.map((file) => file.path).join(", "));
+    const pack = augmentPlanContextWithExplicitPaths(requirement, root, base);
+    verifyPlanContextPack(pack);
+    const paths = pack.files.map((file) => file.path);
+    assert.deepEqual(paths.slice(0, 2), ["src/a.ts", "package.json"]);
+    for (const absent of ["missing.json", "src", "ready"]) assert.ok(!paths.includes(absent), absent);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("큰 명시 파일은 backtick으로 명시한 symbol의 선언부를 중심으로 발췌한다 (#273)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-explicit-symbol-"));
+  try {
+    mkdirSync(join(root, "src"));
+    const head = "// plan context requirement\nexport const early = targetPrompt;\n" + "const filler = 'plan context';\n".repeat(1_000);
+    const body = "export function targetPrompt(requirement: string): string {\n  return `POLICY-SENTENCE ${requirement}`;\n}\n";
+    writeFileSync(join(root, "src", "big.ts"), `${head}${body}`);
+    const text = readFileSync(join(root, "src", "big.ts"), "utf8");
+    const options = { maxFileBytes: 4_000 };
+
+    const withSymbol = "`src/big.ts`의 `targetPrompt(requirement)` 정책을 plan context 요구에 맞게 바꾼다.";
+    const pack = augmentPlanContextWithExplicitPaths(withSymbol, root, selectPlanContext(withSymbol, root, "example/framework", "d".repeat(40)), options);
+    verifyPlanContextPack(pack);
+    const file = pack.files.find((entry) => entry.path === "src/big.ts")!;
+    assert.ok(file.startOffset > 0);
+    assert.ok(file.content.includes("export function targetPrompt") && file.content.includes("POLICY-SENTENCE"));
+    assert.equal(text.slice(file.startOffset, file.startOffset + file.content.length), file.content);
+
+    // symbol이 없거나 파일에 없으면 기존 요구 단어 기준 발췌 그대로다.
+    for (const requirement of ["`src/big.ts`의 plan context 요구를 바꾼다.", "`src/big.ts`의 `absentSymbol()` plan context 요구를 바꾼다."]) {
+      const fallback = augmentPlanContextWithExplicitPaths(requirement, root, selectPlanContext(requirement, root, "example/framework", "d".repeat(40)), options);
+      const excerpt = fallback.files.find((entry) => entry.path === "src/big.ts")!;
+      assert.equal(excerpt.startOffset, 0);
+      assert.ok(!excerpt.content.includes("POLICY-SENTENCE"));
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("실제 repo에서 #273 요구의 prepare pipeline Context에 createPlanPrompt 선언부와 package.json이 들어간다", async () => {
+  const { augmentPlanContextWithBusinessRelations } = await import("../src/self-improvement/plan-business-context.js");
+  const { augmentPlanContextWithHumanOutputSurfaces } = await import("../src/self-improvement/plan-human-output-context.js");
+  const { augmentPlanContextWithAiCallSites } = await import("../src/self-improvement/plan-ai-call-site-context.js");
+  const { needsHumanOutputPlanContext } = await import("../src/self-improvement/plan-context-policy.js");
+  const target = mkdtempSync(join(tmpdir(), "planner-273-"));
+  try {
+    for (const entry of ["src", "test", "docs", ".github", "package.json", "tsconfig.json"]) {
+      cpSync(join(process.cwd(), entry), join(target, entry), { recursive: true });
+    }
+    // #273 본문의 Context 관련 요지 (run 36114594331에서 createPlanPrompt와 package.json이 빠졌다).
+    const requirement = [
+      "[업무 요구] PLAN이 사람이 정한 Issue 완료선을 임의로 후속 범위로 미루지 않게 하고 싶다",
+      "",
+      "현재 `src/self-improvement/planner.ts`의 PLAN prompt에는 첫 bounded slice를 우선하는 규칙이 있습니다.",
+      "새 AI 호출, retry/fallback, 모델/effort 변경을 하지 않습니다. AI 비용도 발생했습니다.",
+      "",
+      "- 파일: `src/self-improvement/planner.ts`",
+      "- symbol: `createPlanPrompt(requirement, context)`",
+      "- `test/planner.test.ts`",
+      "- `test/planner-blocking-questions-contract.test.ts`",
+      "- `test/planner-context-policy.test.ts`",
+      "- `package.json`",
+    ].join("\n");
+    const selected = selectPlanContext(requirement, target, "erpsarang/self-improvement-mvp", "f".repeat(40));
+    const business = augmentPlanContextWithBusinessRelations(requirement, target, selected);
+    const human = needsHumanOutputPlanContext(requirement) ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, business) : business;
+    const aiCallSites = augmentPlanContextWithAiCallSites(requirement, target, human);
+    const pack = augmentPlanContextWithExplicitPaths(requirement, target, aiCallSites);
+    verifyPlanContextPack(pack);
+    const paths = pack.files.map((file) => file.path);
+    assert.ok(paths.includes("package.json"), paths.join(", "));
+    const planner = pack.files.find((file) => file.path === "src/self-improvement/planner.ts")!;
+    assert.ok(planner.content.includes("export function createPlanPrompt("), `planner.ts excerpt starts at ${planner.startOffset}`);
+    assert.ok(pack.files.length <= 8 && pack.totalBytes <= 80_000);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});

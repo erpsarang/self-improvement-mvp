@@ -21,12 +21,13 @@ interface ExplicitPathContextBudget {
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
+// `/` 없는 토큰(`package.json` 등)도 후보로 둔다. 실재하는 일반 파일인지는 explicitContextFile이 확인하므로
+// 존재하지 않는 이름이나 디렉터리는 지금처럼 건너뛴다 (#273 재PLAN run 36114594331).
 function requirementPathAnchors(requirement: string): string[] {
   const anchors: string[] = [];
   for (const match of requirement.matchAll(/`([A-Za-z0-9._/-]{3,500})`/g)) {
     const path = match[1]!;
     if (
-      !path.includes("/") ||
       isAbsolute(path) ||
       path.includes("\\") ||
       path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
@@ -65,11 +66,40 @@ function trimUtf8(text: string, maxBytes: number): string {
   return text.slice(0, low);
 }
 
-function excerpt(text: string, terms: readonly string[], maxBytes: number): { content: string; startOffset: number } {
+// 사람이 backtick으로 적은 식별자(`name`, `name(...)`)를 요구 등장 순서대로 돌려준다.
+function requirementSymbolAnchors(requirement: string): string[] {
+  const symbols: string[] = [];
+  for (const match of requirement.matchAll(/`([A-Za-z_$][A-Za-z0-9_$]{2,200})(?:\([^`]*\))?`/g)) {
+    const symbol = match[1]!;
+    if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  return symbols;
+}
+
+// 명시된 symbol 중 이 파일에 있는 첫 symbol의 선언 위치(없으면 첫 등장 위치)를 돌려준다.
+function symbolFocus(text: string, symbols: readonly string[]): number | null {
+  for (const symbol of symbols) {
+    const escaped = symbol.replace(/\$/g, "\\$");
+    const declaration = new RegExp(`\\b(?:function|const|let|var|class|interface|type|enum)\\s+${escaped}(?![A-Za-z0-9_$])`).exec(text);
+    if (declaration) return declaration.index;
+    const usage = new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`).exec(text);
+    if (usage) return usage.index;
+  }
+  return null;
+}
+
+// 큰 파일은 명시 symbol을 중심으로 발췌한다. 흔한 요구 단어는 대개 파일 첫머리에 있어
+// 수정 대상 함수가 창 밖으로 밀려났다 (#273: createPlanPrompt가 20KB 창 밖). symbol이 없으면 기존 동작 그대로다.
+function excerpt(
+  text: string,
+  terms: readonly string[],
+  symbols: readonly string[],
+  maxBytes: number,
+): { content: string; startOffset: number } {
   if (Buffer.byteLength(text, "utf8") <= maxBytes) return { content: text, startOffset: 0 };
   const lower = text.toLowerCase();
   const indexes = terms.map((term) => lower.indexOf(term)).filter((index) => index >= 0);
-  const focus = indexes.length > 0 ? Math.min(...indexes) : 0;
+  const focus = symbolFocus(text, symbols) ?? (indexes.length > 0 ? Math.min(...indexes) : 0);
   const estimatedChars = Math.min(text.length, maxBytes);
   const startOffset = Math.max(0, focus - Math.floor(estimatedChars / 3));
   return { content: trimUtf8(text.slice(startOffset), maxBytes), startOffset };
@@ -79,6 +109,7 @@ function explicitContextFile(
   target: string,
   path: string,
   terms: readonly string[],
+  symbols: readonly string[],
   maxBytes: number,
 ): PlanContextFile | null {
   const absolute = join(target, path);
@@ -96,7 +127,7 @@ function explicitContextFile(
 
   const text = decodeText(realFile);
   if (text === null) return null;
-  const part = excerpt(text, terms, maxBytes);
+  const part = excerpt(text, terms, symbols, maxBytes);
   const byteLength = Buffer.byteLength(part.content, "utf8");
   if (byteLength < 1) return null;
   return {
@@ -149,12 +180,13 @@ export function augmentPlanContextWithExplicitPaths(
   }
 
   const terms = requirementTerms(requirement);
+  const symbols = requirementSymbolAnchors(requirement);
   const explicit: PlanContextFile[] = [];
   let explicitBytes = 0;
   for (const path of requirementPathAnchors(requirement)) {
     if (explicit.length >= maxFiles || explicitBytes >= maxBytes) break;
     const remaining = maxBytes - explicitBytes;
-    const file = explicitContextFile(target, path, terms, Math.min(maxFileBytes, remaining));
+    const file = explicitContextFile(target, path, terms, symbols, Math.min(maxFileBytes, remaining));
     if (!file) continue;
     explicit.push(file);
     explicitBytes += file.byteLength;
@@ -170,7 +202,7 @@ export function augmentPlanContextWithExplicitPaths(
     const testPath = strongestDirectTest(target, file.path);
     if (!testPath || explicitPaths.has(testPath)) continue;
     const remaining = maxBytes - explicitBytes;
-    const test = explicitContextFile(target, testPath, terms, Math.min(maxFileBytes, remaining));
+    const test = explicitContextFile(target, testPath, terms, symbols, Math.min(maxFileBytes, remaining));
     if (!test) continue;
     explicit.push(test);
     explicitPaths.add(testPath);
