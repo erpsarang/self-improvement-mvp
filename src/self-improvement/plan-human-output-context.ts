@@ -6,12 +6,14 @@ import {
   PLAN_CONTEXT_MAX_BYTES,
   PLAN_CONTEXT_MAX_FILES,
   PLAN_CONTEXT_MAX_FILE_BYTES,
+  isFrameworkApplicationTarget,
   verifyPlanContextPack,
   type PlanContextFile,
   type PlanContextPack,
   type PlanContextPackPayload,
 } from "./planner.js";
 import { needsHumanOutputPlanContext } from "./plan-context-policy.js";
+import { isFrameworkOwnedPath } from "./product-evaluation.js";
 
 const HUMAN_OUTPUT_SURFACE_MAX_FILES = 2;
 const HUMAN_OUTPUT_SURFACE_MAX_BYTES = 6_000;
@@ -328,10 +330,11 @@ export function augmentPlanContextWithHumanOutputSurfaces(
   verifyPlanContextPack(context);
   if (!needsHumanOutputPlanContext(requirement)) return context;
 
+  const frameworkApplicationTarget = isFrameworkApplicationTarget(target, context.repository);
   const candidates = uniqueCandidates([
     lifecycleCandidates(requirement, target),
     surfaceCandidates(requirement, target),
-  ]);
+  ]).filter((file) => !frameworkApplicationTarget || !isFrameworkOwnedPath(file.path));
   if (candidates.length === 0) return context;
 
   const candidatePaths = new Set(candidates.map((file) => file.path));
