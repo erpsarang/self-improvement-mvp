@@ -1,0 +1,83 @@
+name: Read-only AI usage collection
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycle_ref:
+        description: Completed cycle reference attested by the trusted caller
+        required: true
+        type: string
+      plan_run_id:
+        description: Completed PLAN run ID
+        required: true
+        type: string
+      implement_run_id:
+        description: Completed IMPLEMENT/FIX run ID
+        required: true
+        type: string
+      semantic_review_run_id:
+        description: Completed SEMANTIC_REVIEW run ID
+        required: true
+        type: string
+      learn_run_id:
+        description: Completed LEARN run ID
+        required: true
+        type: string
+      product_evaluation_run_id:
+        description: Completed PRODUCT_EVALUATION run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+# Same-issue completion gate after merge: a human dispatches cycle
+# erpsarang/self-improvement-mvp#273 with run IDs respectively
+# 36119752025, 36120272161, 36121315832, 36121856353, 36121809205.
+# Its evidence merge SHA is fcffe9ae8cb8fbc5b4fcc753a93398d27d702162.
+# That historical SHA is NOT the collector code checkout SHA below.
+# Compare all five stages' sources/models/tokens/counts with original logs;
+# fixture success alone does not complete #272. Costs must remain null.
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact collector execution SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Check types
+        run: npm run build
+      - name: Collect existing evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CYCLE_REF: ${{ inputs.cycle_ref }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          IMPLEMENT_RUN_ID: ${{ inputs.implement_run_id }}
+          SEMANTIC_REVIEW_RUN_ID: ${{ inputs.semantic_review_run_id }}
+          LEARN_RUN_ID: ${{ inputs.learn_run_id }}
+          PRODUCT_EVALUATION_RUN_ID: ${{ inputs.product_evaluation_run_id }}
+        run: node --import tsx src/ai-usage-collect.ts > "$RUNNER_TEMP/ai-usage-record.json"
+      - name: Publish record summary
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const record = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/ai-usage-record.json`, 'utf8'));
+          const json = JSON.stringify(record, null, 2).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `<pre>${json}</pre>\n`);
+          NODE
+      - name: Upload usage record
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-usage-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ai-usage-record.json
+          if-no-files-found: error
