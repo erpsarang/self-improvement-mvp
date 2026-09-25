@@ -100,3 +100,57 @@ test("bounded slot이 모자라면 조용히 넘기지 않고 fail-closed 한다
   (raw.implementationScope as { allowedPaths: string[] }).allowedPaths.push(...filler);
   assert.throws(() => applyImpactedTestCompanions(target, context, raw), /cannot hold existing tests that import changed sources/);
 });
+
+
+test("literal readFileSync VM harness는 변경 source의 impacted companion으로 포함하고 문자열·주석은 무시한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-literal-read-companion-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(join(root, "test"), { recursive: true });
+  const write = (path: string, text: string) => writeFileSync(join(root, path), text);
+
+  write("src/web-main.ts", "export const render = () => 'ready';\n");
+  write("src/order-csv.ts", "export const parse = () => [];\n");
+  write(
+    "test/web-main-file-change.test.ts",
+    "import { render } from '../src/web-main.js';\ntest('web', () => render());\n",
+  );
+  write(
+    "test/exception-stock-display.test.ts",
+    [
+      "import { readFileSync } from 'node:fs';",
+      "import { runInNewContext } from 'node:vm';",
+      "const source = readFileSync(new URL('../src/web-main.ts', import.meta.url), 'utf8');",
+      "runInNewContext(source, {});",
+    ].join("\n"),
+  );
+  write(
+    "test/decoy.test.ts",
+    [
+      "const marker = \"readFileSync(new URL('../src/web-main.ts', import.meta.url), 'utf8')\";",
+      "// readFileSync(new URL('../src/web-main.ts', import.meta.url), 'utf8');",
+      "void marker;",
+    ].join("\n"),
+  );
+  write("package.json", "{ \"name\": \"fixture\", \"type\": \"module\", \"scripts\": { \"test\": \"node --test\" } }\n");
+
+  const requirement = [
+    "src/web-main.ts 화면 흐름을 변경하고 기존 테스트 영향을 함께 반영한다.",
+    "src/order-csv.ts 계약은 유지한다.",
+  ].join("\n");
+  const selected = selectPlanContext(requirement, root, "erpsarang/example-app", SHA);
+  const context = augmentPlanContextWithBusinessRelations(requirement, root, selected);
+  const contextPaths = context.files.map((file) => file.path);
+
+  assert.ok(contextPaths.includes("src/web-main.ts"), `missing source: ${contextPaths.join(", ")}`);
+  assert.ok(contextPaths.includes("test/exception-stock-display.test.ts"), `literal-read harness missing: ${contextPaths.join(", ")}`);
+  assert.equal(contextPaths.includes("test/decoy.test.ts"), false, `string/comment decoy leaked: ${contextPaths.join(", ")}`);
+
+  const raw = readyPlan(context, ["src/web-main.ts"]);
+  const { plan, companions } = applyImpactedTestCompanions(root, context, raw);
+  assert.ok(companions.includes("test/exception-stock-display.test.ts"), `missing impacted harness: ${companions.join(", ")}`);
+  assert.equal(companions.includes("test/decoy.test.ts"), false);
+
+  const scope = plan.implementationScope as { allowedPaths: string[] };
+  assert.ok(scope.allowedPaths.includes("test/exception-stock-display.test.ts"));
+  assert.doesNotThrow(() => validatePlan(plan, root, context));
+});
