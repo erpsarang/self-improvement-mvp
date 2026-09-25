@@ -341,6 +341,7 @@ jobs:
           prompt-file: ${{ runner.temp }}/product-evaluation-request/product-evaluation-prompt.md
           output-schema-file: ${{ runner.temp }}/product-evaluation-request/product-evaluation-output.schema.json
           output-file: ${{ runner.temp }}/evaluator-output/evaluator.json
+          model: gpt-6-luna
           effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
