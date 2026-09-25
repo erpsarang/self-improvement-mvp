@@ -17,6 +17,13 @@ export interface StageMeasurement {
   stageId: StageId;
   callCount: number;
   costUnits: number | null;
+  /**
+   * Caller-supplied reference to the record supporting this stage's calls and cost.
+   * A nonempty string is required for every measured stage, including uncalled
+   * stages and stages with unknown cost. Optional for expected stages.
+   * Preserved verbatim as local metadata; never resolved or authenticated.
+   */
+  sourceRef?: string;
 }
 
 /** Local, caller-supplied data. These are not external API usage fields. */
@@ -49,6 +56,10 @@ export interface StageComparison extends CostComparison {
   baselineCallCount: number;
   candidateCallCount: number;
   deltaCallCount: number;
+  /** Caller-supplied reference, not authenticated evidence; null when omitted. */
+  baselineSourceRef: string | null;
+  /** Caller-supplied reference, not authenticated evidence; null when omitted. */
+  candidateSourceRef: string | null;
 }
 
 export interface QualityObservation {
@@ -138,12 +149,21 @@ function parseRun(value: unknown, path: string): RunInput {
   const seen = new Set<StageId>();
   for (const raw of input.stages) {
     const entry = record(raw, `${path}.stages[]`);
-    exactKeys(entry, ['stageId', 'callCount', 'costUnits'], `${path}.stages[]`);
+    const hasSourceRef = Object.prototype.hasOwnProperty.call(entry, 'sourceRef');
+    exactKeys(entry, hasSourceRef
+      ? ['stageId', 'callCount', 'costUnits', 'sourceRef']
+      : ['stageId', 'callCount', 'costUnits'], `${path}.stages[]`);
     const stageId = STAGE_IDS.find(id => id === entry.stageId);
     if (stageId === undefined || seen.has(stageId)) {
       return invalid(`${path}.stages`, 'unknown or duplicate stageId');
     }
     seen.add(stageId);
+    if (measurementKind === 'measured' && !hasSourceRef) {
+      return invalid(`${path}.${stageId}.sourceRef`, 'required for measured stages');
+    }
+    const sourceRef = hasSourceRef
+      ? nonempty(entry.sourceRef, `${path}.${stageId}.sourceRef`)
+      : undefined;
     const callCount = integer(entry.callCount, `${path}.${stageId}.callCount`);
     const costUnits = entry.costUnits === null
       ? null
@@ -151,7 +171,7 @@ function parseRun(value: unknown, path: string): RunInput {
     if (callCount === 0 && costUnits !== 0) {
       return invalid(`${path}.${stageId}`, 'an uncalled stage requires callCount=0 and costUnits=0');
     }
-    stages.push({ stageId, callCount, costUnits });
+    stages.push({ stageId, callCount, costUnits, ...(sourceRef === undefined ? {} : { sourceRef }) });
   }
   const rawQuality = record(input.quality, `${path}.quality`);
   exactKeys(rawQuality, QUALITY_IDS, `${path}.quality`);
@@ -194,7 +214,11 @@ function compareCost(baseline: number | null, candidate: number | null): CostCom
   };
 }
 
-/** Validates both inputs before comparing. Never performs IO or authorizes execution/merge. */
+/**
+ * Validates both inputs, including source reference presence for measured stages.
+ * Does not authenticate references or collect records. Never performs IO or
+ * authorizes execution/merge.
+ */
 export function compareRuns(baselineValue: unknown, candidateValue: unknown): ComparisonResult {
   const baseline = parseRun(baselineValue, 'baseline');
   const candidate = parseRun(candidateValue, 'candidate');
@@ -211,6 +235,8 @@ export function compareRuns(baselineValue: unknown, candidateValue: unknown): Co
       baselineCallCount: before.callCount,
       candidateCallCount: after.callCount,
       deltaCallCount: after.callCount - before.callCount,
+      baselineSourceRef: before.sourceRef ?? null,
+      candidateSourceRef: after.sourceRef ?? null,
     };
   });
   const baselineCallCount = safeSum(baseline.stages.map(stage => stage.callCount), 'baseline.totalCallCount');
