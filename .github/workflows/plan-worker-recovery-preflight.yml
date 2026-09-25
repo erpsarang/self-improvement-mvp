@@ -216,7 +216,9 @@ jobs:
               return;
             }
 
+            // FRAMEWORK.md는 Framework Sync마다 source SHA 한 줄이 바뀌는 배포본 표식이다. Bridge 복구 검증과 같은 기준으로 허용한다 (App #228 run 36171222735).
             const allowedFiles = new Set([
+              'FRAMEWORK.md',
               '.github/workflows/plan-implement-worker.yml',
               '.github/workflows/plan-candidate-bridge.yml',
               '.github/workflows/plan-worker-recovery-preflight.yml',
