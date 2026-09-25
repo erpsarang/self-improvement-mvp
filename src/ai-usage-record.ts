@@ -8,9 +8,14 @@ export const AI_USAGE_STAGES = Object.freeze([
 
 export type AiUsageStage = (typeof AI_USAGE_STAGES)[number];
 
-export interface StageExecutionObservation {
-  readonly stage: AiUsageStage;
+export interface InvocationUsageRecord {
   readonly sourceRef: string;
+  readonly model: string | null;
+  readonly tokenUsage: number | null;
+}
+
+export interface StageExecutionObservation extends InvocationUsageRecord {
+  readonly stage: AiUsageStage;
 }
 
 export interface AiUsageRecordInput {
@@ -21,15 +26,15 @@ export interface AiUsageRecordInput {
 export interface StageUsageRecord {
   readonly stage: AiUsageStage;
   readonly sourceRefs: readonly string[];
+  readonly invocations: readonly InvocationUsageRecord[];
   readonly observedStageInvocationCount: number | null;
-  readonly providerCallCount: null;
-  readonly model: null;
-  readonly tokenUsage: null;
+  /** Paired model/usage blocks in the supplied evidence, not API requests. */
+  readonly providerCallCount: number | null;
   readonly monetaryCost: null;
 }
 
 export interface AiUsageRecord {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly cycleRef: string;
   readonly stages: readonly StageUsageRecord[];
 }
@@ -73,9 +78,17 @@ function requireStage(value: unknown, label: string): AiUsageStage {
   throw new TypeError(`${label} must be a supported AI stage`);
 }
 
+function requireTokenUsage(value: unknown, label: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be null or a nonnegative safe integer`);
+  }
+  return value === 0 ? 0 : value;
+}
+
 /**
- * Aggregates observations supplied by a trusted caller. Validation does not
- * authenticate evidence or establish observation completeness.
+ * Aggregates invocation observations supplied by a trusted caller. Validation
+ * does not authenticate evidence, pair log markers, or establish completeness.
  */
 export function aggregateAiUsageRecord(input: unknown): AiUsageRecord {
   const record = requireObject(input, 'input');
@@ -86,35 +99,47 @@ export function aggregateAiUsageRecord(input: unknown): AiUsageRecord {
     throw new TypeError('observations must be an array');
   }
 
-  const sources = new Map<AiUsageStage, Set<string>>();
-  for (const stage of AI_USAGE_STAGES) sources.set(stage, new Set<string>());
-
+  const sources = new Map<string, StageExecutionObservation>();
   for (const [index, value] of observations.entries()) {
     const label = `observations[${index}]`;
     const observation = requireObject(value, label);
-    requireKeys(observation, ['stage', 'sourceRef'], label);
+    requireKeys(observation, ['stage', 'sourceRef', 'model', 'tokenUsage'], label);
     const stage = requireStage(observation.stage, `${label}.stage`);
     const sourceRef = requireReference(observation.sourceRef, `${label}.sourceRef`);
-    sources.get(stage)!.add(sourceRef);
+    const model = observation.model === null
+      ? null
+      : requireReference(observation.model, `${label}.model`);
+    const tokenUsage = requireTokenUsage(observation.tokenUsage, `${label}.tokenUsage`);
+    const previous = sources.get(sourceRef);
+    if (previous !== undefined) {
+      if (previous.stage !== stage || previous.model !== model || previous.tokenUsage !== tokenUsage) {
+        throw new TypeError(`${label}.sourceRef conflicts with an earlier observation`);
+      }
+      continue;
+    }
+    sources.set(sourceRef, { stage, sourceRef, model, tokenUsage });
   }
 
   const stages: StageUsageRecord[] = AI_USAGE_STAGES.map((stage) => {
-    // Relational string comparison uses UTF-16 code units, independent of locale.
-    const sourceRefs = [...sources.get(stage)!].sort((a, b) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
+    const invocations: InvocationUsageRecord[] = [...sources.values()]
+      .filter((observation) => observation.stage === stage)
+      // Relational string comparison uses UTF-16 code units, independent of locale.
+      .sort((a, b) => a.sourceRef < b.sourceRef ? -1 : a.sourceRef > b.sourceRef ? 1 : 0)
+      .map(({ sourceRef, model, tokenUsage }) => ({ sourceRef, model, tokenUsage }));
+    const count = invocations.length === 0 ? null : invocations.length;
     return {
       stage,
-      sourceRefs,
-      observedStageInvocationCount: sourceRefs.length === 0 ? null : sourceRefs.length,
-      providerCallCount: null,
-      model: null,
-      tokenUsage: null,
+      sourceRefs: invocations.map(({ sourceRef }) => sourceRef),
+      invocations,
+      observedStageInvocationCount: count,
+      providerCallCount: invocations.every(({ model, tokenUsage }) =>
+        model !== null && tokenUsage !== null,
+      ) ? count : null,
       monetaryCost: null,
     };
   });
 
-  return { schemaVersion: 1, cycleRef, stages };
+  return { schemaVersion: 2, cycleRef, stages };
 }
 
 /** Serializes validated input using fixed field, stage and sourceRef ordering. */
