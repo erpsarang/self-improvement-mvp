@@ -19,6 +19,16 @@ function run(cost = 100): RunInput {
   };
 }
 
+// Synthetic references exercise the input contract; they are not actual evidence.
+function measuredRun(label = 'fixture', cost = 100): RunInput {
+  const input = run(cost);
+  input.measurementKind = 'measured';
+  input.stages = input.stages.map(stage => ({
+    ...stage, sourceRef: `fixtures/${label}.json#${stage.stageId}`,
+  }));
+  return input;
+}
+
 function onlyPlan(cost: number, calls = 1): RunInput {
   const input = run();
   input.stages = STAGE_IDS.map(stageId => ({
@@ -72,6 +82,119 @@ test('compares by stage identity, preserves inputs, and reports independent qual
   assert.deepEqual(result.quality.candidateFailures, []);
   assert.deepEqual(result.quality.unknownItems, []);
   assert.deepEqual(result.candidate, { cycleId: 'candidate-cycle', policyLabel: 'candidate-policy' });
+});
+
+test('measured comparisons preserve both source references by stage identity', () => {
+  const baseline = measuredRun('before', 100);
+  const candidate = measuredRun('after', 80);
+  baseline.stages[0]!.sourceRef = '  fixtures/before.json#plan  ';
+  candidate.stages.reverse();
+  candidate.stages.find(stage => stage.stageId === 'plan')!.callCount = 2;
+  const snapshot = JSON.stringify([baseline, candidate]);
+  const result = compareRuns(baseline, candidate);
+  assert.equal(JSON.stringify([baseline, candidate]), snapshot);
+  assert.equal(result.measurementKind, 'measured');
+  assert.deepEqual(result.stages.map(stage => stage.stageId), STAGE_IDS);
+  for (const stage of result.stages) {
+    assert.equal(stage.baselineSourceRef, stage.stageId === 'plan'
+      ? '  fixtures/before.json#plan  ' : `fixtures/before.json#${stage.stageId}`);
+    assert.equal(stage.candidateSourceRef, `fixtures/after.json#${stage.stageId}`);
+    assert.equal(stage.deltaCostUnits, -20);
+    assert.equal(stage.deltaCallCount, stage.stageId === 'plan' ? 1 : 0);
+  }
+  assert.equal(result.totals.baselineCostUnits, 700);
+  assert.equal(result.totals.candidateCostUnits, 560);
+  assert.equal(result.totals.deltaCostUnits, -140);
+  assert.equal(result.totals.savingsPercent, 20);
+  assert.equal(result.totals.deltaCallCount, 1);
+});
+
+test('measured inputs require an own source reference for every stage on either side', () => {
+  for (const side of ['baseline', 'candidate'] as const) {
+    for (const stageId of STAGE_IDS) {
+      for (const cost of [100, 0, null]) {
+        const baseline = measuredRun('before');
+        const candidate = measuredRun('after');
+        const stage = (side === 'baseline' ? baseline : candidate).stages.find(item => item.stageId === stageId)!;
+        stage.costUnits = cost;
+        stage.callCount = cost === 0 ? 0 : 1;
+        delete stage.sourceRef;
+        assert.throws(() => compareRuns(baseline, candidate), {
+          name: 'TypeError', message: `${side}.${stageId}.sourceRef: required for measured stages`,
+        });
+        Object.setPrototypeOf(stage, { sourceRef: 'inherited-reference' });
+        assert.throws(() => compareRuns(baseline, candidate), {
+          name: 'TypeError', message: `${side}.${stageId}.sourceRef: required for measured stages`,
+        });
+      }
+    }
+  }
+});
+
+test('provided source references must be nonempty strings for either measurement kind', () => {
+  for (const measurementKind of ['expected', 'measured'] as const) {
+    for (const sourceRef of ['', ' \t\n', null, undefined, 1, false, {}, []]) {
+      for (const side of ['baseline', 'candidate'] as const) {
+        const baseline = { ...measuredRun('before'), measurementKind };
+        const candidate = { ...measuredRun('after'), measurementKind };
+        const input = side === 'baseline' ? baseline : candidate;
+        input.stages[0] = { ...input.stages[0]!, sourceRef } as unknown as RunInput['stages'][number];
+        assert.throws(() => compareRuns(baseline, candidate), {
+          name: 'TypeError', message: `${side}.plan.sourceRef: expected a nonempty string`,
+        });
+      }
+    }
+  }
+});
+
+test('expected inputs allow absent or partial references without becoming measured', () => {
+  const baseline = run();
+  const candidate = run(80);
+  let result = compareRuns(baseline, candidate);
+  assert.equal(result.measurementKind, 'expected');
+  for (const stage of result.stages) {
+    assert.equal(stage.baselineSourceRef, null);
+    assert.equal(stage.candidateSourceRef, null);
+  }
+  baseline.stages[0]!.sourceRef = 'local-estimate:before';
+  candidate.stages[1]!.sourceRef = 'local-estimate:after';
+  result = compareRuns(baseline, candidate);
+  assert.equal(result.measurementKind, 'expected');
+  for (const stage of result.stages) {
+    assert.equal(stage.baselineSourceRef, stage.stageId === 'plan' ? 'local-estimate:before' : null);
+    assert.equal(stage.candidateSourceRef, stage.stageId === 'bounded-implement' ? 'local-estimate:after' : null);
+  }
+  assert.equal(result.totals.deltaCostUnits, -140);
+  assert.equal(result.totals.savingsPercent, 20);
+});
+
+test('source references do not fill missing costs or change uncalled stage rules', () => {
+  const baseline = measuredRun('before');
+  const candidate = measuredRun('after', 80);
+  baseline.stages[0]!.costUnits = null;
+  candidate.stages[1]!.callCount = 0;
+  candidate.stages[1]!.costUnits = 0;
+  const result = compareRuns(baseline, candidate);
+  assert.equal(result.stages[0]!.baselineSourceRef, 'fixtures/before.json#plan');
+  assert.equal(result.stages[0]!.deltaUnavailableReason, 'missing-cost');
+  assert.equal(result.stages[1]!.candidateSourceRef, 'fixtures/after.json#bounded-implement');
+  assert.equal(result.stages[1]!.deltaCostUnits, -100);
+  assert.equal(result.totals.baselineCostUnits, null);
+  assert.equal(result.totals.candidateCostUnits, 480);
+  assert.equal(result.totals.deltaCostUnits, null);
+  assert.deepEqual(result.totals.missingCosts, [{ side: 'baseline', stageId: 'plan' }]);
+  candidate.stages[1]!.costUnits = null;
+  assert.throws(() => compareRuns(baseline, candidate), TypeError);
+});
+
+test('sourceRef remains the only optional stage field', () => {
+  for (const side of ['baseline', 'candidate'] as const) {
+    const baseline = measuredRun('before');
+    const candidate = measuredRun('after');
+    const input = side === 'baseline' ? baseline : candidate;
+    Object.assign(input.stages[0]!, { extra: true });
+    assert.throws(() => compareRuns(baseline, candidate), TypeError);
+  }
 });
 
 test('cost increases, equality, full savings, and fractional percentages', () => {
@@ -142,10 +265,11 @@ test('comparison dimensions must match; identifiers and labels may differ', () =
     ['workloadKey', 'different'], ['measurementKind', 'measured'], ['currency', 'EUR'], ['unitScale', 100],
   ] as const) {
     const candidate = { ...run(), [key]: value };
+    if (key === 'measurementKind') candidate.stages = measuredRun().stages;
     assert.throws(() => compareRuns(run(), candidate), new RegExp(key));
   }
-  const baseline = run();
-  baseline.measurementKind = 'measured';
+  assert.throws(() => compareRuns(measuredRun(), run()), /measurementKind/);
+  const baseline = measuredRun();
   const candidate = { ...baseline, cycleId: 'other', policyLabel: 'other' };
   assert.equal(compareRuns(baseline, candidate).measurementKind, 'measured');
 });
