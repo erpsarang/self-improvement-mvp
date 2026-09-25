@@ -290,9 +290,11 @@ jobs:
             fi
           fi
 
-          echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
-          echo "has_output=${has_output}" >> "$GITHUB_OUTPUT"
-          echo "complete_output=${complete_output}" >> "$GITHUB_OUTPUT"
+          {
+            echo "elapsed_seconds=${elapsed}"
+            echo "has_output=${has_output}"
+            echo "complete_output=${complete_output}"
+          } >> "$GITHUB_OUTPUT"
 
           accept_output=false
           if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$complete_output" = "false" ]; then
