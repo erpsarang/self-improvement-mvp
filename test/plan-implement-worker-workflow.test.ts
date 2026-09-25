@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "utf8");
@@ -209,7 +212,7 @@ test("timeout 경계 failure만 fresh runner에서 1회 bounded 자동 재시도
   assert.match(attempt0, /name: IMPLEMENT timeout 측정 시작/);
   assert.match(attempt0, /id: implement0[\s\S]*continue-on-error: true[\s\S]*timeout-minutes: 4/);
   assert.match(attempt0, /name: IMPLEMENT timeout 재시도 분류/);
-  assert.match(attempt0, /\[ "\$IMPLEMENT_OUTCOME" = "failure" \] && \[ "\$elapsed" -ge 230 \] && \[ "\$has_output" = "false" \]/);
+  assert.match(attempt0, /\[ "\$IMPLEMENT_OUTCOME" = "failure" \] && \[ "\$elapsed" -ge 230 \] && \[ "\$complete_output" = "false" \]/);
   assert.match(attempt0, /bounded IMPLEMENT failed before retry eligibility/);
   assert.match(attempt0, /name: timeout retry input artifact 저장/);
   assert.doesNotMatch(attempt0, /name: Untrusted bounded IMPLEMENT timeout retry/);
@@ -250,4 +253,70 @@ test("INFRA_FAILURE는 exact stalled marker로만 기록하고 Worker 스스로 
   // marker 뒤에도 infrastructure failure는 fail-closed 한다.
   assert.ok(finalize.indexOf("INFRA_FAILURE stalled cycle 기록") < finalize.indexOf("upstream infrastructure failure 시 fail-closed"));
   assert.doesNotMatch(workflow, /createWorkflowDispatch|workflow_id: 'plan-implement-worker\.yml'/);
+});
+
+/** workflow의 bash step 본문을 그대로 꺼내 실행한다. 문자열 검사만으로 분기 동작을 확신하지 않는다. */
+function runStep(block: string, stepName: string, env: Record<string, string>): { status: number | null; outputs: Record<string, string>; stdout: string } {
+  const start = block.indexOf(`name: ${stepName}`);
+  assert.ok(start >= 0, `missing step ${stepName}`);
+  const runIndex = block.indexOf("run: |\n", start);
+  const lines = block.slice(runIndex + "run: |\n".length).split("\n");
+  const body: string[] = [];
+  for (const line of lines) {
+    if (line.trim() !== "" && !line.startsWith("          ")) break;
+    body.push(line.slice(10));
+  }
+  const dir = mkdtempSync(join(tmpdir(), "worker-step-"));
+  const outputFile = join(dir, "github-output");
+  writeFileSync(outputFile, "");
+  const result = spawnSync("bash", ["-c", body.join("\n")], {
+    env: { ...process.env, ...env, GITHUB_OUTPUT: outputFile },
+    encoding: "utf8",
+  });
+  const outputs = Object.fromEntries(
+    readFileSync(outputFile, "utf8").split("\n").filter(Boolean).map((line) => line.split("=", 2) as [string, string]),
+  );
+  rmSync(dir, { recursive: true, force: true });
+  return { status: result.status, outputs, stdout: result.stdout };
+}
+
+test("timeout 경계에서 완성된 output은 버리지 않고 trusted 검증으로, 잘렸거나 없으면 retry로 보낸다 (#228)", () => {
+  const attempt0 = jobBlock("attempt0");
+  const dir = mkdtempSync(join(tmpdir(), "worker-proposal-"));
+  const complete = join(dir, "complete.json");
+  const truncated = join(dir, "truncated.json");
+  writeFileSync(complete, JSON.stringify({ summary: "done", changes: [{ path: "src/web-main.ts", operation: "modify" }] }));
+  writeFileSync(truncated, '{"summary":"done","changes":[{"path":"src/web-main.ts","content":"import');
+  const startedAt = String(Math.floor(Date.now() / 1000) - 237);
+  const classify = (outcome: string, proposal: string, started = startedAt) =>
+    runStep(attempt0, "IMPLEMENT timeout 재시도 분류", { IMPLEMENT_OUTCOME: outcome, STARTED_AT: started, RAW_PROPOSAL: proposal });
+  const gate = (outcome: string, retry: string, accept: string) =>
+    runStep(attempt0, "bounded IMPLEMENT 실행 결과 확인", { INITIAL_OUTCOME: outcome, RETRY_REQUIRED: retry, ACCEPT_OUTPUT: accept });
+
+  try {
+    // #228: 237초에 완성된 output → retry 없이 trusted 검증으로 진행한다.
+    const accepted = classify("failure", complete);
+    assert.equal(accepted.status, 0);
+    assert.deepEqual([accepted.outputs.retry, accepted.outputs.accept_output, accepted.outputs.complete_output], ["false", "true", "true"]);
+    assert.equal(gate("failure", "false", "true").status, 0);
+
+    // 잘린 output과 output 없음은 완성본이 아니므로 기존처럼 fresh runner retry 1회로 보낸다.
+    for (const proposal of [truncated, join(dir, "missing.json")]) {
+      const retried = classify("failure", proposal);
+      assert.deepEqual([retried.outputs.retry, retried.outputs.accept_output], ["true", "false"], proposal);
+      assert.equal(gate("failure", "true", "false").status, 0);
+    }
+
+    // timeout 경계 전 실패는 완성된 output이 있어도 받지 않고 지금처럼 fail-closed 한다.
+    const early = classify("failure", complete, String(Math.floor(Date.now() / 1000) - 60));
+    assert.deepEqual([early.outputs.retry, early.outputs.accept_output], ["false", "false"]);
+    assert.notEqual(gate("failure", "false", "false").status, 0);
+
+    // 정상 성공 경로는 바뀌지 않는다.
+    const success = classify("success", complete);
+    assert.deepEqual([success.outputs.retry, success.outputs.accept_output], ["false", "false"]);
+    assert.equal(gate("success", "false", "false").status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
