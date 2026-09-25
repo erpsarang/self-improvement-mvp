@@ -18,6 +18,8 @@ export interface FreezeOptions {
   readonly actor?: string;
   readonly user?: { login: string; id: number; type: string } | null;
   readonly association?: string;
+  /** Freeze step이 남긴 step output을 받는다 (예: planner_model). */
+  readonly outputs?: Record<string, string>;
 }
 
 export async function freeze(title: string, body: string, attemptOrOptions: string | FreezeOptions = "1") {
@@ -39,6 +41,7 @@ export async function freeze(title: string, body: string, attemptOrOptions: stri
       { repo: { owner: "example", repo: "app" }, sha: "b".repeat(40) },
       { setOutput: (key: string, value: string) => { outputs[key] = value; } },
     );
+    if (options.outputs) Object.assign(options.outputs, outputs);
     const identity = JSON.parse(outputs.identity!);
     assert.deepEqual(JSON.parse(readFileSync(join(root, "ai-plan/identity.json"), "utf8")), identity);
     return identity;
