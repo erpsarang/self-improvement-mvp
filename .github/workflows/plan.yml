@@ -165,6 +165,9 @@ jobs:
         with:
           openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
           allow-bots: true
+          # 빈 값은 npm latest를 설치하므로, 새 Codex CLI 배포 직후에는 platform optional dependency 없이 설치돼
+          # AI 호출 전에 실패할 수 있다 (run 36087088194). 성공 run에서 확인된 exact version으로 고정한다.
+          codex-version: "0.156.1"
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           working-directory: ${{ runner.temp }}/plan-neutral
