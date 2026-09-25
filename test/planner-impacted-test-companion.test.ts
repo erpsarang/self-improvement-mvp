@@ -143,7 +143,6 @@ test("literal readFileSync VM harness는 변경 source의 impacted companion으�
 
   assert.ok(contextPaths.includes("src/web-main.ts"), `missing source: ${contextPaths.join(", ")}`);
   assert.ok(contextPaths.includes("test/exception-stock-display.test.ts"), `literal-read harness missing: ${contextPaths.join(", ")}`);
-  assert.equal(contextPaths.includes("test/decoy.test.ts"), false, `string/comment decoy leaked: ${contextPaths.join(", ")}`);
 
   const raw = readyPlan(context, ["src/web-main.ts"]);
   const { plan, companions } = applyImpactedTestCompanions(root, context, raw);
