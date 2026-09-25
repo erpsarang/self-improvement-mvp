@@ -281,17 +281,35 @@ jobs:
           now="$(date +%s)"
           elapsed="$((now - STARTED_AT))"
           has_output=false
-          if [ -s "$RAW_PROPOSAL" ]; then has_output=true; fi
+          complete_output=false
+          if [ -s "$RAW_PROPOSAL" ]; then
+            has_output=true
+            # Codex가 timeout 직전에 끝냈다면 output은 완성된 JSON이다. 잘린 파일은 완성본으로 보지 않는다.
+            if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$RAW_PROPOSAL" 2>/dev/null; then
+              complete_output=true
+            fi
+          fi
 
-          echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
-          echo "has_output=${has_output}" >> "$GITHUB_OUTPUT"
+          {
+            echo "elapsed_seconds=${elapsed}"
+            echo "has_output=${has_output}"
+            echo "complete_output=${complete_output}"
+          } >> "$GITHUB_OUTPUT"
 
-          if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$has_output" = "false" ]; then
+          accept_output=false
+          if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$complete_output" = "false" ]; then
             echo "retry=true" >> "$GITHUB_OUTPUT"
-            echo "첫 IMPLEMENT가 timeout 경계에서 output 없이 실패해 bounded retry 1회를 허용합니다."
+            echo "첫 IMPLEMENT가 timeout 경계에서 완성된 output 없이 실패해 bounded retry 1회를 허용합니다."
           else
             echo "retry=false" >> "$GITHUB_OUTPUT"
+            # timeout 경계에서 완성된 output을 버리지 않는다. 이 output도 untrusted이며 아래 trusted 검증과
+            # deterministic CI를 그대로 거친다 (sales-order-exception-analyzer #228: 237초에 완성 후 폐기됨).
+            if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$complete_output" = "true" ]; then
+              accept_output=true
+              echo "첫 IMPLEMENT가 timeout 경계에서 완성된 output을 남겨 trusted 검증으로 넘깁니다."
+            fi
           fi
+          echo "accept_output=${accept_output}" >> "$GITHUB_OUTPUT"
 
       - name: bounded IMPLEMENT 실행 결과 확인
         if: always() && steps.source.outputs.should_run == 'true'
@@ -300,9 +318,14 @@ jobs:
         env:
           INITIAL_OUTCOME: ${{ steps.implement0.outcome }}
           RETRY_REQUIRED: ${{ steps.timeout0.outputs.retry }}
+          ACCEPT_OUTPUT: ${{ steps.timeout0.outputs.accept_output }}
         run: |
           set -euo pipefail
           if [ "$INITIAL_OUTCOME" = "success" ]; then
+            exit 0
+          fi
+          if [ "$ACCEPT_OUTPUT" = "true" ]; then
+            echo "timeout 경계에서 완성된 output을 받아 trusted 검증으로 넘깁니다."
             exit 0
           fi
           if [ "$RETRY_REQUIRED" = "true" ]; then
