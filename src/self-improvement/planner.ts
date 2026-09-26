@@ -329,14 +329,49 @@ function projectBootstrapContextPaths<T extends { path: string }>(
   };
 
   // 문서화 요구는 기존 문서와 실제 실행 계약을 먼저 보존한다.
-  // 나머지 bounded slot은 기존 lexical/business ranking이 기능 근거 소스·테스트를 선택한다.
+  // 사용법을 설명하는 요구라면 bounded slot 안에서 사용자 입출력 계약 runtime을
+  // 일반 분석 소스/직접 테스트보다 먼저 보여 준다. 전체 repository 확장은 하지 않는다.
   if (hasDocumentationIntent) {
     add("README.md");
     add("package.json");
+
+    const runtimeCandidates = candidates.filter((candidate) => fileRolePriority(candidate.path) === 0);
+    const addFirstRuntime = (patterns: readonly RegExp[]) => {
+      for (const pattern of patterns) {
+        const match = runtimeCandidates.find((candidate) => pattern.test(candidate.path));
+        if (match) {
+          add(match.path);
+          return;
+        }
+      }
+    };
+
+    if (/\bcsv\b|CSV|업로드|입력|파싱|검증|사용법|usage/i.test(requirement)) {
+      addFirstRuntime([
+        /(?:^|\/)[^/]*(?:csv|upload|input|parser)[^/]*\.(?:[cm]?[jt]sx?)$/i,
+      ]);
+    }
+    if (/기준|reference|provider|lookup/i.test(requirement)) {
+      addFirstRuntime([
+        /(?:^|\/)[^/]*(?:decision-reference|reference|provider)[^/]*\.(?:[cm]?[jt]sx?)$/i,
+      ]);
+    }
+    if (/양식|template/i.test(requirement)) {
+      addFirstRuntime([
+        /(?:^|\/)[^/]*template[^/]*\.(?:[cm]?[jt]sx?)$/i,
+      ]);
+    }
+    if (/웹|브라우저|화면|다운로드|출력|web|browser|download|output/i.test(requirement)) {
+      addFirstRuntime([
+        /(?:^|\/)[^/]*(?:web|browser|frontend|ui|download|export)[^/]*\.(?:[cm]?[jt]sx?)$/i,
+      ]);
+    }
   }
   if (hasWebIntent && !excludesWeb) {
     add("package.json");
-    add("tsconfig.json");
+    // Product Guide가 웹 실행을 설명한다는 이유만으로 compiler 설정이 사용 계약보다
+    // 앞서 bounded slot을 소비하지 않게 한다. 일반 웹 구현 요구의 기존 동작은 유지한다.
+    if (!hasDocumentationIntent) add("tsconfig.json");
   }
   return paths;
 }
