@@ -220,6 +220,62 @@ test("ready PLAN은 Human approval 전에 package-lock companion capacity와 exa
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("ready PLAN은 승인 전에 실제 IMPLEMENT Context 80KB materialization 가능 여부를 검증한다", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.target, "src"));
+    mkdirSync(join(f.target, "test"));
+    const files: Array<[string, number]> = [
+      ["src/change.ts", 30_000],
+      ["test/change.test.ts", 30_000],
+      ["test/evidence.test.ts", 30_000],
+    ];
+    for (const [path, bytes] of files) writeFileSync(join(f.target, path), "x".repeat(bytes));
+
+    // 세 파일 모두 PLAN에서는 20KB 발췌로 보므로 60KB 안에 들어간다.
+    // 하지만 셋을 모두 allowedPaths로 승인하면 IMPLEMENT는 수정 대상 전체 90KB를 읽어야 하므로
+    // Human approval 전에 fail-closed 해야 한다.
+    const requirement = files.map(([path]) => path).join(" ");
+    const context = selectPlanContext(requirement, f.target, "example/orders", "e".repeat(40), {
+      maxFiles: 3,
+      maxBytes: PLAN_CONTEXT_MAX_BYTES,
+      maxFileBytes: 20_000,
+    });
+    assert.deepEqual(new Set(context.files.map((file) => file.path)), new Set(files.map(([path]) => path)));
+    assert.ok(context.totalBytes <= PLAN_CONTEXT_MAX_BYTES);
+
+    const plan = planFor(context);
+    const oversized = {
+      ...plan,
+      approach: ["세 파일을 함께 수정한다"],
+      changeCandidates: files.map(([path]) => `${path} 변경`),
+      testStrategy: ["변경 테스트와 기존 회귀 테스트를 실행한다"],
+      implementationScope: {
+        ...plan.implementationScope,
+        allowedPaths: files.map(([path]) => path),
+        contextPaths: [],
+        requiredChanges: ["관련 구현과 테스트를 함께 변경한다"],
+      },
+    };
+    assert.throws(
+      () => validatePlan(oversized, f.target, context),
+      /exceeds IMPLEMENT Context budget/,
+    );
+
+    const bounded = {
+      ...oversized,
+      approach: ["src/change.ts만 수정하고 두 테스트는 read-only 근거로 사용한다"],
+      changeCandidates: ["src/change.ts 변경"],
+      implementationScope: {
+        ...oversized.implementationScope,
+        allowedPaths: ["src/change.ts"],
+        contextPaths: ["test/change.test.ts", "test/evidence.test.ts"],
+      },
+    };
+    assert.doesNotThrow(() => validatePlan(bounded, f.target, context));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("Context Pack deterministically reserves relevant source/test context before documentation", () => {
   const f = fixture();
   try {
