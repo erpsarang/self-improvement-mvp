@@ -785,8 +785,8 @@ jobs:
           prompt-file: ${{ runner.temp }}/repair-input-1/prompt.md
           output-schema-file: ${{ runner.temp }}/repair-input-1/schema.json
           output-file: ${{ runner.temp }}/worker-output-repair-1/raw-proposal.json
-          model: gpt-6-sol
-          effort: low
+          model: gpt-6-luna
+          effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
       - name: repair 1 input 제거
@@ -961,8 +961,8 @@ jobs:
           prompt-file: ${{ runner.temp }}/repair-input-2/prompt.md
           output-schema-file: ${{ runner.temp }}/repair-input-2/schema.json
           output-file: ${{ runner.temp }}/worker-output-repair-2/raw-proposal.json
-          model: gpt-6-sol
-          effort: low
+          model: gpt-6-luna
+          effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
       - name: repair 2 input 제거
