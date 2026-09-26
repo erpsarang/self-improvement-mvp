@@ -135,3 +135,71 @@ test("README/Product Guide 문서화 요구는 기존 README와 package 실행 �
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("README 사용법 문서화 요구는 CSV 입력·기준·양식·웹 계약을 일반 분석 테스트보다 먼저 보존한다 (#288)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-documentation-contract-context-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "test"));
+    writeFileSync(join(root, "README.md"), "# 초기 MVP\n");
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test", build: "tsc", dev: "vite" } }),
+    );
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+    writeFileSync(
+      join(root, "src", "order-csv.ts"),
+      "export const csv = 'CSV 파싱 검증 예외 CSV 출력';\n",
+    );
+    writeFileSync(
+      join(root, "src", "csv-decision-reference.ts"),
+      "export const reference = '고객 자재 기준 조회 여러 누락 기준';\n",
+    );
+    writeFileSync(
+      join(root, "src", "order-csv-template.ts"),
+      "export const template = '업로드 기준 주문 CSV 양식';\n",
+    );
+    writeFileSync(
+      join(root, "src", "web-main.ts"),
+      "export const web = '브라우저 업로드 분석 결과 다운로드';\n",
+    );
+    writeFileSync(
+      join(root, "src", "batch-order-analysis.ts"),
+      "export const batch = '주문 분석 결과 우선순위';\n",
+    );
+    writeFileSync(
+      join(root, "test", "batch-order-analysis.test.ts"),
+      "import { batch } from '../src/batch-order-analysis.js'; test('batch', () => void batch);\n",
+    );
+
+    const requirement = [
+      "[업무 요구] README를 현재 구현과 제품 비전을 반영한 Product Guide로 재작성하고 싶다",
+      "설치·웹 실행과 세 CSV 분석 방식, CSV 파싱·검증, 업로드 기준 조회, 여러 누락 기준 사전점검을 설명한다.",
+      "주문 CSV 양식 활용과 예외 CSV 다운로드/출력 사용법을 실제 구현 근거로 정확히 안내한다.",
+      "README 외 제품 기능은 변경하지 않는다.",
+    ].join("\n");
+    const pack = selectPlanContext(requirement, root, "example/orders", "e".repeat(40), {
+      maxFiles: 8,
+      maxBytes: 32_000,
+      maxFileBytes: 4_000,
+    });
+    const paths = pack.files.map((file) => file.path);
+
+    for (const path of [
+      "README.md",
+      "package.json",
+      "src/order-csv.ts",
+      "src/csv-decision-reference.ts",
+      "src/order-csv-template.ts",
+      "src/web-main.ts",
+    ]) {
+      assert.ok(paths.includes(path), `missing documentation contract: ${path}; got ${paths.join(", ")}`);
+    }
+    assert.ok(!paths.includes("tsconfig.json"), `documentation contract slot was consumed by tsconfig: ${paths.join(", ")}`);
+    assert.ok(paths.length <= 8);
+    assert.ok(pack.totalBytes <= 32_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
