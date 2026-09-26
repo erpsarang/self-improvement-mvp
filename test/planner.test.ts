@@ -9,6 +9,7 @@ import {
   createPlanPrompt,
   PLAN_CONTEXT_MAX_BYTES,
   PLAN_CONTEXT_MAX_FILES,
+  PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
   PLAN_ALLOWED_PATH_PATTERN,
   PLAN_SCHEMA,
   selectPlanContext,
@@ -220,21 +221,20 @@ test("ready PLAN은 Human approval 전에 package-lock companion capacity와 exa
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("ready PLAN은 승인 전에 실제 IMPLEMENT Context 80KB materialization 가능 여부를 검증한다", () => {
+test("ready PLAN은 PLAN 80KB와 별도 IMPLEMENT full-file budget을 함께 검증한다", () => {
   const f = fixture();
   try {
     mkdirSync(join(f.target, "src"));
     mkdirSync(join(f.target, "test"));
     const files: Array<[string, number]> = [
-      ["src/change.ts", 30_000],
-      ["test/change.test.ts", 30_000],
-      ["test/evidence.test.ts", 30_000],
+      ["src/change.ts", 42_000],
+      ["test/change.test.ts", 42_000],
+      ["test/evidence.test.ts", 20_000],
     ];
     for (const [path, bytes] of files) writeFileSync(join(f.target, path), "x".repeat(bytes));
 
-    // 세 파일 모두 PLAN에서는 20KB 발췌로 보므로 60KB 안에 들어간다.
-    // 하지만 셋을 모두 allowedPaths로 승인하면 IMPLEMENT는 수정 대상 전체 90KB를 읽어야 하므로
-    // Human approval 전에 fail-closed 해야 한다.
+    // PLAN은 파일당 20KB 발췌만 보므로 60KB로 기존 80KB evidence 경계를 유지한다.
+    // IMPLEMENT는 수정 대상 기존 파일의 전체 내용이 필요하므로 별도 96KB full-file 경계를 적용한다.
     const requirement = files.map(([path]) => path).join(" ");
     const context = selectPlanContext(requirement, f.target, "example/orders", "e".repeat(40), {
       maxFiles: 3,
@@ -243,6 +243,7 @@ test("ready PLAN은 승인 전에 실제 IMPLEMENT Context 80KB materialization 
     });
     assert.deepEqual(new Set(context.files.map((file) => file.path)), new Set(files.map(([path]) => path)));
     assert.ok(context.totalBytes <= PLAN_CONTEXT_MAX_BYTES);
+    assert.equal(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, 96_000);
 
     const plan = planFor(context);
     const oversized = {
@@ -261,6 +262,19 @@ test("ready PLAN은 승인 전에 실제 IMPLEMENT Context 80KB materialization 
       () => validatePlan(oversized, f.target, context),
       /exceeds IMPLEMENT Context budget/,
     );
+
+    // #250 실증처럼 editable full-file 합계가 80KB를 조금 넘더라도 96KB 이하면 허용한다.
+    const twoEditable = {
+      ...oversized,
+      approach: ["구현과 직접 영향 테스트를 함께 수정한다"],
+      changeCandidates: ["src/change.ts 변경", "test/change.test.ts 변경"],
+      implementationScope: {
+        ...oversized.implementationScope,
+        allowedPaths: ["src/change.ts", "test/change.test.ts"],
+        contextPaths: [],
+      },
+    };
+    assert.doesNotThrow(() => validatePlan(twoEditable, f.target, context));
 
     const bounded = {
       ...oversized,

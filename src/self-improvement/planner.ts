@@ -8,6 +8,9 @@ export const PLAN_CONTEXT_MAX_FILES = 8;
 export const PLAN_CONTEXT_MAX_BYTES = 80_000;
 export const PLAN_CONTEXT_MAX_FILE_BYTES = 20_000;
 export const PLAN_IMPLEMENT_MAX_FILES = 8;
+// PLAN은 80KB bounded evidence를 유지한다. IMPLEMENT는 수정 대상 기존 파일의 전체 내용이 필요하므로
+// 별도 full-file 경계를 둔다. #250 실증에서 올바른 4-file write scope가 80,719B였다.
+export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = 96_000;
 
 export interface PlanContextFile {
   readonly evidenceId: string;
@@ -699,10 +702,10 @@ function validateImplementationScope(value: unknown, target: string, context: Pl
       throw new Error("implementationScope.ready package.json change requires package-lock.json capacity within bounded scope");
     }
     const implementContextBytes = estimatedImplementContextBytes(allowedPaths, contextPaths, target, context);
-    // PLAN과 IMPLEMENT Context budget은 현재 동일한 80KB 경계다. 승인 전에 Handoff가
-    // 실제로 materialize할 수 없는 ready scope를 차단해 Human approval/Worker 재시도를 낭비하지 않는다.
-    if (implementContextBytes > PLAN_CONTEXT_MAX_BYTES) {
-      throw new Error(`implementationScope.ready exceeds IMPLEMENT Context budget: ${implementContextBytes}B > ${PLAN_CONTEXT_MAX_BYTES}B`);
+    // PLAN evidence는 80KB로 유지하되, IMPLEMENT는 수정 대상 기존 파일을 전체로 읽어야 한다.
+    // 별도 full-file 경계 안에 실제 materialize 가능한 ready scope만 승인한다.
+    if (implementContextBytes > PLAN_IMPLEMENT_MAX_CONTEXT_BYTES) {
+      throw new Error(`implementationScope.ready exceeds IMPLEMENT Context budget: ${implementContextBytes}B > ${PLAN_IMPLEMENT_MAX_CONTEXT_BYTES}B`);
     }
   } else if (allowedPaths.length > 0 || contextPaths.length > 0 || requiredChanges.length > 0 || forbiddenChanges.length > 0 || validationCommands.length > 0) {
     throw new Error("implementationScope must be empty when ready=false");
