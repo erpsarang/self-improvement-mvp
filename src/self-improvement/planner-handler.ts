@@ -11,7 +11,7 @@ import {
   type PlanContextPack,
   type PlanImplementationScope,
 } from "./planner.js";
-import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations } from "./plan-business-context.js";
+import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence } from "./plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
 import { augmentPlanContextWithExplicitPaths } from "./plan-explicit-path-context.js";
 import { augmentPlanContextWithAiCallSites } from "./plan-ai-call-site-context.js";
@@ -44,7 +44,8 @@ if (command === "prepare") {
     : businessContext;
   // Framework 자체 요구가 AI 실행 정책을 다루면 AI 호출 step 창을 결정적으로 넣는다 (canonical Framework tree에서만 발동).
   const aiCallSiteContext = augmentPlanContextWithAiCallSites(requirement, target, humanContext);
-  const context = augmentPlanContextWithExplicitPaths(requirement, target, aiCallSiteContext);
+  const explicitContext = augmentPlanContextWithExplicitPaths(requirement, target, aiCallSiteContext);
+  const context = augmentPlanContextWithDirectTestEvidence(target, explicitContext);
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,

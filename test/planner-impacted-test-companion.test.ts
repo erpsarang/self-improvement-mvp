@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations } from "../src/self-improvement/plan-business-context.js";
+import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence, strongestDirectTest } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
 import { PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
 
@@ -155,6 +155,36 @@ function literalReadPlan(context: PlanContextPack, allowedPaths: readonly string
   (raw.implementationScope as { requiredChanges: string[] }).requiredChanges = ["화면 흐름을 세 CSV 입력으로 바꾼다"];
   return raw;
 }
+
+test("최종 Context에 뒤늦게 들어온 source도 실제 직접 테스트 evidence를 AI 호출 전에 보강한다 (#250)", () => {
+  const root = literalReadFixture(false);
+  const context = selectPlanContext(
+    "`src/web-main.ts` 화면에서 같은 자재 주문의 공급 위험을 보여 준다.",
+    root,
+    "erpsarang/sales-order-exception-analyzer",
+    SHA,
+    { maxFiles: 1 },
+  );
+  assert.deepEqual(context.files.map((file) => file.path), ["src/web-main.ts"]);
+  assert.equal(strongestDirectTest(root, "src/web-main.ts"), "test/web-main-file-change.test.ts");
+
+  const augmented = augmentPlanContextWithDirectTestEvidence(root, context);
+  assert.deepEqual(
+    augmented.files.map((file) => file.path),
+    ["src/web-main.ts", "test/web-main-file-change.test.ts"],
+  );
+
+  const { plan, companions } = applyImpactedTestCompanions(
+    root,
+    augmented,
+    literalReadPlan(augmented, ["src/web-main.ts"]),
+  );
+  assert.deepEqual(companions, ["test/web-main-file-change.test.ts"]);
+  assert.ok(
+    (plan.implementationScope as { allowedPaths: string[] }).allowedPaths.includes("test/web-main-file-change.test.ts"),
+  );
+  assert.doesNotThrow(() => validatePlan(plan, root, augmented));
+});
 
 test("Context에 있는 literal readFileSync VM harness는 변경 source의 impacted companion이 되고 문자열·주석 decoy는 아니다 (#281)", () => {
   const root = literalReadFixture(true);
