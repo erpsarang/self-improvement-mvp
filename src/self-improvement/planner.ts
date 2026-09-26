@@ -318,10 +318,27 @@ function projectBootstrapContextPaths<T extends { path: string }>(
   const excludesWeb =
     /(?:^|[\n.!?])\s*[-*]?\s*(?:브라우저|웹|browser|web|frontend|front-end)(?:\s*(?:화면|기능|구현|앱|app|application))?[^.\n]{0,40}(?:제외|범위 밖|out of scope|exclude)/im.test(requirement) ||
     /(?:^|[\n.!?])\s*[-*]?\s*(?:브라우저|웹|browser|web|frontend|front-end)(?:\s*(?:화면|기능|구현|앱|app|application))?\s*(?:은|는|을|를|이|가)?\s*(?:사용하지 않|구현하지 않|하지 않)/im.test(requirement);
-  if (!hasWebIntent || excludesWeb) return [];
+  const hasDocumentationIntent =
+    /\bREADME(?:\.md)?\b|리드미/i.test(requirement) ||
+    /(?:문서|documentation|product guide).{0,40}(?:재작성|작성|갱신|업데이트|정리|설명|가이드|사용법|설치|실행|rewrite|update|guide|usage|install|setup|run)/i.test(requirement);
 
   const available = new Set(candidates.map((candidate) => candidate.path));
-  return ["package.json", "tsconfig.json"].filter((path) => available.has(path));
+  const paths: string[] = [];
+  const add = (path: string) => {
+    if (available.has(path) && !paths.includes(path)) paths.push(path);
+  };
+
+  // 문서화 요구는 기존 문서와 실제 실행 계약을 먼저 보존한다.
+  // 나머지 bounded slot은 기존 lexical/business ranking이 기능 근거 소스·테스트를 선택한다.
+  if (hasDocumentationIntent) {
+    add("README.md");
+    add("package.json");
+  }
+  if (hasWebIntent && !excludesWeb) {
+    add("package.json");
+    add("tsconfig.json");
+  }
+  return paths;
 }
 
 function diverseRankedCandidates<T extends { path: string; text: string; score: number }>(
