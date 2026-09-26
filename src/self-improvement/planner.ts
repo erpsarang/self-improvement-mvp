@@ -627,6 +627,33 @@ function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: 
   }
 }
 
+function estimatedImplementContextBytes(
+  allowedPaths: readonly string[],
+  contextPaths: readonly string[],
+  target: string,
+  context: PlanContextPack,
+): number {
+  const allowed = new Set(allowedPaths);
+  const approvedEvidenceBytes = new Map(context.files.map((file) => [file.path, file.byteLength]));
+  let total = 0;
+
+  for (const path of new Set([...allowedPaths, ...contextPaths])) {
+    const fullPath = join(target, path);
+    if (!existsSync(fullPath)) continue; // 신규 allowedPath는 아직 Context bytes가 없다.
+
+    // Worker가 수정할 수 있는 파일은 안전한 patch 생성을 위해 항상 전체 파일이 필요하다.
+    if (allowed.has(path)) {
+      total += Buffer.byteLength(readFileSync(fullPath), "utf8");
+      continue;
+    }
+
+    // read-only contextPath는 Handoff가 승인된 PLAN evidence를 그대로 재사용할 수 있다.
+    // PLAN에서 보지 못한 read-only 파일만 frozen target의 전체 크기로 계산한다.
+    total += approvedEvidenceBytes.get(path) ?? Buffer.byteLength(readFileSync(fullPath), "utf8");
+  }
+  return total;
+}
+
 function validateImplementationScope(value: unknown, target: string, context: PlanContextPack, questions: readonly string[]): PlanImplementationScope {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Missing implementationScope");
   const scope = value as Record<string, unknown>;
@@ -671,6 +698,12 @@ function validateImplementationScope(value: unknown, target: string, context: Pl
     if (allowedPaths.includes("package.json") && !allowedPaths.includes("package-lock.json") && allowedPaths.length >= PLAN_IMPLEMENT_MAX_FILES) {
       throw new Error("implementationScope.ready package.json change requires package-lock.json capacity within bounded scope");
     }
+    const implementContextBytes = estimatedImplementContextBytes(allowedPaths, contextPaths, target, context);
+    // PLAN과 IMPLEMENT Context budget은 현재 동일한 80KB 경계다. 승인 전에 Handoff가
+    // 실제로 materialize할 수 없는 ready scope를 차단해 Human approval/Worker 재시도를 낭비하지 않는다.
+    if (implementContextBytes > PLAN_CONTEXT_MAX_BYTES) {
+      throw new Error(`implementationScope.ready exceeds IMPLEMENT Context budget: ${implementContextBytes}B > ${PLAN_CONTEXT_MAX_BYTES}B`);
+    }
   } else if (allowedPaths.length > 0 || contextPaths.length > 0 || requiredChanges.length > 0 || forbiddenChanges.length > 0 || validationCommands.length > 0) {
     throw new Error("implementationScope must be empty when ready=false");
   }
@@ -707,6 +740,7 @@ implementationScope.allowedPaths 규칙:
 - 절대경로는 금지입니다. /home/..., /tmp/..., runner workspace 경로, plan-neutral, PLAN_TARGET, 현재 작업 디렉터리 등 filesystem 실제 위치를 경로에 쓰지 마세요. '/'로 시작하거나 드라이브 문자(C:\\)로 시작하면 안 됩니다.
 - './' 또는 '../' 로 시작하는 경로, backslash, 끝의 '/', 디렉터리 경로, wildcard도 금지입니다.
 - 기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 파일이어야 하며, Context Pack의 path 값을 글자 그대로 사용하세요.
+- allowedPaths에는 실제로 수정할 가능성이 있는 파일만 넣으세요. 단순 회귀 실행 대상으로만 확인할 기존 테스트/설정 파일을 수정할 근거가 없다면 allowedPaths에 넣지 마세요. 수정 파일은 IMPLEMENT에서 전체 내용을 읽으므로 큰 파일을 불필요하게 allowedPaths에 넣으면 Context budget을 초과할 수 있습니다.
 - 필요한 신규 파일도 같은 형식의 repository-relative exact path로만 제안하세요. 예: src/new-feature.ts, test/new-feature.test.ts, index.html
 - approach/changeCandidates/testStrategy/requiredChanges에서 추가·수정·생성할 파일을 언급하면 repository-relative exact path를 쓰고 반드시 allowedPaths에 포함하세요. 기존 파일을 읽기만 한다면 contextPaths에 포함하세요.
 - package.json을 allowedPaths에 넣고 package-lock.json을 직접 포함하지 않는 경우, trusted Handoff가 package-lock.json companion을 추가할 수 있도록 8개 bounded slot 중 최소 1개를 비워두세요.
