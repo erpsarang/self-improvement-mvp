@@ -144,6 +144,7 @@ jobs:
           openai-api-key: ${{ secrets.FRAMEWORK_CODEX_API_KEY }}
           permission-profile: ":workspace"
           prompt-file: codex-prompt.txt
+          model: gpt-6-sol
           effort: medium
 
       - name: trusted prompt 제거
