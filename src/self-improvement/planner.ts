@@ -363,7 +363,7 @@ function projectBootstrapContextPaths<T extends { path: string }>(
     }
     if (/웹|브라우저|화면|다운로드|출력|web|browser|download|output/i.test(requirement)) {
       addFirstRuntime([
-        /(?:^|\/)(?:web-main|[^/]*(?:frontend|ui|download|export)[^/]*)\.(?:[cm]?[jt]sx?)$/i,
+        /(?:^|\/)[^/]*(?:web|browser|frontend|ui|download|export)[^/]*\.(?:[cm]?[jt]sx?)$/i,
       ]);
     }
   }
