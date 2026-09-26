@@ -143,7 +143,8 @@ test("각 untrusted Job은 repository 없이 neutral input만 보고 drop-sudo r
   assert.match(workflow, /worker-neutral-repair-2/);
   assert.equal((workflow.match(/permission-profile: ":read-only"/g) ?? []).length, 4);
   assert.equal((workflow.match(/safety-strategy: drop-sudo/g) ?? []).length, 4);
-  assert.equal((workflow.match(/effort: low/g) ?? []).length, 4);
+  assert.equal((workflow.match(/model: gpt-6-sol\n\s+effort: low/g) ?? []).length, 2);
+  assert.equal((workflow.match(/model: gpt-6-luna\n\s+effort: medium/g) ?? []).length, 2);
   assert.ok((workflow.match(/GH_TOKEN: ""/g) ?? []).length >= 4);
   assert.ok((workflow.match(/GITHUB_TOKEN: ""/g) ?? []).length >= 4);
   assert.equal((workflow.match(/secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\]/g) ?? []).length, 4);
