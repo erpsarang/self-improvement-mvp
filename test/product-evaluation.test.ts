@@ -486,3 +486,24 @@ test("변경 파일 목록을 확정할 수 없거나 경로가 이상하면 지
     assert.equal(decideProductEvaluationNeed(evidence).needed, true, JSON.stringify(evidence));
   }
 });
+
+test("이번 cycle의 변경 제품 파일이 snapshot 예산으로 빠지면 AI 평가를 중단한다", () => {
+  const root = appFixture({
+    "src/web.js": "x".repeat(PRODUCT_EVALUATION_BUDGET.maxFileBytes + 1),
+  });
+  const snapshot = createProductSnapshot(cycle, root);
+  assert.equal(snapshot.omittedPaths.includes("src/web.js"), true);
+
+  const stopped = decideProductEvaluationNeed(
+    { complete: true, paths: ["src/web.js", "test/web.test.js"] },
+    snapshot,
+  );
+  assert.equal(stopped.needed, false);
+  assert.match(stopped.reason, /제품 변경 파일이 snapshot 예산에서 누락되어 평가를 중단합니다: src\/web\.js/);
+
+  const unaffected = decideProductEvaluationNeed(
+    { complete: true, paths: ["README.md"] },
+    snapshot,
+  );
+  assert.equal(unaffected.needed, true);
+});

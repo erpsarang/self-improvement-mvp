@@ -90,6 +90,7 @@ if (command === "prepare") {
   const changedPathsPath = process.env.PRODUCT_CHANGED_PATHS_JSON;
   const need = decideProductEvaluationNeed(
     changedPathsPath && existsSync(changedPathsPath) ? parseJson<unknown>(changedPathsPath) : null,
+    snapshot,
   );
   writeOutput("should_evaluate", need.needed ? "true" : "false");
   console.log(`Product Evaluation: ${need.reason}`);
