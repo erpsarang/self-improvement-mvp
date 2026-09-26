@@ -67,6 +67,7 @@ jobs:
           prompt-file: ${{ runner.temp }}/single-pass-smoke/prompt.md
           output-schema-file: ${{ runner.temp }}/single-pass-smoke/schema.json
           output-file: ${{ runner.temp }}/single-pass-smoke/raw-proposal.json
+          model: gpt-6-luna
           effort: low
           codex-args: '["-c","project_doc_max_bytes=0"]'
 

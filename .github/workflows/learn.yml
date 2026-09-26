@@ -370,7 +370,7 @@ jobs:
           LEARN_INPUT_ARTIFACT_DIGEST: ${{ steps.source.outputs.input_artifact_digest }}
           LEARNER_PROVIDER: OpenAI
           LEARNER_ACTION: openai/codex-action@v1
-          LEARNER_MODEL: action-default
+          LEARNER_MODEL: gpt-6-luna
           LEARNER_REASONING_EFFORT: medium
 
       - name: validated untrusted LEARN report 저장

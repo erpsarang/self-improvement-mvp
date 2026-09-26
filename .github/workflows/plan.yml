@@ -117,15 +117,15 @@ jobs:
             fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify(identity, null, 2));
             core.setOutput('identity', JSON.stringify(identity));
             core.setOutput('sha', commit.sha);
-            // Product Evaluation이 만든 [Self-Improvement] 후보의 자동 PLAN만 gpt-6-luna를 쓴다 (호출 수·effort 불변).
-            // 사람이 만든 [업무 요구] 등 그 밖의 PLAN은 빈 값이며, codex-action의 model 기본값("")과 같아 기존 정책 그대로다.
+            // Product Evaluation이 만든 [Self-Improvement] 후보의 자동 PLAN은 gpt-6-luna를 쓴다.
+            // 사람이 만든 [업무 요구] 등 그 밖의 PLAN은 고레버리지 요구 해석 단계이므로 gpt-6-sol을 명시한다.
             // 판별은 위에서 기록한 provenance(marker·dispatch ingress·작성자·제목)만 쓴다 (#259 PLAN run 36079962403).
             const productImprovementCandidate =
               source.kind === 'PRODUCT_EVALUATION' &&
               ingressEvent === 'workflow_dispatch' &&
               author.login === 'github-actions[bot]' &&
               issue.title.startsWith('[Self-Improvement]');
-            core.setOutput('planner_model', productImprovementCandidate ? 'gpt-6-luna' : '');
+            core.setOutput('planner_model', productImprovementCandidate ? 'gpt-6-luna' : 'gpt-6-sol');
 
       - name: Target checkout at frozen SHA
         uses: actions/checkout@v4

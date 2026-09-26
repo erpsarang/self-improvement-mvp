@@ -235,6 +235,8 @@ jobs:
           permission-profile: ":workspace"
           prompt-file: fix-prompt.txt
           allow-bot-users: "github-actions[bot]"
+          model: gpt-6-sol
+          effort: medium
 
       - name: trusted prompt 제거
         shell: bash

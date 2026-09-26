@@ -455,7 +455,7 @@ jobs:
           SNAPSHOT_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.request_artifact_digest }}
           EVALUATOR_PROVIDER: OpenAI
           EVALUATOR_ACTION: openai/codex-action@v1
-          EVALUATOR_MODEL: action-default
+          EVALUATOR_MODEL: gpt-6-luna
           EVALUATOR_REASONING_EFFORT: medium
 
       - name: 검증된 Product Evaluation report 저장

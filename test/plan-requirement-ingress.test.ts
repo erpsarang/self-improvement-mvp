@@ -67,7 +67,8 @@ test("source는 identity/provenance/pointer 댓글에만 기록되고 PLAN 이�
 });
 
 // #259 PLAN run 36079962403: Product Evaluation 후보 Issue의 자동 PLAN이 model 미지정(action-default=gpt-6-astra)으로 실행됐다.
-// 자동 PLAN 흐름과 호출 수는 그대로 두고, 그 후보의 PLAN만 gpt-6-luna를 쓴다. 사람이 만든 PLAN은 빈 값(=action 기본값)이다.
+// 자동 PLAN 흐름과 호출 수는 그대로 두되, Product Evaluation 후보는 gpt-6-luna,
+// 그 밖의 사람이 만든 PLAN은 고레버리지 요구 해석 단계이므로 gpt-6-sol을 명시한다.
 async function plannerModel(title: string, body: string, options: Parameters<typeof freeze>[2] & object) {
   const outputs: Record<string, string> = {};
   await freeze(title, body, { ...options, outputs });
@@ -84,19 +85,19 @@ test("Product Evaluation이 만든 [Self-Improvement] 후보의 자동 PLAN은 g
   assert.equal(await plannerModel("[Self-Improvement] 후보", `${marker}\n\n본문`, productEvaluationDispatch), "gpt-6-luna");
 });
 
-test("사람이 만든 [업무 요구] PLAN은 model을 지정하지 않아 기존 정책(action 기본값) 그대로다", async () => {
-  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "issues", association: "OWNER" }), "");
-  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "workflow_dispatch", actor: "member" }), "");
-  // 사람이 marker를 본문에 붙여도 사람 Issue는 후보로 취급하지 않는다.
-  assert.equal(await plannerModel("[Self-Improvement] 사람이 흉내 낸 제목", `${marker}\n\n본문`, { event: "workflow_dispatch", actor: "member" }), "");
-  assert.equal(await plannerModel("[업무 요구] 요구", `${marker}\n\n본문`, { event: "issues", association: "OWNER" }), "");
+test("사람이 만든 [업무 요구] PLAN은 gpt-6-sol을 명시한다", async () => {
+  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "issues", association: "OWNER" }), "gpt-6-sol");
+  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "workflow_dispatch", actor: "member" }), "gpt-6-sol");
+  // 사람이 marker를 본문에 붙여도 Product Evaluation 후보가 아니므로 Sol을 쓴다.
+  assert.equal(await plannerModel("[Self-Improvement] 사람이 흉내 낸 제목", `${marker}\n\n본문`, { event: "workflow_dispatch", actor: "member" }), "gpt-6-sol");
+  assert.equal(await plannerModel("[업무 요구] 요구", `${marker}\n\n본문`, { event: "issues", association: "OWNER" }), "gpt-6-sol");
 });
 
-test("후보 판별은 marker·dispatch ingress·github-actions[bot] 작성자·[Self-Improvement] 제목이 모두 맞을 때만이다", async () => {
+test("후보 판별 조건이 하나라도 어긋나면 Luna 대신 Sol을 쓴다", async () => {
   const body = `${marker}\n\n본문`;
-  assert.equal(await plannerModel("[업무 요구] 후보", body, productEvaluationDispatch), "", "title prefix");
-  assert.equal(await plannerModel("[Self-Improvement] 후보", "marker 없음", productEvaluationDispatch), "", "marker");
-  assert.equal(await plannerModel("[Self-Improvement] 후보", body, { ...productEvaluationDispatch, user: { login: "other-app[bot]", id: 1, type: "Bot" } }), "", "author");
+  assert.equal(await plannerModel("[업무 요구] 후보", body, productEvaluationDispatch), "gpt-6-sol", "title prefix");
+  assert.equal(await plannerModel("[Self-Improvement] 후보", "marker 없음", productEvaluationDispatch), "gpt-6-sol", "marker");
+  assert.equal(await plannerModel("[Self-Improvement] 후보", body, { ...productEvaluationDispatch, user: { login: "other-app[bot]", id: 1, type: "Bot" } }), "gpt-6-sol", "author");
 });
 
 test("planner model은 AI Planner step의 model 입력에만 연결되고 호출 수·effort·key·downstream은 그대로다", () => {
@@ -105,7 +106,7 @@ test("planner model은 AI Planner step의 model 입력에만 연결되고 호출
   assert.equal((workflow.match(/uses: openai\/codex-action@v1/g) ?? []).length, 1, "exactly one AI call");
   assert.equal((workflow.match(/\n\s+model:/g) ?? []).length, 1);
   assert.doesNotMatch(workflow, /gpt-6-astra/);
-  assert.match(workflow, /core\.setOutput\('planner_model', productImprovementCandidate \? 'gpt-6-luna' : ''\);/);
+  assert.match(workflow, /core\.setOutput\('planner_model', productImprovementCandidate \? 'gpt-6-luna' : 'gpt-6-sol'\);/);
 });
 
 test("AI Planner는 Codex CLI를 exact version으로 설치해 latest 배포 경합에 영향받지 않는다 (run 36087088194)", () => {
