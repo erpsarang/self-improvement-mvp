@@ -234,8 +234,9 @@ function importedRuntimeSources(testPath: string, testText: string, sourcePaths:
 }
 
 /**
- * App runtime source의 가장 강한 기존 직접 테스트(해당 source를 import하는 exact-stem 테스트)를 돌려준다.
- * #124의 보호 규칙과 같은 판별이다. Framework source이거나 그런 테스트가 없으면 null이다.
+ * App runtime source를 실제로 import하거나 literal-read하는 기존 테스트 중 가장 강한 관계를 돌려준다.
+ * exact-stem을 우선하고, 없으면 이름 affinity가 낮더라도 실제 dependency가 확인된 테스트를 사용한다.
+ * Framework source이거나 직접 테스트가 없으면 null이다.
  */
 export function strongestDirectTest(target: string, sourcePath: string): string | null {
   if (!isRuntimeSource(sourcePath) || isFrameworkSource(sourcePath)) return null;
@@ -243,8 +244,7 @@ export function strongestDirectTest(target: string, sourcePath: string): string 
   if (!sourcePaths.includes(sourcePath)) return null;
   const direct = walkFiles(target, "test")
     .filter(isTestLike)
-    .filter((path) => sourceAffinity(path, sourcePath) === 2)
-    .sort((a, b) => a.localeCompare(b))
+    .sort((a, b) => sourceAffinity(b, sourcePath) - sourceAffinity(a, sourcePath) || a.localeCompare(b))
     .find((path) => {
       const text = decodeText(join(target, path));
       return text !== null && importedRuntimeSources(path, text, sourcePaths).includes(sourcePath);
@@ -508,6 +508,66 @@ export function augmentPlanContextWithBusinessRelations(
 
   // Even when no additional source/test pair fits, returning the protected pack
   // is useful because it can restore a missing exact direct test for validation.
+  return rebind(context.repository, context.sha, files);
+}
+
+/**
+ * 모든 Context augmenter가 끝난 뒤, 최종 Context에 들어온 App runtime source의 기존 직접 테스트를
+ * trusted evidence로 보강한다. AI가 source를 변경 대상으로 선택하면 이후
+ * applyImpactedTestCompanions가 그 테스트를 allowedPaths에 결정적으로 포함할 수 있게 한다.
+ *
+ * 보호된 source/test/package evidence가 8-file/80KiB 한도에 들어오지 못하면 AI 호출 전에 fail-closed 한다.
+ */
+export function augmentPlanContextWithDirectTestEvidence(
+  target: string,
+  context: PlanContextPack,
+): PlanContextPack {
+  verifyPlanContextPack(context);
+  const protectedPaths = selectedRelationProtection(target, context);
+  const existingPaths = new Set(context.files.map((file) => file.path));
+  const missingDirectTests = [...protectedPaths]
+    .filter((path) => isTestLike(path) && !isFrameworkTest(path) && !existingPaths.has(path))
+    .sort((a, b) => a.localeCompare(b));
+  if (missingDirectTests.length === 0) return context;
+
+  const protectedFiles: PlanContextFile[] = [];
+  const seen = new Set<string>();
+  const add = (file: PlanContextFile | null): void => {
+    if (!file || seen.has(file.path)) return;
+    protectedFiles.push(file);
+    seen.add(file.path);
+  };
+
+  for (const file of context.files) {
+    if (protectedPaths.has(file.path)) add(file);
+  }
+  for (const path of missingDirectTests) {
+    add(contextFile(target, path, [], PLAN_CONTEXT_MAX_FILE_BYTES));
+  }
+
+  if (missingDirectTests.some((path) => !seen.has(path))) {
+    throw new Error(`PLAN Context cannot read direct impacted test evidence: ${missingDirectTests.filter((path) => !seen.has(path)).join(", ")}`);
+  }
+
+  const protectedBytes = protectedFiles.reduce((sum, file) => sum + file.byteLength, 0);
+  if (protectedFiles.length > PLAN_CONTEXT_MAX_FILES || protectedBytes > PLAN_CONTEXT_MAX_BYTES) {
+    throw new Error(
+      `PLAN Context cannot fit direct impacted test evidence within trusted budget: ${missingDirectTests.join(", ")}`,
+    );
+  }
+
+  const ordinary = context.files.filter((file) => !protectedPaths.has(file.path));
+  const files = [...protectedFiles, ...ordinary].slice(0, PLAN_CONTEXT_MAX_FILES);
+  let totalBytes = files.reduce((sum, file) => sum + file.byteLength, 0);
+  while (totalBytes > PLAN_CONTEXT_MAX_BYTES && files.length > protectedFiles.length) {
+    const removed = files.pop()!;
+    totalBytes -= removed.byteLength;
+  }
+  if (totalBytes > PLAN_CONTEXT_MAX_BYTES) {
+    throw new Error(
+      `PLAN Context cannot fit direct impacted test evidence within trusted budget: ${missingDirectTests.join(", ")}`,
+    );
+  }
   return rebind(context.repository, context.sha, files);
 }
 
