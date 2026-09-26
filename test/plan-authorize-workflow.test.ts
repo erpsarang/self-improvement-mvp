@@ -12,6 +12,18 @@ test("PLAN_AUTHORIZE는 exact Human PLAN-승인 Issue comment에서만 시작한
   assert.match(workflow, /github\.event\.comment\.body == 'PLAN-승인'/);
 });
 
+test("PLAN_AUTHORIZE는 Issue 단위 직렬화와 exact PLAN marker로 중복 승인을 at-most-once 처리한다", () => {
+  assert.match(workflow, /group: plan-authorize-\$\{\{ github\.repository \}\}-\$\{\{ github\.event\.issue\.number \}\}/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(handler, /exactPlanAuthorizeMarker/);
+  assert.match(handler, /artifact=plan-authorize-issue-\$\{event\.issue\.number\}-plan-\$\{selectedRunId\}-attempt-\$\{selectedRunAttempt\}-approval-/);
+  assert.match(handler, /alreadyAuthorized/);
+  assert.match(handler, /created=false\\nalready_authorized=true/);
+  const dedup = handler.indexOf("const alreadyAuthorized");
+  const authorize = handler.indexOf("createPlanAuthorizeArtifact({");
+  assert.ok(dedup !== -1 && authorize !== -1 && dedup < authorize);
+});
+
 test("PLAN_AUTHORIZE는 trusted read\/actions + Issue pointer 권한만 사용한다", () => {
   assert.match(workflow, /contents: read/);
   assert.match(workflow, /actions: read/);
