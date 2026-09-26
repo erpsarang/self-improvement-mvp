@@ -348,7 +348,6 @@ function projectBootstrapContextPaths<T extends { path: string }>(
 
     if (/\bcsv\b|CSV|업로드|입력|파싱|검증|사용법|usage/i.test(requirement)) {
       addFirstRuntime([
-        /(?:^|\/)order-csv\.(?:[cm]?[jt]sx?)$/i,
         /(?:^|\/)[^/]*(?:csv|upload|input|parser)[^/]*\.(?:[cm]?[jt]sx?)$/i,
       ]);
     }
