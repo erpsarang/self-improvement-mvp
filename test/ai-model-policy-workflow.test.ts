@@ -29,7 +29,8 @@ test("고레버리지 PLAN·IMPLEMENT·REVIEW·FIX는 Sol을 명시한다", asyn
   assert.match(plan, /productImprovementCandidate \? 'gpt-6-luna' : 'gpt-6-sol'/);
 
   const worker = await readFile(".github/workflows/plan-implement-worker.yml", "utf8");
-  assert.equal((worker.match(/model: gpt-6-sol/g) ?? []).length, 4);
+  assert.equal((worker.match(/model: gpt-6-sol\n\s+effort: low/g) ?? []).length, 2);
+  assert.equal((worker.match(/model: gpt-6-luna\n\s+effort: medium/g) ?? []).length, 2);
 
   const implement = await readFile(".github/workflows/implement.yml", "utf8");
   assert.match(implement, /model: gpt-6-sol\n\s+effort: medium/);
