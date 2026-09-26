@@ -114,6 +114,54 @@ LEARN이 개발 cycle의 진행 방식을 본다면, Product Evaluation은 **배
 - 구현은 사람이 `PLAN-승인`한 이후에만 진행하고, 진행하지 않을 후보는 사유를 남기고 `not_planned`로 닫음
 - `not_planned`로 닫힌 후보와 그 사유는 다음 평가에 금지 목록으로 전달되어 다시 제안되지 않음
 
+## Self-Improvement 적용 경계
+
+이 Framework의 모든 AI 작업을 Self-Improvement lifecycle에 태우지는 않습니다.
+
+### Human-directed maintenance
+
+사람이 이미 **무엇을 바꿀지 결정한 작업**은 AI와 직접 협업할 수 있습니다.
+
+예:
+
+- README / 사용 가이드 현행화
+- 명확한 문서 수정
+- 작은 유지보수
+- App에서 관측된 Framework blocker의 최소 복구
+
+이 경로에서는 사람이 AI에게 직접 변경을 맡기고 branch / commit / PR을 만들 수 있습니다. Self-Improvement용 PLAN → Worker lifecycle을 억지로 거치지 않습니다.
+
+다만 다음 경계는 유지합니다.
+
+- 변경 범위를 명확히 확인
+- CI / deterministic validation 수행
+- 최종 Merge는 Human-only
+- Auto Merge 금지
+
+### Self-Improvement
+
+Self-Improvement는 **App이 실행 결과와 Product Evaluation / LEARN을 통해 다음 개선 대상을 스스로 발견한 경우**에 사용합니다.
+
+```text
+App evidence
+→ Product Evaluation / LEARN
+→ Improvement Candidate
+→ Human 선택
+→ read-only AI PLAN
+→ bounded IMPLEMENT
+→ Trusted Rail
+→ Human Merge
+```
+
+즉 Self-Improvement는 일반적인 AI 코딩 절차의 다른 이름이 아니라, **제품이 스스로 다음 개선 후보를 발견하고 검증된 개발 cycle로 연결하는 capability**입니다.
+
+운영 판단 기준은 단순합니다.
+
+> **사람이 이미 무엇을 바꿀지 결정했다면 Human-directed maintenance.  
+> App이 무엇을 개선할지 스스로 발견했다면 Self-Improvement.**
+
+Human-directed 작업에서 발견한 실제 blocker가 Framework 개선으로 환류될 수는 있지만, 그 Framework 정비 자체를 다시 Self-Improvement에 태우는 것을 기본값으로 삼지 않습니다. App이 목적이고 Framework는 그 과정을 가능하게 하는 수단입니다.
+
 ## 실제 dogfood 증거
 
 첫 v0.2 E2E 실증은 `erpsarang/sales-order-exception-analyzer`의 실제 업무 요구 Issue #8로 수행했습니다.
