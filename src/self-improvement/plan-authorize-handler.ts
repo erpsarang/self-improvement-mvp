@@ -211,6 +211,26 @@ async function main(): Promise<void> {
 
   if (!selected || !selectedProvenanceArtifact) throw new Error("no valid PLAN provenance exists before this approval");
 
+  // 같은 exact PLAN에 대한 성공한 PLAN_AUTHORIZE가 이미 있으면 새 approval comment라도 다시 실행하지 않는다.
+  // workflow concurrency가 Issue 단위로 직렬화하므로, 앞선 승인 run이 pointer를 남긴 뒤 다음 run이 이 검사를 수행한다.
+  const exactPlanAuthorizeMarker = `artifact=plan-authorize-issue-${event.issue.number}-plan-${selectedRunId}-attempt-${selectedRunAttempt}-approval-`;
+  const alreadyAuthorized = comments.some((comment) =>
+    comment.user?.login === "github-actions[bot]" &&
+    typeof comment.body === "string" &&
+    comment.body.includes("<!-- self-improvement:PLAN_AUTHORIZE ") &&
+    comment.body.includes(exactPlanAuthorizeMarker)
+  );
+  if (alreadyAuthorized) {
+    if (process.env.GITHUB_OUTPUT) {
+      writeFileSync(
+        process.env.GITHUB_OUTPUT,
+        `created=false\nalready_authorized=true\nplan_run_id=${selectedRunId}\nplan_run_attempt=${selectedRunAttempt}\n`,
+        { flag: "a" },
+      );
+    }
+    return;
+  }
+
   // 승인 불가능한 PLAN(ready=false 또는 blocking question)은 여기서 즉시 fail-closed 한다.
   // Handoff와 같은 validateApprovedPlanDocument를 쓰므로 Handoff에서 뒤늦게 조용히 멈추지 않는다.
   const planJson = await readArtifactJson(selected.plan.artifact.id, "PLAN.json", "PLAN");
