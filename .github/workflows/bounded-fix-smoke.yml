@@ -80,6 +80,7 @@ jobs:
           prompt-file: ${{ runner.temp }}/bounded-fix-smoke/fix-prompt.md
           output-schema-file: ${{ runner.temp }}/bounded-fix-smoke/fix-schema.json
           output-file: ${{ runner.temp }}/bounded-fix-smoke/raw-fix-proposal.json
+          model: gpt-6-luna
           effort: low
           codex-args: '["-c","project_doc_max_bytes=0"]'
 
