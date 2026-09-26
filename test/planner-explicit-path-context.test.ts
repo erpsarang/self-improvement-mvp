@@ -72,11 +72,12 @@ test("PLAN Context explicit path augmentation은 byte budget을 넘지 않고 �
   }
 });
 
-test("planner prepare pipeline은 explicit path augmentation을 최종 Context 우선순위 단계로 적용한다", () => {
+test("planner prepare pipeline은 explicit path 뒤에 direct impacted test evidence를 최종 보강한다", () => {
   const handler = readFileSync(join(process.cwd(), "src/self-improvement/planner-handler.ts"), "utf8");
-  // AI call-site 보강은 explicit path 보강 앞에서 끝나고, explicit path가 최종 우선순위를 가진다.
+  // AI call-site → explicit path → direct impacted test evidence 순서로 최종 Context를 확정한다.
   assert.match(handler, /const aiCallSiteContext = augmentPlanContextWithAiCallSites\(requirement, target, humanContext\);/);
-  assert.match(handler, /const context = augmentPlanContextWithExplicitPaths\(requirement, target, aiCallSiteContext\);/);
+  assert.match(handler, /const explicitContext = augmentPlanContextWithExplicitPaths\(requirement, target, aiCallSiteContext\);/);
+  assert.match(handler, /const context = augmentPlanContextWithDirectTestEvidence\(target, explicitContext\);/);
 });
 
 // #259 재PLAN run 36086224421: Planner가 변경 대상 source의 기존 직접 테스트를 allowedPaths에 넣었지만,
