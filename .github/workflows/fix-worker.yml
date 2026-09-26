@@ -371,6 +371,19 @@ jobs:
             exit 1
           fi
 
+      - name: trusted FIX candidate deterministic validation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/fix-patch-worktree"
+          npm ci
+          npm test
+
       - name: clean trusted code로 FIX provenance 생성
         run: npm exec -- tsx src/self-improvement/fix-handler.ts finalize
         env:

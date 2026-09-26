@@ -171,6 +171,27 @@ test("FIX candidate provenance 기록은 fresh trusted runner의 read-only job�
   assert.doesNotMatch(workerRecord, /working-directory:|openai\/codex-action|git push|gh pr|mergePullRequest/);
 });
 
+test("FIX candidate는 artifact 저장과 Rail dispatch 전에 exact worktree에서 전체 npm test를 통과해야 한다", () => {
+  const patchStep = "exact reviewed SHA fetch 및 FIX candidate patch 생성";
+  const validationStep = "trusted FIX candidate deterministic validation";
+  const finalizeStep = "clean trusted code로 FIX provenance 생성";
+  assert.match(workerRecord, new RegExp(`- name: ${validationStep}\\n        shell: bash`));
+  assert.ok(workerRecord.includes('cd "${RUNNER_TEMP}/fix-patch-worktree"'));
+  assert.match(workerRecord, /npm ci\n          npm test/);
+  assert.match(workerRecord, /GITHUB_TOKEN: ""/);
+  assert.match(workerRecord, /GH_TOKEN: ""/);
+  assert.match(workerRecord, /NODE_AUTH_TOKEN: ""/);
+  assert.match(workerRecord, /NPM_TOKEN: ""/);
+  assert.doesNotMatch(workerRecord, /continue-on-error:/);
+  const patchIndex = workerRecord.indexOf(`- name: ${patchStep}`);
+  const validationIndex = workerRecord.indexOf(`- name: ${validationStep}`);
+  const finalizeIndex = workerRecord.indexOf(`- name: ${finalizeStep}`);
+  const artifactIndex = workerRecord.indexOf("- name: generic candidate artifact 저장");
+  assert.ok(patchIndex >= 0 && patchIndex < validationIndex);
+  assert.ok(validationIndex < finalizeIndex);
+  assert.ok(finalizeIndex < artifactIndex);
+});
+
 test("candidate 기록 성공 뒤 actions:write 전용 job만 Trusted Rail을 explicit dispatch 한다", () => {
   assert.match(railDispatch, /needs: record/);
   assert.match(railDispatch, /^    if: needs\.record\.result == 'success'$/m);
