@@ -176,7 +176,7 @@ test("FIX candidate는 artifact 저장과 Rail dispatch 전에 exact worktree에
   const validationStep = "trusted FIX candidate deterministic validation";
   const finalizeStep = "clean trusted code로 FIX provenance 생성";
   assert.match(workerRecord, new RegExp(`- name: ${validationStep}\\n        shell: bash`));
-  assert.match(workerRecord, /cd "\\$\\{RUNNER_TEMP\\}\/fix-patch-worktree"/);
+  assert.ok(workerRecord.includes('cd "${RUNNER_TEMP}/fix-patch-worktree"'));
   assert.match(workerRecord, /npm ci\n          npm test/);
   assert.match(workerRecord, /GITHUB_TOKEN: ""/);
   assert.match(workerRecord, /GH_TOKEN: ""/);
