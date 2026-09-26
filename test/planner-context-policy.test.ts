@@ -86,3 +86,52 @@ test("실제 human-facing 출력 동사가 있을 때만 human-output context를
   assert.equal(needsHumanOutputPlanContext("주문 코멘트를 데이터 모델에 보존한다."), false);
   assert.equal(needsHumanOutputPlanContext("Preserve the order comment field in the model."), false);
 });
+
+
+test("README/Product Guide 문서화 요구는 기존 README와 package 실행 계약을 bounded Context에 우선 보존한다 (#286)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-documentation-context-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "test"));
+    writeFileSync(join(root, "README.md"), "# 초기 MVP\n주문을 분석합니다.\n");
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test", build: "tsc", dev: "vite", analyze: "node src/order-analysis-cli.ts" } }),
+    );
+    writeFileSync(
+      join(root, "src", "order-csv.ts"),
+      "export const csv = '주문 CSV 고객 기준 자재 재고 기준 누락 분석 availableQuantity';\n",
+    );
+    writeFileSync(
+      join(root, "src", "order-analysis-cli.ts"),
+      "export const cli = 'CLI 주문 분석 실행 사용법';\n",
+    );
+    writeFileSync(
+      join(root, "src", "web-main.ts"),
+      "export const web = '브라우저 CSV 양식 다운로드 결과 예외 CSV';\n",
+    );
+    writeFileSync(
+      join(root, "test", "order-csv.test.ts"),
+      "import { csv } from '../src/order-csv.js'; test('CSV 분석', () => void csv);\n",
+    );
+
+    const requirement = [
+      "[업무 요구] README를 현재 구현과 제품 비전을 반영한 Product Guide로 재작성하고 싶다",
+      "현재 구현 기능, 설치방법, 실행방법, CSV 사용법과 결과 해석을 실제 코드와 테스트 근거로 정확히 설명한다.",
+      "미래 비전과 현재 구현을 분리하고 README 외 제품 기능은 변경하지 않는다.",
+    ].join("\n");
+    const pack = selectPlanContext(requirement, root, "example/orders", "f".repeat(40), {
+      maxFiles: 4,
+      maxBytes: 16_000,
+      maxFileBytes: 4_000,
+    });
+    const paths = pack.files.map((file) => file.path);
+
+    assert.deepEqual(paths.slice(0, 2), ["README.md", "package.json"]);
+    assert.ok(paths.some((path) => path.startsWith("src/")), `missing implementation evidence: ${paths.join(", ")}`);
+    assert.ok(paths.length <= 4);
+    assert.ok(pack.totalBytes <= 16_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
