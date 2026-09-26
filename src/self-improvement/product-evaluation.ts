@@ -308,7 +308,10 @@ function isPlainRelativePath(path: unknown): path is string {
  * 그때 snapshot은 직전 평가와 같은 제품이므로 AI 평가를 반복하지 않는다 (#275: Framework 경로만 바꾼 cycle).
  * 목록을 확정할 수 없거나 경로가 이상하면 지금처럼 평가한다.
  */
-export function decideProductEvaluationNeed(evidence: unknown): ProductEvaluationNeed {
+export function decideProductEvaluationNeed(
+  evidence: unknown,
+  snapshot?: Pick<ProductSnapshot, "files" | "omittedPaths">,
+): ProductEvaluationNeed {
   const value = evidence as Partial<ChangedPathsEvidence> | null;
   if (
     typeof value !== "object" || value === null || value.complete !== true ||
@@ -321,6 +324,16 @@ export function decideProductEvaluationNeed(evidence: unknown): ProductEvaluatio
   }
   const productPaths = value.paths.filter(isProductSnapshotPath);
   if (productPaths.length > 0) {
+    if (snapshot !== undefined) {
+      const omitted = new Set(snapshot.omittedPaths);
+      const omittedChangedPaths = productPaths.filter((path) => omitted.has(path));
+      if (omittedChangedPaths.length > 0) {
+        return {
+          needed: false,
+          reason: `제품 변경 파일이 snapshot 예산에서 누락되어 평가를 중단합니다: ${omittedChangedPaths.join(", ")}`,
+        };
+      }
+    }
     return { needed: true, reason: `제품 파일 ${productPaths.length}개가 바뀌어 평가합니다` };
   }
   return {
