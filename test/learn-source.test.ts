@@ -434,6 +434,7 @@ test("LEARN Source accepts FIX1 candidate B followed by FIX2 candidate C", () =>
   assert.notEqual(fixture.candidateBHeadSha, fixture.candidateCHeadSha);
   assert.notEqual(fixture.bridge.candidatePatchDigest, fixture.candidateBDigest);
   assert.notEqual(fixture.candidateBDigest, fixture.candidateCDigest);
+  assert.notEqual(fixture.bridge.candidatePatchDigest, fixture.candidateCDigest);
 
   const result = createTrustedLearnSourceArtifacts(fixture.facts, fixture.orchestration);
   verifyLearnInputPack(result.learnInputPack, result.completedCycle);
