@@ -130,6 +130,41 @@ test("PLAN Context explicit path augmentation은 byte budget을 넘지 않고 �
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("#310형 큰 explicit path 11개는 앞 파일의 20KB 독점 없이 기본 80KB 안에서 모두 발췌를 받는다 (#312)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-explicit-fair-"));
+  try {
+    mkdirSync(join(root, "src"));
+    const paths = Array.from({ length: 11 }, (_, index) => `src/contract-${index}.ts`);
+    for (const path of paths) writeFileSync(join(root, path), `// ${path}\n${"export const value = 1;\n".repeat(1_500)}`);
+    const requirement = ["다음 contract를 모두 확인한다.", ...paths.map((path) => `\`${path}\``)].join("\n");
+    const base = selectPlanContext(requirement, root, "example/framework", "c".repeat(40));
+    const first = augmentPlanContextWithExplicitPaths(requirement, root, base);
+    const second = augmentPlanContextWithExplicitPaths(requirement, root, base);
+    verifyPlanContextPack(first);
+    assert.deepEqual(first, second, "같은 입력이면 같은 발췌 배분");
+    assert.deepEqual(first.files.slice(0, paths.length).map((file) => file.path), paths);
+    assert.ok(first.totalBytes <= 80_000);
+    const sizes = first.files.slice(0, paths.length).map((file) => file.byteLength);
+    assert.ok(Math.max(...sizes) < 20_000, `앞 파일이 20KB를 독점하면 안 된다: ${sizes.join(", ")}`);
+    assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `큰 파일끼리는 균등 배분: ${sizes.join(", ")}`);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("작은 explicit 파일은 전체를 받고 남은 byte는 큰 파일에 균등 배분한다 (#312)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-explicit-fair-mixed-"));
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "big-a.ts"), "A".repeat(500));
+    writeFileSync(join(root, "src", "small.ts"), "S".repeat(40));
+    writeFileSync(join(root, "src", "big-b.ts"), "B".repeat(500));
+    const requirement = "`src/big-a.ts`, `src/small.ts`, `src/big-b.ts`를 본다.";
+    const base = selectPlanContext(requirement, root, "example/framework", "d".repeat(40));
+    const pack = augmentPlanContextWithExplicitPaths(requirement, root, base, { maxFiles: 3, maxBytes: 240, maxFileBytes: 200 });
+    verifyPlanContextPack(pack);
+    assert.deepEqual(pack.files.map((file) => [file.path, file.byteLength]), [["src/big-a.ts", 100], ["src/small.ts", 40], ["src/big-b.ts", 100]]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("planner prepare pipeline은 explicit path 뒤에 direct impacted test evidence를 최종 보강한다", () => {
   const handler = readFileSync(join(process.cwd(), "src/self-improvement/planner-handler.ts"), "utf8");
   assert.match(handler, /const aiCallSiteContext = augmentPlanContextWithAiCallSites\(requirement, target, humanContext\);/);

@@ -228,13 +228,7 @@ function excerpt(
   return { content: trimUtf8(text.slice(startOffset), maxBytes), startOffset };
 }
 
-function explicitContextFile(
-  target: string,
-  path: string,
-  terms: readonly string[],
-  symbols: readonly string[],
-  maxBytes: number,
-): PlanContextFile | null {
+function explicitText(target: string, path: string): string | null {
   const absolute = join(target, path);
   if (!existsSync(absolute)) return null;
   const stat = lstatSync(absolute);
@@ -247,9 +241,18 @@ function explicitContextFile(
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`Explicit PLAN context path escapes target: ${path}`);
   }
+  return decodeText(realFile);
+}
 
-  const text = decodeText(realFile);
-  if (text === null) return null;
+function explicitContextFile(
+  target: string,
+  path: string,
+  terms: readonly string[],
+  symbols: readonly string[],
+  maxBytes: number,
+  text: string | null = explicitText(target, path),
+): PlanContextFile | null {
+  if (text === null || maxBytes < 1) return null;
   const part = excerpt(text, terms, symbols, maxBytes);
   const byteLength = Buffer.byteLength(part.content, "utf8");
   if (byteLength < 1) return null;
@@ -262,6 +265,20 @@ function explicitContextFile(
     contentDigest: createHash("sha256").update(part.content, "utf8").digest("hex"),
     content: part.content,
   };
+}
+
+// 명시 경로가 등장 순서대로 파일당 최대 20KB를 먼저 가져가면 뒤 핵심 파일이 0B가 된다 (#310/#312).
+// 작은 파일은 전체를 받고, 남은 byte는 아직 배정받지 않은 파일에 균등하게 나눈다(결정적 water-filling).
+function fairByteAllocation(needs: readonly number[], budget: number): number[] {
+  const allocation = needs.map(() => 0);
+  const order = needs.map((_, index) => index).sort((a, b) => needs[a]! - needs[b]! || a - b);
+  let remaining = budget;
+  for (const [position, index] of order.entries()) {
+    const share = Math.floor(remaining / (order.length - position));
+    allocation[index] = Math.min(needs[index]!, share);
+    remaining -= allocation[index]!;
+  }
+  return allocation;
 }
 
 function payload(repository: string, sha: string, files: readonly PlanContextFile[]): PlanContextPackPayload {
@@ -304,12 +321,21 @@ export function augmentPlanContextWithExplicitPaths(
 
   const terms = requirementTerms(requirement);
   const symbols = requirementSymbolAnchors(requirement);
+  const readable: { path: string; text: string }[] = [];
+  for (const path of prioritizedRequirementPaths(requirement)) {
+    if (readable.length >= maxFiles) break;
+    const text = explicitText(target, path);
+    if (text === null || text.length === 0) continue;
+    readable.push({ path, text });
+  }
+  const allocation = fairByteAllocation(
+    readable.map(({ text }) => Math.min(Buffer.byteLength(text, "utf8"), maxFileBytes)),
+    maxBytes,
+  );
   const explicit: PlanContextFile[] = [];
   let explicitBytes = 0;
-  for (const path of prioritizedRequirementPaths(requirement)) {
-    if (explicit.length >= maxFiles || explicitBytes >= maxBytes) break;
-    const remaining = maxBytes - explicitBytes;
-    const file = explicitContextFile(target, path, terms, symbols, Math.min(maxFileBytes, remaining));
+  for (const [index, { path, text }] of readable.entries()) {
+    const file = explicitContextFile(target, path, terms, symbols, allocation[index]!, text);
     if (!file) continue;
     explicit.push(file);
     explicitBytes += file.byteLength;
