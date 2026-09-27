@@ -27,6 +27,7 @@ jobs:
       review_artifact_attempt: ${{ steps.review_artifact.outputs.attempt }}
       issue_number: ${{ steps.prepare.outputs.issue_number }}
       decision: ${{ steps.prepare.outputs.decision }}
+      requirement_complete: ${{ steps.prepare.outputs.requirement_complete }}
       next_state: ${{ steps.prepare.outputs.next_state }}
       should_create_pr: ${{ steps.prepare.outputs.should_create_pr }}
       should_dispatch_fix: ${{ steps.prepare.outputs.should_dispatch_fix }}
@@ -186,6 +187,7 @@ jobs:
           REVIEWED_BRANCH: ${{ needs.route.outputs.reviewed_branch }}
           REVIEWED_HEAD_SHA: ${{ needs.route.outputs.reviewed_head_sha }}
           REVIEW_DECISION: ${{ needs.route.outputs.decision }}
+          REQUIREMENT_COMPLETE: ${{ needs.route.outputs.requirement_complete }}
           NEXT_STATE: ${{ needs.route.outputs.next_state }}
           REQUIREMENTS_DIGEST: ${{ needs.route.outputs.requirements_digest }}
           TRUSTED_RAIL_RUN_ID: ${{ github.run_id }}
@@ -197,6 +199,7 @@ jobs:
             const branch = process.env.REVIEWED_BRANCH;
             const expectedSha = process.env.REVIEWED_HEAD_SHA;
             const decision = process.env.REVIEW_DECISION;
+            const requirementComplete = process.env.REQUIREMENT_COMPLETE;
             const nextState = process.env.NEXT_STATE;
             const requirementsDigest = process.env.REQUIREMENTS_DIGEST;
             const trustedRailRunId = Number(process.env.TRUSTED_RAIL_RUN_ID);
@@ -222,6 +225,10 @@ jobs:
             }
             if (decision !== 'PASS' || nextState !== 'MERGE_READY') {
               core.setFailed(`PR boundary requires PASS → MERGE_READY; decision=${decision}, next=${nextState}`);
+              return;
+            }
+            if (requirementComplete !== 'true' && requirementComplete !== 'false') {
+              core.setFailed(`invalid trusted requirement completion: ${requirementComplete}`);
               return;
             }
             if (branch !== `ai-publish/issue-${issueNumber}`) {
@@ -306,8 +313,15 @@ jobs:
                   '',
                   '**다음 행동:** PR의 변경 내용과 reviewed exact SHA를 확인하고 사람이 최종 병합 여부를 결정하세요.',
                   '',
-                  '- 이 PR은 검증된 구현 slice를 병합합니다. 부모 Issue 자동 종료는 하지 않습니다.',
-                  '- 부모 업무 요구 종료는 별도의 trusted requirement-complete 증거가 있을 때만 허용합니다.',
+                  ...(requirementComplete === 'true'
+                    ? [
+                        '- trusted Semantic REVIEW가 부모 업무 요구 전체 완료를 확인했습니다.',
+                        `Closes #${issueNumber}`,
+                      ]
+                    : [
+                        '- 이 PR은 검증된 구현 slice를 병합합니다. 부모 Issue 자동 종료는 하지 않습니다.',
+                        '- trusted Semantic REVIEW가 부모 업무 요구 전체 완료를 확인하지 않았습니다.',
+                      ]),
                   '',
                   marker,
                   trustedRailMarker,
@@ -482,6 +496,7 @@ jobs:
         env:
           EXPECTED_ISSUE: ${{ needs.route.outputs.issue_number }}
           EXPECTED_DECISION: ${{ needs.route.outputs.decision }}
+          EXPECTED_REQUIREMENT_COMPLETE: ${{ needs.route.outputs.requirement_complete }}
           EXPECTED_STATE: ${{ needs.route.outputs.next_state }}
           EXPECTED_COMPLETED_FIX_COUNT: ${{ needs.route.outputs.completed_fix_count }}
           EXPECTED_NEXT_FIX_ATTEMPT: ${{ needs.route.outputs.next_fix_attempt }}
@@ -490,6 +505,7 @@ jobs:
           EXPECTED_REQUIREMENTS: ${{ needs.route.outputs.requirements_digest }}
           ACTUAL_ISSUE: ${{ steps.revalidate.outputs.issue_number }}
           ACTUAL_DECISION: ${{ steps.revalidate.outputs.decision }}
+          ACTUAL_REQUIREMENT_COMPLETE: ${{ steps.revalidate.outputs.requirement_complete }}
           ACTUAL_STATE: ${{ steps.revalidate.outputs.next_state }}
           ACTUAL_COMPLETED_FIX_COUNT: ${{ steps.revalidate.outputs.completed_fix_count }}
           ACTUAL_NEXT_FIX_ATTEMPT: ${{ steps.revalidate.outputs.next_fix_attempt }}
@@ -500,6 +516,7 @@ jobs:
           set -euo pipefail
           if [ "$EXPECTED_ISSUE" != "$ACTUAL_ISSUE" ] || \
              [ "$EXPECTED_DECISION" != "$ACTUAL_DECISION" ] || \
+             [ "$EXPECTED_REQUIREMENT_COMPLETE" != "$ACTUAL_REQUIREMENT_COMPLETE" ] || \
              [ "$EXPECTED_STATE" != "$ACTUAL_STATE" ] || \
              [ "$EXPECTED_COMPLETED_FIX_COUNT" != "$ACTUAL_COMPLETED_FIX_COUNT" ] || \
              [ "$EXPECTED_NEXT_FIX_ATTEMPT" != "$ACTUAL_NEXT_FIX_ATTEMPT" ] || \

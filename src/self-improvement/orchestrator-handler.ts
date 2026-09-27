@@ -105,6 +105,7 @@ const route = routeReviewDecision(validatedReview);
 if (command === "prepare") {
   writeOutput("issue_number", validatedReview.issueNumber);
   writeOutput("decision", validatedReview.decision);
+  writeOutput("requirement_complete", route.requirementComplete);
   writeOutput("next_state", route.nextState);
   writeOutput("should_create_pr", route.shouldCreatePullRequest);
   writeOutput("should_dispatch_fix", route.shouldDispatchFix);

@@ -28,9 +28,10 @@ const scope = validateApprovedPlanReviewScope(chain.planJson, {
 });
 const requirements = { title: c.title, body: c.body, digest: chain.bridge.requirement.digest };
 
-const passOutput = { decision: "PASS", summary: "승인된 slice를 만족한다.", findings: [] } as const;
+const passOutput = { decision: "PASS", requirementComplete: false, summary: "승인된 slice를 만족한다.", findings: [] } as const;
 const localFixOutput = {
   decision: "LOCAL_FIX",
+  requirementComplete: false,
   summary: "README 상태 설명에 MERGE_READY가 빠졌다.",
   findings: [{
     severity: "BLOCKER",

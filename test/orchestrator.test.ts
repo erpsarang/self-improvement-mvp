@@ -104,6 +104,7 @@ const verify = createVerifyProvenance({
 
 const reviewerOutput = {
   decision: "PASS",
+  requirementComplete: true,
   summary: "승인된 요구사항을 만족하고 blocker가 없다.",
   findings: [],
 } as const;
@@ -138,6 +139,7 @@ test("trusted REVIEW artifact와 source Trusted Rail identity가 exact match할 
   });
   assert.equal(validated.reviewedHeadSha, reviewedHeadSha);
   assert.equal(validated.requirementsDigest, requirements.digest);
+  assert.equal(validated.requirementComplete, true);
 });
 
 test("REVIEW artifact 또는 source run identity가 다르면 fail-closed 한다", () => {
@@ -159,6 +161,7 @@ test("REVIEW decision은 새 AI 판단 없이 다음 상태로 결정론적으�
     nextState: "MERGE_READY",
     shouldCreatePullRequest: true,
     shouldDispatchFix: false,
+    requirementComplete: true,
     completedFixCount: 0,
     nextFixAttempt: null,
   });
@@ -221,6 +224,7 @@ test("PASS orchestration provenance는 exact reviewed SHA Human Merge PR을 요�
   assert.equal(provenance.nextState, "MERGE_READY");
   assert.equal(provenance.mergeBoundary?.headSha, review.reviewedHeadSha);
   assert.equal(provenance.requirementsDigest, requirements.digest);
+  assert.equal(provenance.requirementComplete, true);
   assert.deepEqual(provenance.mergeBoundary?.createdBy, {
     identity: "GITHUB_APP",
     login: "ai-dev-framework-merge-ready[bot]",
