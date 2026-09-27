@@ -231,11 +231,12 @@ test("App 배포본이나 AI 실행과 무관한 요구에서는 Context Pack을
 test("호출 지점이 슬롯보다 많아도 기존 선택에 최소 1슬롯을 남기고 요구 관련도 순으로 자른다", () => {
   const fixture = makeTarget("self-improvement-mvp");
   try {
-    for (const name of ["learn", "product-evaluation", "implement", "fix-worker", "bounded-fix-smoke", "single-pass-smoke"]) {
+    for (const name of ["learn", "product-evaluation", "implement", "fix-worker", "bounded-fix-smoke", "single-pass-smoke", "extra-call-1", "extra-call-2", "extra-call-3", "extra-call-4"]) {
       writeFileSync(join(fixture.target, ".github", "workflows", `${name}.yml`), workflow(name, [callStep(`${name} AI step`, "medium")]));
     }
     const all = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target);
-    assert.equal(all.length, 9);
+    assert.equal(all.length, 13);
+    assert.ok(all.length > PLAN_CONTEXT_MAX_FILES - 1, "call sites must outnumber the evidence slots");
 
     const base = selectPlanContext(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, "erpsarang/self-improvement-mvp", "d".repeat(40));
     const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, base);
