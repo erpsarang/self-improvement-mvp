@@ -95,6 +95,12 @@ test("PR boundary는 contents read + pull-requests write만 사용하고 exact r
   assert.match(mergeSection, /exactPr\.head\.sha !== expectedSha/);
 });
 
+test("MERGE_READY slice PR은 trusted requirement-complete 증거 없이는 부모 Issue를 자동 종료하지 않는다", () => {
+  assert.doesNotMatch(mergeSection, /Closes #\\$\\{issueNumber\\}/);
+  assert.match(mergeSection, /부모 Issue 자동 종료는 하지 않습니다/);
+  assert.match(mergeSection, /trusted requirement-complete 증거/);
+});
+
 test("PR은 Human-only Merge 경계이며 Orchestrator에는 merge/auto-merge/push가 없다", () => {
   assert.match(mergeSection, /최종 Merge는 \*\*Human-only\*\*/);
   assert.match(mergeSection, /Auto Merge는 사용하지 않습니다/);
