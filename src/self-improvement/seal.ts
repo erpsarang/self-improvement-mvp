@@ -1,5 +1,6 @@
 import type { ImplementProvenance } from "./implement.js";
 import { IMPLEMENT_WORKFLOW_PATH, sha256 } from "./implement.js";
+import { isPublishBranchForIssue } from "./publish-branch.js";
 import {
   FIX_REQUEST_WORKFLOW_PATH,
   FIX_WORKFLOW_PATH,
@@ -123,7 +124,8 @@ function validReviewBinding(value: unknown, issueNumber: number): boolean {
     typeof value.artifactName === "string" &&
     positiveInteger(value.runId) &&
     positiveInteger(value.runAttempt) &&
-    value.reviewedBranch === `ai-publish/issue-${issueNumber}` &&
+    // FIX source REVIEW는 이전 run의 provenance다. 같은 Issue의 legacy 또는 cycle PUBLISH branch만 허용한다.
+    isPublishBranchForIssue(value.reviewedBranch, issueNumber) &&
     validSha(value.reviewedHeadSha) &&
     typeof value.requirementsDigest === "string" &&
     /^(?:sha256:)?[0-9a-f]{64}$/.test(value.requirementsDigest) &&

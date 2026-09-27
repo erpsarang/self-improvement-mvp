@@ -84,7 +84,7 @@ Trusted prepare/finalize는 원본 `authorize.json`의 requirements digest를 �
 review.json.reviewedHeadSha
         == verify.json.verifiedHeadSha
         == publish.json.publishedHeadSha
-        == remote ai-publish/issue-N HEAD (VERIFY 시점)
+        == remote published branch HEAD (VERIFY 시점)
 
 review.json.requirementsDigest
         == authorize.json.requirements.digest

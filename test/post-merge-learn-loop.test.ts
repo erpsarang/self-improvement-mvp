@@ -24,7 +24,9 @@ test("MERGE_READY PR은 exact reviewed SHA와 Trusted Rail provenance marker를 
 
   assert.match(bootstrap, /ai-dev-framework:MERGE_READY issue=/);
   assert.match(bootstrap, /ai-dev-framework:TRUSTED_RAIL run-id=/);
-  assert.match(bootstrap, /pr\.head\.ref !== `ai-publish\/issue-\$\{issueNumber\}`/);
+  assert.match(bootstrap, /new RegExp\(`\^ai-publish\/issue-\$\{issueNumber\}\(\?:-cycle-\[0-9a-f\]\{16\}\)\?\$`\)\.test\(pr\.head\.ref\)/);
+  assert.match(bootstrap, /core\.setOutput\('reviewed_branch', pr\.head\.ref\)/);
+  assert.match(bootstrap, /provenance\.reviewedBranch !== reviewedBranch/);
   assert.match(bootstrap, /pr\.head\.sha !== reviewedSha/);
   assert.match(bootstrap, /trustedRun\.path !== '\.github\/workflows\/trusted-rail\.yml'/);
   assert.match(bootstrap, /expected one exact orchestration artifact/);

@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createPublishProvenance,
-  publishBranchName,
+  publishBranchForSeal,
   validateSealedCandidateForPublish,
 } from "./publish.js";
 
@@ -45,7 +45,7 @@ const validatedSeal = validateSealedCandidateForPublish({
 if (command === "prepare") {
   writeOutput("base_sha", validatedSeal.baseSha);
   writeOutput("issue_number", validatedSeal.issueNumber);
-  writeOutput("publish_branch", publishBranchName(validatedSeal.issueNumber));
+  writeOutput("publish_branch", publishBranchForSeal(validatedSeal));
   writeOutput("sealed_patch_digest", validatedSeal.sealedPatchDigest);
   process.exit(0);
 }

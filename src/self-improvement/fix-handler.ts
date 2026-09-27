@@ -60,10 +60,12 @@ async function loadReview(
   sourceRun: ReviewSourceRun,
 ): Promise<ReviewProvenance> {
   const review = JSON.parse(await readFile(required("REVIEW_JSON"), "utf8")) as unknown;
+  // FIX는 이전 Trusted Rail run이 남긴 REVIEW를 읽는다. 이 변경 전 legacy PUBLISH branch도 historical로 허용한다.
   return validateReviewForOrchestration({
     review,
     reviewArtifactName,
     sourceRun,
+    publishBranchPolicy: "historical",
   });
 }
 

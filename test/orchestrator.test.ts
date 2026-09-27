@@ -12,6 +12,7 @@ import {
   type ReviewSourceRun,
 } from "../src/self-improvement/orchestrator.js";
 import type { PublishProvenance } from "../src/self-improvement/publish.js";
+import { cyclePublishBranchName } from "../src/self-improvement/publish-branch.js";
 import { createSemanticReviewProvenance } from "../src/self-improvement/review.js";
 import { createVerifyProvenance } from "../src/self-improvement/verify.js";
 
@@ -90,7 +91,7 @@ const publish: PublishProvenance = {
     runAttempt: 1,
     trustedCodeSha,
   },
-  publishedBranch: `ai-publish/issue-${issueNumber}`,
+  publishedBranch: cyclePublishBranchName(issueNumber, baseSha, patchDigest),
   publishedHeadSha: reviewedHeadSha,
 };
 

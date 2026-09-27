@@ -51,7 +51,7 @@ Trusted code는 다음을 다시 검증한다.
 PR 생성 직전에 다음 invariant를 검증한다.
 
 ```text
-remote ai-publish/issue-N HEAD
+remote published branch HEAD
 == review.json.reviewedHeadSha
 == PR head SHA
 ```

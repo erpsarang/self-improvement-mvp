@@ -53,6 +53,8 @@ test("workflow 변경은 별도 trusted publish token을 요구하고 일반 변
 
 test("publish branch는 force overwrite 없이 idempotent 또는 fast-forward만 허용한다", () => {
   assert.match(publishSection, /ai-publish\/issue-/);
+  assert.match(publishSection, /\[\[ ! "\$PUBLISH_BRANCH" =~ \^ai-publish\/issue-\$\{ISSUE_NUMBER\}\(-cycle-\[0-9a-f\]\{16\}\)\?\$ \]\]/);
+  assert.doesNotMatch(publishSection, /\^ai-publish\/issue-\[1-9\]\[0-9\]\*\$/);
   assert.match(publishSection, /refusing non-fast-forward overwrite/);
   assert.doesNotMatch(
     publishSection,

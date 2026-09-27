@@ -71,7 +71,9 @@ test("REVIEW artifact가 없거나 동일 latest attempt에 중복되면 fail-cl
 test("PASS → MERGE_READY일 때만 PR boundary job이 실행된다", () => {
   assert.match(mergeSection, /needs\.route\.outputs\.should_create_pr == 'true'/);
   assert.match(mergeSection, /decision !== 'PASS' \|\| nextState !== 'MERGE_READY'/);
-  assert.match(mergeSection, /branch !== `ai-publish\/issue-\$\{issueNumber\}`/);
+  // branch는 trusted REVIEW provenance 값이며 같은 Issue의 cycle 또는 legacy 형식만 허용한다 (#250 multi-slice).
+  assert.match(mergeSection, /new RegExp\(`\^ai-publish\/issue-\$\{issueNumber\}\(\?:-cycle-\[0-9a-f\]\{16\}\)\?\$`\)\.test\(branch\)/);
+  assert.doesNotMatch(mergeSection, /branch !== `ai-publish\/issue-\$\{issueNumber\}`/);
 });
 
 test("requirements digest는 내부 raw hex를 유지하고 PR boundary transport에서만 sha256 접두사를 붙인다", () => {

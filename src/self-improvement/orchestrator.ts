@@ -10,6 +10,7 @@ import {
   type ReviewProvenance,
   type ReviewRequirements,
 } from "./review.js";
+import type { PublishBranchPolicy } from "./publish.js";
 import { TRUSTED_RAIL_WORKFLOW_PATH } from "./seal.js";
 
 export const ORCHESTRATOR_WORKFLOW_PATH =
@@ -162,6 +163,8 @@ export function validateReviewForOrchestration(input: {
   readonly review: unknown;
   readonly reviewArtifactName: string;
   readonly sourceRun: ReviewSourceRun;
+  /** 이전 Trusted Rail run의 REVIEW를 읽는 FIX 경로만 "historical"을 준다. */
+  readonly publishBranchPolicy?: PublishBranchPolicy;
 }): ReviewProvenance {
   if (!record(input.review)) throw new Error("REVIEW provenance가 올바르지 않습니다");
   const value = input.review;
@@ -207,6 +210,7 @@ export function validateReviewForOrchestration(input: {
     verify: review.sourceVerify,
     verifyArtifactName: review.sourceVerifyArtifactName,
     repository: review.repository,
+    publishBranchPolicy: input.publishBranchPolicy ?? "current",
   });
   const requirements = validateRequirements(review.requirements);
   const seal = verify.sourcePublish.sourceSeal;
