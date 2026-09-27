@@ -4,7 +4,9 @@ import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { TextDecoder } from "node:util";
 import { isFrameworkOwnedPath } from "./product-evaluation.js";
 
-export const PLAN_CONTEXT_MAX_FILES = 8;
+// PLAN read evidence 파일 수. IMPLEMENT write 범위(PLAN_IMPLEMENT_MAX_FILES)와 의미가 다르다.
+// 3~8개 변경 범위를 정하려면 더 많은 파일을 읽어야 하므로 분리한다. byte 한도(80KB)는 그대로다(#312).
+export const PLAN_CONTEXT_MAX_FILES = 12;
 export const PLAN_CONTEXT_MAX_BYTES = 80_000;
 export const PLAN_CONTEXT_MAX_FILE_BYTES = 20_000;
 export const PLAN_IMPLEMENT_MAX_FILES = 8;

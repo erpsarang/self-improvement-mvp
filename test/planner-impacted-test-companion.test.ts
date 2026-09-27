@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence, strongestDirectTest } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
-import { PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
+import { PLAN_CONTEXT_MAX_FILES, PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
 
 const SHA = "621b8415c52c87facc45b27c7f06a85b7fb3d27b";
 const requirement = [
@@ -139,10 +139,11 @@ function literalReadFixture(withHarness: boolean): string {
 }
 
 /** 사람이 Issue 본문에 경로를 backtick으로 적은 경우와 같은 Context를 만든다 (명시 경로가 먼저 들어간다). */
-function contextFromPaths(root: string, paths: readonly string[]): PlanContextPack {
+function contextFromPaths(root: string, paths: readonly string[], maxFiles?: number): PlanContextPack {
   const requirement = `${literalReadRequirement}\n${paths.map((path) => `\`${path}\``).join("\n")}`;
-  const selected = selectPlanContext(requirement, root, "erpsarang/sales-order-exception-analyzer", SHA);
-  const context = augmentPlanContextWithExplicitPaths(requirement, root, selected);
+  const budget = maxFiles === undefined ? {} : { maxFiles };
+  const selected = selectPlanContext(requirement, root, "erpsarang/sales-order-exception-analyzer", SHA, budget);
+  const context = augmentPlanContextWithExplicitPaths(requirement, root, selected, budget);
   for (const path of paths) assert.ok(context.files.some((file) => file.path === path), `context must contain ${path}`);
   return context;
 }
@@ -199,8 +200,10 @@ test("Context에 이미 다른 실제 direct test가 있으면 strongest exact-s
     "test/order-csv-template.test.ts",
     "package.json",
     "tsconfig.json",
-  ]);
+  ], 8);
+  // #303 관측 형태(8 files 포화)를 재현한다. 보강 단계에는 PLAN evidence slot이 남아 있어도 중복 보강하면 안 된다.
   assert.equal(context.files.length, 8);
+  assert.ok(context.files.length < PLAN_CONTEXT_MAX_FILES);
   assert.equal(strongestDirectTest(root, "src/web-main.ts"), "test/web-main-file-change.test.ts");
   assert.equal(
     context.files.some((file) => file.path === "test/exception-stock-display.test.ts"),
@@ -219,7 +222,7 @@ test("Context에 이미 다른 실제 direct test가 있으면 strongest exact-s
     context.files.map((file) => file.path),
     "an existing real direct test must satisfy the source evidence without adding a redundant test",
   );
-  assert.ok(augmented.files.length <= 8);
+  assert.ok(augmented.files.length <= PLAN_CONTEXT_MAX_FILES);
   assert.ok(augmented.totalBytes <= 80_000);
 });
 

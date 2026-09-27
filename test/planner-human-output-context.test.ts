@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { augmentPlanContextWithBusinessRelations } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "../src/self-improvement/plan-human-output-context.js";
-import { selectPlanContext, verifyPlanContextPack } from "../src/self-improvement/planner.js";
+import { PLAN_CONTEXT_MAX_FILES, selectPlanContext, verifyPlanContextPack } from "../src/self-improvement/planner.js";
 
 test("human-facing requirement reserves exact Issue output surfaces within bounded context", () => {
   const root = mkdtempSync(join(tmpdir(), "planner-human-output-"));
@@ -96,14 +96,18 @@ test("named lifecycle anchors reserve workflows even before human-output callsit
     for (const [name, content] of Object.entries(workflows)) {
       writeFileSync(join(root, ".github", "workflows", name), content);
     }
-    writeFileSync(
-      join(root, ".github", "workflows", "noisy.yml"),
-      "name: unrelated\nrun: PLAN PLAN_AUTHORIZE IMPLEMENT VERIFY MERGE_READY STOPPED\n",
-    );
+    // PLAN evidence slot을 모두 채울 만큼 noisy workflow를 두어 eviction 압력을 재현한다.
+    const noisyWorkflows = ["noisy.yml", "noisy-2.yml", "noisy-3.yml", "noisy-4.yml", "noisy-5.yml", "noisy-6.yml"];
+    for (const name of noisyWorkflows) {
+      writeFileSync(
+        join(root, ".github", "workflows", name),
+        "name: unrelated\nrun: PLAN PLAN_AUTHORIZE IMPLEMENT VERIFY MERGE_READY STOPPED\n",
+      );
+    }
 
     const requirement = "`PLAN`, `PLAN_AUTHORIZE`, `IMPLEMENT`, `VERIFY`, `MERGE_READY`, `STOPPED` 상태를 사람이 이해하기 쉬운 한국어로 표시한다.";
     const initial = selectPlanContext(requirement, root, "example/framework", "d".repeat(40), {
-      maxFiles: 2,
+      maxFiles: PLAN_CONTEXT_MAX_FILES,
       maxBytes: 12_000,
       maxFileBytes: 4_000,
     });
@@ -123,8 +127,8 @@ test("named lifecycle anchors reserve workflows even before human-output callsit
     ]) {
       assert.ok(paths.has(required), `missing lifecycle context: ${required}; got=${[...paths].join(", ")}`);
     }
-    assert.ok(!paths.has(".github/workflows/noisy.yml"), `unmapped noisy workflow must be evicted: ${[...paths].join(", ")}`);
-    assert.equal(augmented.files.length, 8);
+    assert.ok(noisyWorkflows.some((name) => !paths.has(`.github/workflows/${name}`)), `unmapped noisy workflow must be evicted: ${[...paths].join(", ")}`);
+    assert.equal(augmented.files.length, PLAN_CONTEXT_MAX_FILES);
     assert.ok(augmented.totalBytes <= 80_000);
   } finally {
     rmSync(root, { recursive: true, force: true });

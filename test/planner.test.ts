@@ -10,6 +10,7 @@ import {
   PLAN_CONTEXT_MAX_BYTES,
   PLAN_CONTEXT_MAX_FILES,
   PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
+  PLAN_IMPLEMENT_MAX_FILES,
   PLAN_ALLOWED_PATH_PATTERN,
   PLAN_SCHEMA,
   selectPlanContext,
@@ -244,6 +245,12 @@ test("ready PLAN은 PLAN 80KB와 별도 IMPLEMENT full-file budget을 함께 검
     assert.deepEqual(new Set(context.files.map((file) => file.path)), new Set(files.map(([path]) => path)));
     assert.ok(context.totalBytes <= PLAN_CONTEXT_MAX_BYTES);
     assert.equal(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, 96_000);
+    // #312: PLAN read evidence 12개와 IMPLEMENT write 범위 8개는 별도 한도다. byte 한도는 80KB 그대로다.
+    assert.equal(PLAN_CONTEXT_MAX_FILES, 12);
+    assert.equal(PLAN_CONTEXT_MAX_BYTES, 80_000);
+    assert.equal(PLAN_IMPLEMENT_MAX_FILES, 8);
+    const scopeSchema = (PLAN_SCHEMA.properties.implementationScope as { properties: Record<string, { maxItems?: number }> }).properties;
+    assert.equal(scopeSchema.allowedPaths!.maxItems, PLAN_IMPLEMENT_MAX_FILES);
 
     const plan = planFor(context);
     const oversized = {
