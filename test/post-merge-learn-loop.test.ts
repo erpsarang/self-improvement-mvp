@@ -30,15 +30,23 @@ test("MERGE_READY PR은 exact reviewed SHA와 Trusted Rail provenance marker를 
   assert.match(bootstrap, /expected one exact orchestration artifact/);
 });
 
-test("post-merge bootstrap은 exact provenance로 Trusted LEARN Source만 시작한다", () => {
+test("post-merge bootstrap은 exact provenance로 LEARN을 시작하고 미완료 요구만 다음 PLAN으로 이어간다", () => {
   assert.match(bootstrap, /workflow_id: 'learn-source\.yml'/);
   assert.match(bootstrap, /requirement_issue_number: process\.env\.REQUIREMENT_ISSUE_NUMBER/);
   assert.match(bootstrap, /human_merge_pr_number: process\.env\.HUMAN_MERGE_PR_NUMBER/);
   assert.match(bootstrap, /trusted_rail_run_id: process\.env\.TRUSTED_RAIL_RUN_ID/);
   assert.match(bootstrap, /trusted_rail_run_attempt: process\.env\.TRUSTED_RAIL_RUN_ATTEMPT/);
   assert.match(bootstrap, /orchestration_artifact_name: process\.env\.ORCHESTRATION_ARTIFACT_NAME/);
+  assert.match(bootstrap, /actions\/download-artifact@v4/);
+  assert.match(bootstrap, /provenance\.requirementComplete/);
+  assert.match(bootstrap, /steps\.completion\.outputs\.requirement_complete == 'false'/);
+  assert.match(bootstrap, /workflow_id: 'plan\.yml'/);
+  assert.match(bootstrap, /inputs: \{ issue_number: String\(issueNumber\) \}/);
+  assert.match(bootstrap, /runAttempt !== 1/);
+  assert.match(bootstrap, /AI Cost Guardrail/);
+  assert.match(bootstrap, /issue\.state !== 'open'/);
+  assert.doesNotMatch(bootstrap, /workflow_id: 'implement\.yml'/);
   assert.doesNotMatch(bootstrap, /business_evidence|사용자 피드백|app-runtime|sales-order/);
-  assert.doesNotMatch(bootstrap, /workflow_id: 'plan\.yml'|workflow_id: 'implement\.yml'/);
 });
 
 test("Trusted LEARN Source는 source job 성공 뒤 LEARN을 workflow_dispatch한다", () => {
@@ -80,11 +88,13 @@ test("GITHUB_TOKEN 재귀 방지에 취약한 workflow_run bridge는 canonical�
   assert.doesNotMatch(learn, /workflow_run:/);
 });
 
-test("Framework 자동 loop는 Candidate에서 멈추고 Human authority를 침범하지 않는다", () => {
+test("Framework 자동 continuation은 PLAN 제안까지만 가고 Human authority를 침범하지 않는다", () => {
   for (const workflow of [bootstrap, learnSource, learn, candidate]) {
     assert.match(workflow, /permissions: \{\}/);
     assert.doesNotMatch(workflow, /pulls\.merge|enablePullRequestAutoMerge|git\s+push/);
   }
+  assert.match(bootstrap, /workflow_id: 'plan\.yml'/);
+  assert.doesNotMatch(bootstrap, /workflow_id: 'plan-authorize\.yml'|workflow_id: 'implement\.yml'/);
   assert.match(candidate, /proposal-only/);
   assert.match(candidateSource, /authority: "proposal-only"/);
   assert.match(candidateSource, /decision: "pending-human"/);

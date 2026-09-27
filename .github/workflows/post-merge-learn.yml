@@ -104,10 +104,111 @@ jobs:
 
             core.setOutput('should_run', 'true');
             core.setOutput('issue_number', String(issueNumber));
+            core.setOutput('reviewed_sha', reviewedSha);
             core.setOutput('human_merge_pr_number', String(pr.number));
             core.setOutput('trusted_rail_run_id', String(trustedRailRunId));
             core.setOutput('trusted_rail_run_attempt', String(trustedRailRunAttempt));
             core.setOutput('orchestration_artifact_name', orchestrationArtifactName);
+
+      - name: exact Orchestration provenance 다운로드
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.orchestration_artifact_name }}
+          path: ${{ runner.temp }}/post-merge-orchestration
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.trusted_rail_run_id }}
+
+      - name: requirement completion exact 검증
+        id: completion
+        if: steps.source.outputs.should_run == 'true'
+        uses: actions/github-script@v7
+        env:
+          REQUIREMENT_ISSUE_NUMBER: ${{ steps.source.outputs.issue_number }}
+          REVIEWED_SHA: ${{ steps.source.outputs.reviewed_sha }}
+          HUMAN_MERGE_PR_NUMBER: ${{ steps.source.outputs.human_merge_pr_number }}
+          ORCHESTRATION_DIR: ${{ runner.temp }}/post-merge-orchestration
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const issueNumber = Number(process.env.REQUIREMENT_ISSUE_NUMBER);
+            const reviewedSha = process.env.REVIEWED_SHA;
+            const prNumber = Number(process.env.HUMAN_MERGE_PR_NUMBER);
+            const root = process.env.ORCHESTRATION_DIR;
+
+            const files = [];
+            const visit = (dir) => {
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) visit(full);
+                else files.push(full);
+              }
+            };
+            visit(root);
+            if (files.length !== 1 || path.basename(files[0]) !== 'orchestration.json') {
+              core.setFailed(`orchestration artifact must contain exactly orchestration.json; files=${files.length}`);
+              return;
+            }
+
+            const provenance = JSON.parse(fs.readFileSync(files[0], 'utf8'));
+            if (
+              provenance.type !== 'ORCHESTRATION' ||
+              provenance.repository !== `${context.repo.owner}/${context.repo.repo}` ||
+              provenance.issueNumber !== issueNumber ||
+              provenance.decision !== 'PASS' ||
+              provenance.nextState !== 'MERGE_READY' ||
+              typeof provenance.requirementComplete !== 'boolean' ||
+              provenance.reviewedHeadSha !== reviewedSha ||
+              provenance.mergeBoundary?.type !== 'HUMAN_PULL_REQUEST' ||
+              provenance.mergeBoundary?.number !== prNumber ||
+              provenance.mergeBoundary?.headSha !== reviewedSha
+            ) {
+              core.setFailed('Orchestration provenance completion/merge identity mismatch');
+              return;
+            }
+
+            core.setOutput('requirement_complete', String(provenance.requirementComplete));
+            core.info(`trusted requirementComplete=${provenance.requirementComplete}`);
+
+      - name: 미완료 업무 요구 다음 PLAN 자동 시작
+        if: >-
+          steps.source.outputs.should_run == 'true' &&
+          steps.completion.outputs.requirement_complete == 'false'
+        uses: actions/github-script@v7
+        env:
+          REQUIREMENT_ISSUE_NUMBER: ${{ steps.source.outputs.issue_number }}
+        with:
+          script: |
+            // Post-Merge workflow 자체 rerun으로 PLAN AI 비용이 중복되지 않게 initial attempt에서만 dispatch한다.
+            const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (runAttempt !== 1) {
+              core.info(`AI Cost Guardrail: post-merge rerun attempt ${runAttempt}에서는 continuation PLAN을 중복 호출하지 않습니다`);
+              return;
+            }
+
+            const issueNumber = Number(process.env.REQUIREMENT_ISSUE_NUMBER);
+            if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+              core.setFailed('invalid continuation requirement issue number');
+              return;
+            }
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            if (issue.pull_request || issue.state !== 'open') {
+              core.setFailed(`incomplete requirement must remain open before continuation PLAN: state=${issue.state}`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'plan.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: { issue_number: String(issueNumber) },
+            });
+            core.info(`requirement #${issueNumber} is incomplete; dispatched next Read-only AI PLAN`);
 
       - name: Trusted LEARN Source 자동 시작
         if: steps.source.outputs.should_run == 'true'
