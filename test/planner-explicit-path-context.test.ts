@@ -3,6 +3,7 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { augmentPlanContextWithDirectTestEvidence } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
 import { selectPlanContext, verifyPlanContextPack } from "../src/self-improvement/planner.js";
 
@@ -64,8 +65,8 @@ test("#312형 historical 경로 열 개가 먼저 나와도 역할별 evidence�
     ].join("\n");
     const base = selectPlanContext(requirement, root, "example/framework", "9".repeat(40));
     const options = { maxFiles: 4, maxBytes: 10_000 };
-    const first = augmentPlanContextWithExplicitPaths(requirement, root, base, options);
-    const second = augmentPlanContextWithExplicitPaths(requirement, root, base, options);
+    const first = augmentPlanContextWithDirectTestEvidence(root, augmentPlanContextWithExplicitPaths(requirement, root, base, options));
+    const second = augmentPlanContextWithDirectTestEvidence(root, augmentPlanContextWithExplicitPaths(requirement, root, base, options));
     assert.deepEqual(first, second);
     verifyPlanContextPack(first);
     assert.deepEqual(first.files.map((file) => file.path), ["src/change.ts", "src/shared.ts", "src/evidence.ts", "test/change.test.ts"]);
