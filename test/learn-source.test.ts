@@ -251,61 +251,144 @@ function planExecutionFixture() {
 
 function fixedExecutionFixture() {
   const original = planExecutionFixture();
-  const priorReviewedSha = "f".repeat(40);
-  const fixPatchDigest = `sha256:${"9".repeat(64)}`;
-  const fixReviewRunId = 490;
-  const fixRequestRunId = 491;
-  const fixRunId = 492;
+  const candidateBDigest = `sha256:${"8".repeat(64)}`;
+  const candidateCDigest = `sha256:${"9".repeat(64)}`;
+  const candidateAHeadSha = original.publish.publishedHeadSha;
+  const candidateBHeadSha = "f".repeat(40);
+  const candidateCHeadSha = "d".repeat(40);
+  const firstReviewRunId = 480;
+  const firstRequestRunId = 481;
+  const firstFixRunId = 482;
+  const secondReviewRunId = 490;
+  const secondRequestRunId = 491;
+  const secondFixRunId = 492;
+  const branch = "ai-publish/issue-83";
+  const controlPlaneSha = original.facts.trustedRail.headSha;
+  const requirementsDigest = original.bridge.requirement.digest;
+
+  // The first LOCAL_FIX review is bound to candidate A's published head.
+  const firstReview = {
+    artifactName: `review-provenance-issue-83-${firstReviewRunId}-attempt-1`,
+    runId: firstReviewRunId,
+    runAttempt: 1,
+    reviewedBranch: branch,
+    reviewedHeadSha: candidateAHeadSha,
+    requirementsDigest,
+    findingsDigest: `sha256:${"1".repeat(64)}`,
+  };
+  const firstFix = {
+    workflowPath: ".github/workflows/fix-worker.yml",
+    runId: firstFixRunId,
+    runAttempt: 1,
+    controlPlaneSha,
+    candidateArtifactName: `implement-candidate-${firstRequestRunId}-${firstFixRunId}-attempt-1`,
+    candidatePatchDigest: candidateBDigest,
+    fixAttempt: 1,
+    sourceReview: firstReview,
+    sourceRequest: {
+      workflowPath: ".github/workflows/fix-request.yml",
+      runId: firstRequestRunId,
+      runAttempt: 1,
+      artifactName: `fix-request-${firstReviewRunId}-fix-1-${firstRequestRunId}-attempt-1`,
+      trustedCodeSha: controlPlaneSha,
+    },
+    aiExecution: { provider: "openai-codex-action", resultId: "codex-action-run:482:1" },
+  };
+  const firstSeal = {
+    ...original.seal,
+    baseSha: firstReview.reviewedHeadSha,
+    sealedPatchDigest: candidateBDigest,
+    sourceFix: firstFix,
+  };
+  const firstPublish = {
+    ...original.publish,
+    baseSha: firstReview.reviewedHeadSha,
+    sourceSealArtifactName: `sealed-candidate-${firstFixRunId}-attempt-1-500-attempt-1`,
+    sourceSeal: firstSeal,
+    publishedBranch: branch,
+    publishedHeadSha: candidateBHeadSha,
+  };
+  const firstVerify = {
+    ...original.verify,
+    sourcePublish: firstPublish,
+    verifiedBranch: branch,
+    verifiedHeadSha: candidateBHeadSha,
+  };
+  const secondReview = {
+    decision: "LOCAL_FIX",
+    reviewedBranch: branch,
+    reviewedHeadSha: candidateBHeadSha,
+    requirementsDigest,
+    reviewWorkflow: {
+      workflowPath: ".github/workflows/trusted-rail.yml",
+      runId: secondReviewRunId,
+      runAttempt: 1,
+      trustedCodeSha: controlPlaneSha,
+    },
+    sourceVerify: firstVerify,
+  };
   const sourceFix = {
     workflowPath: ".github/workflows/fix-worker.yml",
-    runId: fixRunId,
+    runId: secondFixRunId,
     runAttempt: 1,
-    controlPlaneSha: original.facts.trustedRail.headSha,
-    candidateArtifactName: `implement-candidate-${fixRequestRunId}-${fixRunId}-attempt-1`,
-    candidatePatchDigest: fixPatchDigest,
+    controlPlaneSha,
+    candidateArtifactName: `implement-candidate-${secondRequestRunId}-${secondFixRunId}-attempt-1`,
+    candidatePatchDigest: candidateCDigest,
     fixAttempt: 2,
     sourceReview: {
-      artifactName: `review-provenance-issue-83-${fixReviewRunId}-attempt-1`,
-      runId: fixReviewRunId,
-      runAttempt: 1,
-      reviewedBranch: "ai-publish/issue-83",
-      reviewedHeadSha: priorReviewedSha,
-      requirementsDigest: original.bridge.requirement.digest,
-      findingsDigest: `sha256:${"8".repeat(64)}`,
+      ...secondReview,
+      artifactName: `review-provenance-issue-83-${secondReviewRunId}-attempt-1`,
+      runId: secondReview.reviewWorkflow.runId,
+      runAttempt: secondReview.reviewWorkflow.runAttempt,
+      reviewedBranch: secondReview.reviewedBranch,
+      reviewedHeadSha: secondReview.reviewedHeadSha,
+      requirementsDigest: secondReview.requirementsDigest,
+      findingsDigest: `sha256:${"2".repeat(64)}`,
     },
     sourceRequest: {
       workflowPath: ".github/workflows/fix-request.yml",
-      runId: fixRequestRunId,
+      runId: secondRequestRunId,
       runAttempt: 1,
-      artifactName: `fix-request-${fixReviewRunId}-fix-2-${fixRequestRunId}-attempt-1`,
-      trustedCodeSha: original.facts.trustedRail.headSha,
+      artifactName: `fix-request-${secondReviewRunId}-fix-2-${secondRequestRunId}-attempt-1`,
+      trustedCodeSha: controlPlaneSha,
     },
     aiExecution: { provider: "openai-codex-action", resultId: "codex-action-run:492:1" },
   };
   const seal = {
     ...original.seal,
-    baseSha: priorReviewedSha,
-    sealedPatchDigest: fixPatchDigest,
+    baseSha: secondReview.reviewedHeadSha,
+    sealedPatchDigest: candidateCDigest,
     sourceFix,
   };
   const publish = {
     ...original.publish,
-    baseSha: priorReviewedSha,
-    sourceSealArtifactName: `sealed-candidate-${fixRunId}-attempt-1-500-attempt-1`,
+    baseSha: secondReview.reviewedHeadSha,
+    sourceSealArtifactName: `sealed-candidate-${secondFixRunId}-attempt-1-500-attempt-1`,
     sourceSeal: seal,
-    publishedBranch: sourceFix.sourceReview.reviewedBranch,
+    publishedBranch: branch,
+    publishedHeadSha: candidateCHeadSha,
   };
   const verify = {
     ...original.verify,
     sourcePublish: publish,
     verifiedBranch: publish.publishedBranch,
+    verifiedHeadSha: candidateCHeadSha,
+  };
+  const facts = {
+    ...original.facts,
+    humanMerge: { ...original.facts.humanMerge, headSha: candidateCHeadSha },
   };
   const orchestration = {
     ...original.orchestration,
     completedFixCount: 2,
-    sourceReview: { ...original.orchestration.sourceReview, sourceVerify: verify },
+    reviewedHeadSha: candidateCHeadSha,
+    sourceReview: { ...original.orchestration.sourceReview, reviewedHeadSha: candidateCHeadSha,
+      sourceVerify: verify },
+    mergeBoundary: { ...original.orchestration.mergeBoundary, headSha: candidateCHeadSha },
   };
-  return { ...original, orchestration, seal, sourceFix, fixPatchDigest, priorReviewedSha };
+  return { ...original, facts, orchestration, firstFix, firstSeal, firstPublish, firstVerify,
+    secondReview, seal, sourceFix, candidateAHeadSha, candidateBDigest, candidateBHeadSha,
+    candidateCDigest, candidateCHeadSha };
 }
 
 test("LEARN Source accepts a completed cycle without FIX and binds execution evidence", () => {
@@ -322,18 +405,44 @@ test("LEARN Source accepts a completed cycle without FIX and binds execution evi
   assert.equal(result.learnInputPack.completedCycle.recordDigest, result.completedCycle.recordDigest);
 });
 
-test("LEARN Source accepts FIX attempt 2 with a distinct final SEAL digest", () => {
+test("LEARN Source accepts FIX1 candidate B followed by FIX2 candidate C", () => {
   const fixture = fixedExecutionFixture();
+  const finalVerify = fixture.orchestration.sourceReview.sourceVerify;
+  const finalPublish = finalVerify.sourcePublish;
+  const finalSeal = finalPublish.sourceSeal;
+  const finalFix = finalSeal.sourceFix;
+  const reviewAfterFix1 = finalFix.sourceReview;
+  const verifyAfterFix1 = reviewAfterFix1.sourceVerify;
+  const publishAfterFix1 = verifyAfterFix1.sourcePublish;
+  const sealAfterFix1 = publishAfterFix1.sourceSeal;
+  assert.equal(sealAfterFix1.sourceFix, fixture.firstFix);
+  assert.equal(fixture.firstFix.sourceReview.reviewedHeadSha, fixture.candidateAHeadSha);
+  assert.equal(sealAfterFix1.sealedPatchDigest, fixture.candidateBDigest);
+  assert.equal(publishAfterFix1.publishedHeadSha, fixture.candidateBHeadSha);
+  assert.equal(verifyAfterFix1.verifiedHeadSha, fixture.candidateBHeadSha);
+  assert.equal(reviewAfterFix1.decision, fixture.secondReview.decision);
+  assert.equal(reviewAfterFix1.reviewWorkflow, fixture.secondReview.reviewWorkflow);
+  assert.equal(reviewAfterFix1.reviewedHeadSha, verifyAfterFix1.verifiedHeadSha);
+  assert.equal(reviewAfterFix1.runId, fixture.secondReview.reviewWorkflow.runId);
+  assert.equal(finalSeal.baseSha, reviewAfterFix1.reviewedHeadSha);
+  assert.equal(finalSeal.sealedPatchDigest, fixture.candidateCDigest);
+  assert.equal(finalPublish.publishedHeadSha, fixture.candidateCHeadSha);
+  assert.equal(finalVerify.verifiedHeadSha, fixture.candidateCHeadSha);
+  assert.equal(fixture.orchestration.sourceReview.reviewedHeadSha, fixture.candidateCHeadSha);
+  assert.equal(fixture.facts.humanMerge.headSha, fixture.candidateCHeadSha);
+  assert.notEqual(fixture.candidateAHeadSha, fixture.candidateBHeadSha);
+  assert.notEqual(fixture.candidateBHeadSha, fixture.candidateCHeadSha);
+  assert.notEqual(fixture.bridge.candidatePatchDigest, fixture.candidateBDigest);
+  assert.notEqual(fixture.candidateBDigest, fixture.candidateCDigest);
+  assert.notEqual(fixture.bridge.candidatePatchDigest, fixture.candidateCDigest);
+
   const result = createTrustedLearnSourceArtifacts(fixture.facts, fixture.orchestration);
   verifyLearnInputPack(result.learnInputPack, result.completedCycle);
   const item = result.learnInputPack.evidence.find(({ evidenceId }) => evidenceId === "test-execution-01");
   if (!item) throw new Error("missing test execution evidence");
   const execution = JSON.parse(item.content);
-  assert.notEqual(fixture.bridge.candidatePatchDigest, fixture.fixPatchDigest);
-  assert.notEqual(fixture.bridge.baseSha, fixture.priorReviewedSha);
-  assert.notEqual(fixture.priorReviewedSha, fixture.facts.humanMerge.headSha);
   assert.equal(execution.candidatePatchDigest, fixture.bridge.candidatePatchDigest);
-  assert.equal(execution.sealedPatchDigest, fixture.fixPatchDigest);
+  assert.equal(execution.sealedPatchDigest, fixture.candidateCDigest);
   assert.equal(execution.baseSha, fixture.bridge.baseSha);
   assert.equal(execution.reviewedHeadSha, fixture.facts.humanMerge.headSha);
   assert.equal(item.cycle.recordDigest, result.completedCycle.recordDigest);
@@ -341,7 +450,7 @@ test("LEARN Source accepts FIX attempt 2 with a distinct final SEAL digest", () 
   assert.equal(result.learnInputPack.completedCycle.recordDigest, result.completedCycle.recordDigest);
 });
 
-test("LEARN Source rejects tampered FIX provenance after two successful attempts", () => {
+test("LEARN Source rejects tampered final FIX provenance", () => {
   const fixture = fixedExecutionFixture();
   const mutations = [
     (sourceFix: typeof fixture.sourceFix) => { sourceFix.candidatePatchDigest = `sha256:${"7".repeat(64)}`; },
@@ -354,19 +463,30 @@ test("LEARN Source rejects tampered FIX provenance after two successful attempts
     (sourceFix: typeof fixture.sourceFix) => { sourceFix.candidateArtifactName += "-wrong"; },
   ];
   for (const mutate of mutations) {
-    const orchestration = structuredClone(fixture.orchestration);
-    mutate(orchestration.sourceReview.sourceVerify.sourcePublish.sourceSeal.sourceFix);
-    assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, orchestration));
+    const changed = structuredClone(fixture.orchestration);
+    mutate(changed.sourceReview.sourceVerify.sourcePublish.sourceSeal.sourceFix);
+    assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, changed));
   }
 });
 
-test("LEARN Source rejects tampered final SEAL base SHA and patch digest after FIX", () => {
+test("LEARN Source rejects final SEAL, reviewed SHA, merged PR, and Trusted Rail identity drift after FIX", () => {
   const fixture = fixedExecutionFixture();
   for (const field of ["baseSha", "sealedPatchDigest"] as const) {
-    const orchestration = structuredClone(fixture.orchestration);
-    const seal = orchestration.sourceReview.sourceVerify.sourcePublish.sourceSeal;
+    const changed = structuredClone(fixture.orchestration);
+    const seal = changed.sourceReview.sourceVerify.sourcePublish.sourceSeal;
     if (field === "baseSha") seal.baseSha = "7".repeat(40);
     else seal.sealedPatchDigest = `sha256:${"7".repeat(64)}`;
-    assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, orchestration));
+    assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, changed));
   }
+  assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, {
+    ...fixture.orchestration, reviewedHeadSha: "7".repeat(40),
+  }), /reviewed exact SHA/);
+  assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, {
+    ...fixture.orchestration,
+    mergeBoundary: { ...fixture.orchestration.mergeBoundary, number: 25 },
+  }), /PR number/);
+  assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, {
+    ...fixture.orchestration,
+    orchestratorWorkflow: { ...fixture.orchestration.orchestratorWorkflow, runAttempt: 2 },
+  }), /run identity/);
 });
