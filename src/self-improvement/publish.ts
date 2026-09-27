@@ -1,5 +1,10 @@
 import { sha256 } from "./implement.js";
 import {
+  cyclePublishBranchName,
+  isPublishBranchForIssue,
+  legacyPublishBranchName,
+} from "./publish-branch.js";
+import {
   TRUSTED_RAIL_WORKFLOW_PATH,
   sealSourceRunIdentity,
   validateSealProvenance,
@@ -62,11 +67,27 @@ function validateSealedArtifactName(artifactName: string, seal: SealProvenance):
   }
 }
 
-export function publishBranchName(issueNumber: number): string {
-  if (!positiveInteger(issueNumber)) {
-    throw new Error("issue number는 양의 정수여야 합니다");
+/**
+ * PUBLISH branch 검증 정책.
+ * - current: 이번 Trusted Rail run이 만든 provenance. trusted SEAL에서 계산한 branch만 허용한다.
+ * - historical: 이전 run이 남긴 provenance(FIX 입력, LEARN Source). 이 변경 전 legacy issue-only branch도 허용한다.
+ */
+export type PublishBranchPolicy = "current" | "historical";
+
+/**
+ * trusted SEAL이 결정하는 PUBLISH branch다. 새 PUBLISH는 이 값만 사용한다.
+ * FIX는 검토받은 branch 위에 fast-forward로 이어지므로 새 cycle branch를 만들지 않고
+ * source REVIEW의 branch를 이어받는다. 그 branch도 같은 Issue의 legacy/cycle 형식이어야 한다.
+ */
+export function publishBranchForSeal(seal: SealProvenance): string {
+  if (seal.sourceFix !== undefined) {
+    const inherited: unknown = seal.sourceFix.sourceReview.reviewedBranch;
+    if (!isPublishBranchForIssue(inherited, seal.issueNumber)) {
+      throw new Error("FIX source REVIEW branch가 같은 Issue의 PUBLISH branch가 아닙니다");
+    }
+    return inherited;
   }
-  return `ai-publish/issue-${issueNumber}`;
+  return cyclePublishBranchName(seal.issueNumber, seal.baseSha, seal.sealedPatchDigest);
 }
 
 export function validateSealedCandidateForPublish(input: {
@@ -91,7 +112,10 @@ export function validateSealedCandidateForPublish(input: {
   return seal;
 }
 
-export function validatePublishProvenance(value: unknown): PublishProvenance {
+export function validatePublishProvenance(
+  value: unknown,
+  branchPolicy: PublishBranchPolicy = "current",
+): PublishProvenance {
   if (!record(value) || !record(value.publishWorkflow)) {
     throw new Error("PUBLISH provenance가 올바르지 않습니다");
   }
@@ -106,7 +130,7 @@ export function validatePublishProvenance(value: unknown): PublishProvenance {
     !positiveInteger(value.publishWorkflow.runId) ||
     !positiveInteger(value.publishWorkflow.runAttempt) ||
     !validSha(value.publishWorkflow.trustedCodeSha) ||
-    value.publishedBranch !== publishBranchName(value.issueNumber) ||
+    typeof value.publishedBranch !== "string" ||
     !validSha(value.publishedHeadSha)
   ) {
     throw new Error("PUBLISH provenance가 올바르지 않습니다");
@@ -123,6 +147,15 @@ export function validatePublishProvenance(value: unknown): PublishProvenance {
     throw new Error("PUBLISH provenance와 source SEAL identity가 일치하지 않습니다");
   }
   validateSealedArtifactName(value.sourceSealArtifactName, seal);
+
+  const expectedBranch = publishBranchForSeal(seal);
+  const historicalLegacyBranch =
+    branchPolicy === "historical" &&
+    seal.sourceFix === undefined &&
+    value.publishedBranch === legacyPublishBranchName(seal.issueNumber);
+  if (value.publishedBranch !== expectedBranch && !historicalLegacyBranch) {
+    throw new Error("PUBLISH branch가 trusted SEAL cycle identity와 일치하지 않습니다");
+  }
   return value as unknown as PublishProvenance;
 }
 
@@ -166,7 +199,7 @@ export function createPublishProvenance(input: {
       runAttempt: input.publishRun.runAttempt,
       trustedCodeSha: input.publishRun.trustedCodeSha,
     },
-    publishedBranch: publishBranchName(seal.issueNumber),
+    publishedBranch: publishBranchForSeal(seal),
     publishedHeadSha,
   });
 }

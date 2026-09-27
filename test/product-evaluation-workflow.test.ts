@@ -12,7 +12,8 @@ test("Human Merge된 default branch PR만 Product Evaluation bootstrap 대상이
   assert.match(workflow, /github\.event\.pull_request\.merged == true/);
   assert.match(workflow, /github\.event\.pull_request\.base\.ref == github\.event\.repository\.default_branch/);
   assert.match(workflow, /ai-dev-framework:MERGE_READY issue=/);
-  assert.match(workflow, /pr\.head\.ref !== `ai-publish\/issue-\$\{issueNumber\}`/);
+  assert.match(workflow, /new RegExp\(`\^ai-publish\/issue-\$\{issueNumber\}\(\?:-cycle-\[0-9a-f\]\{16\}\)\?\$`\)\.test\(pr\.head\.ref\)/);
+  assert.doesNotMatch(workflow, /pr\.head\.ref !== `ai-publish\/issue-\$\{issueNumber\}`/);
   assert.match(workflow, /pr\.head\.sha !== reviewedSha/);
 });
 

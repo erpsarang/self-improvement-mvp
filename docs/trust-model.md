@@ -16,7 +16,7 @@ Actions artifact는 현재 운영 단계의 trust anchor이며 영구 ledger가 
 
 candidate patch는 trusted `SEAL`을 거쳐야만 PUBLISH 대상으로 간주된다. `SEAL`은 candidate code를 실행하거나 적용하지 않고 source identity, base SHA, provenance 구조와 exact bytes digest를 검증해 `sealed.patch + seal.json`을 만든다.
 
-`PUBLISH`는 같은 Trusted Rail 내부의 별도 job이며 오직 sealed artifact만 입력으로 받는다. workflow 전체나 `SEAL` job에는 write 권한을 주지 않고 `PUBLISH` job에만 `contents: write`를 부여한다. PUBLISH는 exact `baseSha`의 별도 worktree에 sealed patch를 적용하고 `ai-publish/issue-<N>` branch에만 force 없이 publish한다. `main`에는 직접 push하지 않으며 실제 remote branch SHA를 다시 조회해 exact match한 값을 `publish.json.publishedHeadSha`로 기록한다.
+`PUBLISH`는 같은 Trusted Rail 내부의 별도 job이며 오직 sealed artifact만 입력으로 받는다. workflow 전체나 `SEAL` job에는 write 권한을 주지 않고 `PUBLISH` job에만 `contents: write`를 부여한다. PUBLISH는 exact `baseSha`의 별도 worktree에 sealed patch를 적용하고 `ai-publish/issue-<N>-cycle-<16hex>` branch(FIX는 source REVIEW branch)에만 force 없이 publish한다. `main`에는 직접 push하지 않으며 실제 remote branch SHA를 다시 조회해 exact match한 값을 `publish.json.publishedHeadSha`로 기록한다.
 
 PUBLISH 재실행은 동일 base와 동일 tree의 기존 published commit만 idempotent하게 재사용할 수 있다. 기존 publish branch가 예상하지 않은 SHA를 가리키면 non-fast-forward overwrite를 시도하지 않고 fail-closed 한다.
 
@@ -118,7 +118,7 @@ permissions:
 
 ```text
 review.json.reviewedHeadSha
-== remote ai-publish/issue-N HEAD
+== remote published branch HEAD
 == Human Merge PR head SHA
 ```
 

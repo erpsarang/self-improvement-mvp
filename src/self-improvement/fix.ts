@@ -1,4 +1,5 @@
 import { sha256 } from "./implement.js";
+import { isPublishBranchForIssue } from "./publish-branch.js";
 import type {
   PlanReviewAuthority,
   ReviewProvenance,
@@ -202,7 +203,7 @@ export function validateFixRequestProvenance(value: unknown): FixRequestProvenan
     typeof value.sourceReview.artifactName !== "string" ||
     !positiveInteger(value.sourceReview.runId) ||
     !positiveInteger(value.sourceReview.runAttempt) ||
-    value.sourceReview.reviewedBranch !== `ai-publish/issue-${String(value.issueNumber)}` ||
+    !isPublishBranchForIssue(value.sourceReview.reviewedBranch, value.issueNumber) ||
     !validSha(value.sourceReview.reviewedHeadSha) ||
     !validRequirementDigest(value.sourceReview.requirementsDigest) ||
     !validDigest(value.sourceReview.findingsDigest) ||

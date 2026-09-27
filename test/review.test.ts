@@ -6,6 +6,7 @@ import {
   type AuthorizationProvenance,
 } from "../src/self-improvement/authorization.js";
 import type { PublishProvenance } from "../src/self-improvement/publish.js";
+import { cyclePublishBranchName } from "../src/self-improvement/publish-branch.js";
 import {
   createSemanticReviewPrompt,
   createSemanticReviewProvenance,
@@ -88,7 +89,7 @@ const publish: PublishProvenance = {
     runAttempt: 1,
     trustedCodeSha,
   },
-  publishedBranch: `ai-publish/issue-${issueNumber}`,
+  publishedBranch: cyclePublishBranchName(issueNumber, baseSha, patchDigest),
   publishedHeadSha,
 };
 

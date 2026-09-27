@@ -18,6 +18,7 @@ import {
   isReviewDecision,
   type ReviewDecision,
 } from "./review-decision.js";
+import type { PublishBranchPolicy } from "./publish.js";
 import { TRUSTED_RAIL_WORKFLOW_PATH } from "./seal.js";
 import {
   validatePublishedCandidateForVerify,
@@ -212,6 +213,7 @@ export function validateVerifyProvenanceForReview(input: {
   readonly verify: unknown;
   readonly verifyArtifactName: string;
   readonly repository: string;
+  readonly publishBranchPolicy?: PublishBranchPolicy;
 }): VerifyProvenance {
   if (!record(input.verify)) throw new Error("VERIFY provenance가 올바르지 않습니다");
   const value = input.verify;
@@ -238,6 +240,7 @@ export function validateVerifyProvenanceForReview(input: {
     publish: verify.sourcePublish,
     publishArtifactName: verify.sourcePublishArtifactName,
     repository: verify.repository,
+    publishBranchPolicy: input.publishBranchPolicy ?? "current",
   });
 
   if (verify.repository !== input.repository) {

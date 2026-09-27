@@ -400,6 +400,8 @@ export function createTrustedLearnSourceArtifacts(
       verify: sourceReview.sourceVerify,
       verifyArtifactName: requiredString(sourceReview, "sourceVerifyArtifactName", "sourceReview.sourceVerifyArtifactName"),
       repository: facts.repository,
+      // Human Merge 뒤 읽는 historical provenance다. 이 변경 전 legacy PUBLISH branch도 허용한다.
+      publishBranchPolicy: "historical",
     });
     const publish = verify.sourcePublish;
     const seal = publish.sourceSeal;

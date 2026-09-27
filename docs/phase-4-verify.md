@@ -8,7 +8,7 @@ Trusted PUBLISH가 기록한 immutable `publishedHeadSha`와 **실제로 검증�
 publish.json
   publishedHeadSha
         │
-        ├─ remote ai-publish/issue-<N> HEAD exact match
+        ├─ remote published branch HEAD exact match
         │
         └─ exact SHA checkout
                 ↓

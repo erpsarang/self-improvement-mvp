@@ -231,7 +231,9 @@ jobs:
               core.setFailed(`invalid trusted requirement completion: ${requirementComplete}`);
               return;
             }
-            if (branch !== `ai-publish/issue-${issueNumber}`) {
+            // branch는 trusted REVIEW provenance의 값이다. 새 PUBLISH는 cycle branch를 쓰고,
+            // FIX는 source REVIEW branch를 이어받으므로 같은 Issue의 cycle 또는 legacy 형식만 허용한다.
+            if (!new RegExp(`^ai-publish/issue-${issueNumber}(?:-cycle-[0-9a-f]{16})?$`).test(branch)) {
               core.setFailed(`unexpected reviewed branch: ${branch}`);
               return;
             }
@@ -581,6 +583,7 @@ jobs:
           SOURCE_REVIEW_RUN_ATTEMPT: ${{ needs.route.outputs.review_artifact_attempt }}
           SOURCE_REVIEW_ARTIFACT_NAME: ${{ needs.route.outputs.review_artifact_name }}
           FIX_ATTEMPT: ${{ needs.route.outputs.next_fix_attempt }}
+          ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
           REVIEWED_BRANCH: ${{ needs.route.outputs.reviewed_branch }}
           REVIEWED_HEAD_SHA: ${{ needs.route.outputs.reviewed_head_sha }}
         with:
@@ -614,8 +617,15 @@ jobs:
               core.setFailed(`invalid source REVIEW artifact: ${artifactName}`);
               return;
             }
-            if (branch !== artifactName.replace(/^review-provenance-issue-(\d+)-.*$/, 'ai-publish/issue-$1')) {
-              core.setFailed(`source REVIEW issue/branch mismatch: artifact=${artifactName}, branch=${branch}`);
+            // branch는 trusted REVIEW provenance(route output)의 값을 그대로 쓴다. artifact 이름으로 branch를 재구성하지 않는다.
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const artifactIssue = Number(artifactName.replace(/^review-provenance-issue-(\d+)-.*$/, '$1'));
+            if (
+              !Number.isSafeInteger(issueNumber) || issueNumber <= 0 ||
+              artifactIssue !== issueNumber ||
+              !new RegExp(`^ai-publish/issue-${issueNumber}(?:-cycle-[0-9a-f]{16})?$`).test(branch)
+            ) {
+              core.setFailed(`source REVIEW issue/branch mismatch: issue=${issueNumber}, artifact=${artifactName}, branch=${branch}`);
               return;
             }
             if (!/^[0-9a-f]{40}$/.test(reviewedSha)) {

@@ -1,6 +1,6 @@
 import {
-  publishBranchName,
   validatePublishProvenance,
+  type PublishBranchPolicy,
   type PublishProvenance,
 } from "./publish.js";
 import { TRUSTED_RAIL_WORKFLOW_PATH } from "./seal.js";
@@ -58,13 +58,13 @@ export function validatePublishedCandidateForVerify(input: {
   readonly publish: unknown;
   readonly publishArtifactName: string;
   readonly repository: string;
+  /** 이전 run의 provenance를 읽을 때만 "historical"을 준다. 기본은 이번 run의 trusted SEAL branch만 허용한다. */
+  readonly publishBranchPolicy?: PublishBranchPolicy;
 }): PublishProvenance {
-  const publish = validatePublishProvenance(input.publish);
+  // branch는 validatePublishProvenance가 trusted SEAL(baseSha + sealedPatchDigest)에서 다시 계산해 검증한다.
+  const publish = validatePublishProvenance(input.publish, input.publishBranchPolicy ?? "current");
   if (publish.repository !== input.repository) {
     throw new Error("PUBLISH repository가 현재 repository와 일치하지 않습니다");
-  }
-  if (publish.publishedBranch !== publishBranchName(publish.issueNumber)) {
-    throw new Error("PUBLISH branch가 issue identity와 일치하지 않습니다");
   }
   validatePublishArtifactName(input.publishArtifactName, publish);
   return publish;

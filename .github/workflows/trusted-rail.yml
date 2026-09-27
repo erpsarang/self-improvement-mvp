@@ -428,7 +428,13 @@ jobs:
             echo "invalid base SHA" >&2
             exit 1
           fi
-          if [[ ! "$PUBLISH_BRANCH" =~ ^ai-publish/issue-[1-9][0-9]*$ ]]; then
+          if [[ ! "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "invalid issue number" >&2
+            exit 1
+          fi
+          # 새 PUBLISH branch는 trusted SEAL cycle identity(ai-publish/issue-N-cycle-<16hex>)다.
+          # FIX만 source REVIEW branch를 이어받으므로 같은 Issue의 legacy issue-only branch도 허용한다.
+          if [[ ! "$PUBLISH_BRANCH" =~ ^ai-publish/issue-${ISSUE_NUMBER}(-cycle-[0-9a-f]{16})?$ ]]; then
             echo "invalid publish branch" >&2
             exit 1
           fi

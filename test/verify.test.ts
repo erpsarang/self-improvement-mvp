@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PublishProvenance } from "../src/self-improvement/publish.js";
+import { cyclePublishBranchName } from "../src/self-improvement/publish-branch.js";
 import {
   createVerifyProvenance,
   validatePublishedCandidateForVerify,
@@ -56,7 +57,7 @@ const publish: PublishProvenance = {
     runAttempt: 1,
     trustedCodeSha,
   },
-  publishedBranch: "ai-publish/issue-20",
+  publishedBranch: cyclePublishBranchName(20, baseSha, patchDigest),
   publishedHeadSha,
 };
 
@@ -69,7 +70,7 @@ test("PUBLISH provenance artifact는 issue/run/attempt가 정확히 결합될 �
     repository: publish.repository,
   });
   assert.equal(validated.publishedHeadSha, publishedHeadSha);
-  assert.equal(validated.publishedBranch, "ai-publish/issue-20");
+  assert.equal(validated.publishedBranch, cyclePublishBranchName(20, baseSha, patchDigest));
 });
 
 test("PUBLISH artifact identity가 provenance와 다르면 VERIFY를 거부한다", () => {
@@ -92,7 +93,33 @@ test("published branch가 issue와 deterministic binding을 깨면 VERIFY를 거
         publishArtifactName: artifactName,
         repository: publish.repository,
       }),
-    /PUBLISH provenance/,
+    /PUBLISH branch/,
+  );
+});
+
+test("VERIFY는 이번 run의 legacy issue-only branch를 거부하고 historical 읽기에서만 허용한다", () => {
+  const legacy = { ...publish, publishedBranch: "ai-publish/issue-20" };
+  assert.throws(
+    () => validatePublishedCandidateForVerify({ publish: legacy, publishArtifactName: artifactName, repository: publish.repository }),
+    /PUBLISH branch/,
+  );
+  assert.equal(
+    validatePublishedCandidateForVerify({
+      publish: legacy,
+      publishArtifactName: artifactName,
+      repository: publish.repository,
+      publishBranchPolicy: "historical",
+    }).publishedBranch,
+    "ai-publish/issue-20",
+  );
+  assert.throws(
+    () => validatePublishedCandidateForVerify({
+      publish: { ...publish, publishedBranch: cyclePublishBranchName(20, "d".repeat(40), patchDigest) },
+      publishArtifactName: artifactName,
+      repository: publish.repository,
+      publishBranchPolicy: "historical",
+    }),
+    /PUBLISH branch/,
   );
 });
 
