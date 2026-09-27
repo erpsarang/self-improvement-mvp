@@ -256,6 +256,7 @@ function selectedRelationProtection(target: string, context: PlanContextPack): R
   const contextPaths = new Set(context.files.map((file) => file.path));
   const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
   const protectedPaths = new Set<string>();
+  const coveredSources = new Set<string>();
 
   for (const file of context.files) {
     if (isProjectExecutionContext(file.path)) protectedPaths.add(file.path);
@@ -266,14 +267,16 @@ function selectedRelationProtection(target: string, context: PlanContextPack): R
       if (!contextPaths.has(sourcePath) || isFrameworkSource(sourcePath)) continue;
       protectedPaths.add(sourcePath);
       protectedPaths.add(file.path);
+      coveredSources.add(sourcePath);
     }
   }
 
-  // The primary selector can surface an App runtime without its direct test when
-  // later context competition is tight. Recover only the strongest exact-stem
-  // direct test so trusted scope validation can still require evidence for that
-  // existing test path.
+  // The primary selector can surface an App runtime without any direct test when
+  // later context competition is tight. Only then recover the strongest test.
+  // If the Context already contains another real direct test for that source,
+  // adding an exact-stem test as duplicate evidence can waste bounded slots/bytes.
   for (const file of context.files) {
+    if (coveredSources.has(file.path)) continue;
     const direct = strongestDirectTest(target, file.path);
     if (!direct) continue;
     protectedPaths.add(file.path);
