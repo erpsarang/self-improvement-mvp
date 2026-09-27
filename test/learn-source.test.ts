@@ -253,7 +253,9 @@ function fixedExecutionFixture() {
   const original = planExecutionFixture();
   const candidateBDigest = `sha256:${"8".repeat(64)}`;
   const candidateCDigest = `sha256:${"9".repeat(64)}`;
+  const candidateAHeadSha = original.publish.publishedHeadSha;
   const candidateBHeadSha = "f".repeat(40);
+  const candidateCHeadSha = "d".repeat(40);
   const firstReviewRunId = 480;
   const firstRequestRunId = 481;
   const firstFixRunId = 482;
@@ -270,7 +272,7 @@ function fixedExecutionFixture() {
     runId: firstReviewRunId,
     runAttempt: 1,
     reviewedBranch: branch,
-    reviewedHeadSha: original.publish.publishedHeadSha,
+    reviewedHeadSha: candidateAHeadSha,
     requirementsDigest,
     findingsDigest: `sha256:${"1".repeat(64)}`,
   };
@@ -334,6 +336,7 @@ function fixedExecutionFixture() {
     candidatePatchDigest: candidateCDigest,
     fixAttempt: 2,
     sourceReview: {
+      ...secondReview,
       artifactName: `review-provenance-issue-83-${secondReviewRunId}-attempt-1`,
       runId: secondReview.reviewWorkflow.runId,
       runAttempt: secondReview.reviewWorkflow.runAttempt,
@@ -363,19 +366,29 @@ function fixedExecutionFixture() {
     sourceSealArtifactName: `sealed-candidate-${secondFixRunId}-attempt-1-500-attempt-1`,
     sourceSeal: seal,
     publishedBranch: branch,
+    publishedHeadSha: candidateCHeadSha,
   };
   const verify = {
     ...original.verify,
     sourcePublish: publish,
     verifiedBranch: publish.publishedBranch,
+    verifiedHeadSha: candidateCHeadSha,
+  };
+  const facts = {
+    ...original.facts,
+    humanMerge: { ...original.facts.humanMerge, headSha: candidateCHeadSha },
   };
   const orchestration = {
     ...original.orchestration,
     completedFixCount: 2,
-    sourceReview: { ...original.orchestration.sourceReview, sourceVerify: verify },
+    reviewedHeadSha: candidateCHeadSha,
+    sourceReview: { ...original.orchestration.sourceReview, reviewedHeadSha: candidateCHeadSha,
+      sourceVerify: verify },
+    mergeBoundary: { ...original.orchestration.mergeBoundary, headSha: candidateCHeadSha },
   };
-  return { ...original, orchestration, firstFix, firstSeal, firstPublish, firstVerify,
-    secondReview, seal, sourceFix, candidateBDigest, candidateCDigest, candidateBHeadSha };
+  return { ...original, facts, orchestration, firstFix, firstSeal, firstPublish, firstVerify,
+    secondReview, seal, sourceFix, candidateAHeadSha, candidateBDigest, candidateBHeadSha,
+    candidateCDigest, candidateCHeadSha };
 }
 
 test("LEARN Source accepts a completed cycle without FIX and binds execution evidence", () => {
@@ -394,16 +407,31 @@ test("LEARN Source accepts a completed cycle without FIX and binds execution evi
 
 test("LEARN Source accepts FIX1 candidate B followed by FIX2 candidate C", () => {
   const fixture = fixedExecutionFixture();
-  assert.equal(fixture.firstFix.sourceReview.reviewedHeadSha, fixture.publish.publishedHeadSha);
-  assert.equal(fixture.firstSeal.sealedPatchDigest, fixture.candidateBDigest);
-  assert.equal(fixture.firstPublish.sourceSeal, fixture.firstSeal);
-  assert.equal(fixture.firstVerify.sourcePublish, fixture.firstPublish);
-  assert.equal(fixture.secondReview.sourceVerify, fixture.firstVerify);
-  assert.equal(fixture.secondReview.reviewedHeadSha, fixture.candidateBHeadSha);
-  assert.equal(fixture.sourceFix.sourceReview.reviewedHeadSha, fixture.secondReview.reviewedHeadSha);
-  assert.equal(fixture.sourceFix.sourceReview.runId, fixture.secondReview.reviewWorkflow.runId);
-  assert.equal(fixture.seal.baseSha, fixture.secondReview.reviewedHeadSha);
-  assert.equal(fixture.seal.sealedPatchDigest, fixture.candidateCDigest);
+  const finalVerify = fixture.orchestration.sourceReview.sourceVerify;
+  const finalPublish = finalVerify.sourcePublish;
+  const finalSeal = finalPublish.sourceSeal;
+  const finalFix = finalSeal.sourceFix;
+  const reviewAfterFix1 = finalFix.sourceReview;
+  const verifyAfterFix1 = reviewAfterFix1.sourceVerify;
+  const publishAfterFix1 = verifyAfterFix1.sourcePublish;
+  const sealAfterFix1 = publishAfterFix1.sourceSeal;
+  assert.equal(sealAfterFix1.sourceFix, fixture.firstFix);
+  assert.equal(fixture.firstFix.sourceReview.reviewedHeadSha, fixture.candidateAHeadSha);
+  assert.equal(sealAfterFix1.sealedPatchDigest, fixture.candidateBDigest);
+  assert.equal(publishAfterFix1.publishedHeadSha, fixture.candidateBHeadSha);
+  assert.equal(verifyAfterFix1.verifiedHeadSha, fixture.candidateBHeadSha);
+  assert.equal(reviewAfterFix1.decision, fixture.secondReview.decision);
+  assert.equal(reviewAfterFix1.reviewWorkflow, fixture.secondReview.reviewWorkflow);
+  assert.equal(reviewAfterFix1.reviewedHeadSha, verifyAfterFix1.verifiedHeadSha);
+  assert.equal(reviewAfterFix1.runId, fixture.secondReview.reviewWorkflow.runId);
+  assert.equal(finalSeal.baseSha, reviewAfterFix1.reviewedHeadSha);
+  assert.equal(finalSeal.sealedPatchDigest, fixture.candidateCDigest);
+  assert.equal(finalPublish.publishedHeadSha, fixture.candidateCHeadSha);
+  assert.equal(finalVerify.verifiedHeadSha, fixture.candidateCHeadSha);
+  assert.equal(fixture.orchestration.sourceReview.reviewedHeadSha, fixture.candidateCHeadSha);
+  assert.equal(fixture.facts.humanMerge.headSha, fixture.candidateCHeadSha);
+  assert.notEqual(fixture.candidateAHeadSha, fixture.candidateBHeadSha);
+  assert.notEqual(fixture.candidateBHeadSha, fixture.candidateCHeadSha);
   assert.notEqual(fixture.bridge.candidatePatchDigest, fixture.candidateBDigest);
   assert.notEqual(fixture.candidateBDigest, fixture.candidateCDigest);
 
