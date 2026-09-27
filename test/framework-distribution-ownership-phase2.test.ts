@@ -8,7 +8,7 @@ const workflows = [
   'fix-request', 'fix-worker', 'improvement-candidate', 'learn-source', 'learn',
   'orchestrator', 'plan-authorize', 'plan-candidate-bridge', 'plan-implement-handoff',
   'plan-implement-worker', 'plan-recovery', 'plan-worker-recovery-preflight', 'plan',
-  'product-evaluation', 'semantic-review', 'trusted-rail',
+  'post-merge-learn', 'product-evaluation', 'semantic-review', 'trusted-rail',
 ];
 const runtime = [
   'authorization', 'completed-cycle', 'context-pack', 'deterministic-ci',
@@ -22,7 +22,7 @@ const runtime = [
   'plan-implement-worker-handler', 'plan-implement-worker', 'plan-recovery-handler', 'plan-recovery',
   'plan-worker-ci-repair-handler',
   'planner-handler', 'planner', 'product-evaluation-handler', 'product-evaluation',
-  'publish-handler', 'publish', 'repair-policy', 'review-decision',
+  'publish-branch', 'publish-handler', 'publish', 'repair-policy', 'review-decision',
   'review-handler', 'review', 'seal-handler', 'seal', 'single-pass-worker', 'trusted-lockfile',
   'verify-handler', 'verify', 'distribution-manifest', 'distribution-manifest-verifier',
   'distribution-bundle', 'distribution-bundle-builder', 'distribution-bundle-verifier',
@@ -40,7 +40,7 @@ test('production ownership is exactly the reviewed full bundle, with no digests 
     'package.json',
     'package-lock.json',
   ].sort();
-  assert.equal(expected.length, 75);
+  assert.equal(expected.length, 77);
   assert.deepEqual(value.entries.map(entry => entry.sourcePath).sort(), expected);
   for (const entry of value.entries) {
     const expectedTarget = entry.sourcePath === 'package.json' || entry.sourcePath === 'package-lock.json'
