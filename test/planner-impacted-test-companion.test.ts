@@ -186,6 +186,43 @@ test("최종 Context에 뒤늦게 들어온 source도 실제 직접 테스트 ev
   assert.doesNotThrow(() => validatePlan(plan, root, augmented));
 });
 
+test("Context에 이미 다른 실제 direct test가 있으면 strongest exact-stem test를 중복 보강하지 않는다 (#303)", () => {
+  const root = literalReadFixture(true);
+  writeFileSync(join(root, "tsconfig.json"), "{}\n");
+
+  const context = contextFromPaths(root, [
+    "src/web-main.ts",
+    "test/exception-stock-display.test.ts",
+    "src/order-csv.ts",
+    "test/order-csv.test.ts",
+    "src/order-csv-template.ts",
+    "test/order-csv-template.test.ts",
+    "package.json",
+    "tsconfig.json",
+  ]);
+  assert.equal(context.files.length, 8);
+  assert.equal(strongestDirectTest(root, "src/web-main.ts"), "test/web-main-file-change.test.ts");
+  assert.equal(
+    context.files.some((file) => file.path === "test/exception-stock-display.test.ts"),
+    true,
+    "requirement-specific direct test must already be present",
+  );
+  assert.equal(
+    context.files.some((file) => file.path === "test/web-main-file-change.test.ts"),
+    false,
+    "strongest exact-stem test starts outside the bounded context",
+  );
+
+  const augmented = augmentPlanContextWithDirectTestEvidence(root, context);
+  assert.deepEqual(
+    augmented.files.map((file) => file.path),
+    context.files.map((file) => file.path),
+    "an existing real direct test must satisfy the source evidence without adding a redundant test",
+  );
+  assert.ok(augmented.files.length <= 8);
+  assert.ok(augmented.totalBytes <= 80_000);
+});
+
 test("Context에 있는 literal readFileSync VM harness는 변경 source의 impacted companion이 되고 문자열·주석 decoy는 아니다 (#281)", () => {
   const root = literalReadFixture(true);
   const context = contextFromPaths(root, [
