@@ -21,22 +21,128 @@ interface ExplicitPathContextBudget {
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
+type StructuredPlanContextRole =
+  | "changeTargets"
+  | "requiredEvidence"
+  | "validationEvidence"
+  | "historicalReferences";
+
+interface StructuredPlanContextHints {
+  readonly changeTargets: readonly string[];
+  readonly requiredEvidence: readonly string[];
+  readonly validationEvidence: readonly string[];
+  readonly historicalReferences: readonly string[];
+}
+
+const STRUCTURED_PLAN_CONTEXT_ROLES = new Set<StructuredPlanContextRole>([
+  "changeTargets",
+  "requiredEvidence",
+  "validationEvidence",
+  "historicalReferences",
+]);
+
+function safeRequirementPath(path: string): boolean {
+  return !isAbsolute(path)
+    && !path.includes("\\")
+    && !path.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+}
+
+function pushUnique(target: string[], path: string): void {
+  if (!target.includes(path)) target.push(path);
+}
+
+/**
+ * AI/Human Issue가 제공한 bounded Context-selection metadata를 읽는다.
+ *
+ * 지원 형식은 fenced yaml/yml 안의 `planContext:` 아래 네 역할뿐이다.
+ * 이 값은 Context 우선순위 힌트일 뿐이며 IMPLEMENT authority를 만들지 않는다.
+ * 알 수 없는 key/unsafe path/nonexistent path는 여기서 권한으로 승격되지 않는다.
+ */
+function structuredPlanContextHints(requirement: string): StructuredPlanContextHints {
+  const raw: Record<StructuredPlanContextRole, string[]> = {
+    changeTargets: [],
+    requiredEvidence: [],
+    validationEvidence: [],
+    historicalReferences: [],
+  };
+
+  for (const fence of requirement.matchAll(/```(?:yaml|yml)\s*\n([\s\S]*?)```/gi)) {
+    const lines = fence[1]!.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const planMatch = /^(\s*)planContext:\s*$/.exec(lines[index]!);
+      if (!planMatch) continue;
+      const planIndent = planMatch[1]!.length;
+      let role: StructuredPlanContextRole | null = null;
+
+      for (index += 1; index < lines.length; index += 1) {
+        const line = lines[index]!;
+        if (!line.trim() || line.trimStart().startsWith("#")) continue;
+        const indent = line.length - line.trimStart().length;
+        if (indent <= planIndent) {
+          index -= 1;
+          break;
+        }
+
+        const roleMatch = /^\s*(changeTargets|requiredEvidence|validationEvidence|historicalReferences):\s*$/.exec(line);
+        if (roleMatch) {
+          const candidate = roleMatch[1] as StructuredPlanContextRole;
+          role = STRUCTURED_PLAN_CONTEXT_ROLES.has(candidate) ? candidate : null;
+          continue;
+        }
+
+        const itemMatch = /^\s*-\s*([A-Za-z0-9._/-]{3,500})\s*$/.exec(line);
+        if (!itemMatch || !role) continue;
+        const path = itemMatch[1]!;
+        if (!safeRequirementPath(path)) continue;
+        pushUnique(raw[role], path);
+      }
+    }
+  }
+
+  // 같은 path가 여러 역할에 있으면 더 높은 역할을 사용한다.
+  const claimed = new Set<string>();
+  const keepHighest = (paths: readonly string[]): string[] => {
+    const kept: string[] = [];
+    for (const path of paths) {
+      if (claimed.has(path)) continue;
+      claimed.add(path);
+      kept.push(path);
+    }
+    return kept;
+  };
+
+  const changeTargets = keepHighest(raw.changeTargets);
+  const requiredEvidence = keepHighest(raw.requiredEvidence);
+  const validationEvidence = keepHighest(raw.validationEvidence);
+  const historicalReferences = keepHighest(raw.historicalReferences);
+  return { changeTargets, requiredEvidence, validationEvidence, historicalReferences };
+}
+
 // `/` 없는 토큰(`package.json` 등)도 후보로 둔다. 실재하는 일반 파일인지는 explicitContextFile이 확인하므로
 // 존재하지 않는 이름이나 디렉터리는 지금처럼 건너뛴다 (#273 재PLAN run 36114594331).
 function requirementPathAnchors(requirement: string): string[] {
   const anchors: string[] = [];
   for (const match of requirement.matchAll(/`([A-Za-z0-9._/-]{3,500})`/g)) {
     const path = match[1]!;
-    if (
-      isAbsolute(path) ||
-      path.includes("\\") ||
-      path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-    ) {
-      continue;
-    }
+    if (!safeRequirementPath(path)) continue;
     if (!anchors.includes(path)) anchors.push(path);
   }
   return anchors;
+}
+
+function prioritizedRequirementPaths(requirement: string): string[] {
+  const hints = structuredPlanContextHints(requirement);
+  const priority = [
+    ...hints.changeTargets,
+    ...hints.requiredEvidence,
+    ...hints.validationEvidence,
+  ];
+  const historical = new Set(hints.historicalReferences);
+  for (const path of requirementPathAnchors(requirement)) {
+    if (historical.has(path) || priority.includes(path)) continue;
+    priority.push(path);
+  }
+  return priority;
 }
 
 function requirementTerms(requirement: string): string[] {
@@ -183,7 +289,7 @@ export function augmentPlanContextWithExplicitPaths(
   const symbols = requirementSymbolAnchors(requirement);
   const explicit: PlanContextFile[] = [];
   let explicitBytes = 0;
-  for (const path of requirementPathAnchors(requirement)) {
+  for (const path of prioritizedRequirementPaths(requirement)) {
     if (explicit.length >= maxFiles || explicitBytes >= maxBytes) break;
     const remaining = maxBytes - explicitBytes;
     const file = explicitContextFile(target, path, terms, symbols, Math.min(maxFileBytes, remaining));
