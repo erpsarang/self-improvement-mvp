@@ -68,6 +68,7 @@ export interface OrchestrationProvenance {
   };
   readonly fromState: "REVIEWING";
   readonly decision: ReviewProvenance["decision"];
+  readonly requirementComplete: boolean;
   readonly nextState: OrchestratorNextState;
   readonly completedFixCount: 0 | 1 | 2;
   readonly nextFixAttempt: FixAttempt | null;
@@ -188,6 +189,7 @@ export function validateReviewForOrchestration(input: {
     typeof value.reviewer.outputArtifactName !== "string" ||
     !validDigest(value.reviewer.outputDigest) ||
     typeof value.decision !== "string" ||
+    typeof value.requirementComplete !== "boolean" ||
     typeof value.summary !== "string" ||
     !Array.isArray(value.findings)
   ) {
@@ -281,6 +283,7 @@ export function validateReviewForOrchestration(input: {
 
   validateSemanticReviewerOutput({
     decision: review.decision,
+    requirementComplete: review.requirementComplete,
     summary: review.summary,
     findings: review.findings,
   });
@@ -295,6 +298,7 @@ export function routeReviewDecision(
   readonly nextState: OrchestratorNextState;
   readonly shouldCreatePullRequest: boolean;
   readonly shouldDispatchFix: boolean;
+  readonly requirementComplete: boolean;
   readonly completedFixCount: 0 | 1 | 2;
   readonly nextFixAttempt: FixAttempt | null;
 } {
@@ -305,6 +309,7 @@ export function routeReviewDecision(
       nextState: "MERGE_READY" as const,
       shouldCreatePullRequest: true,
       shouldDispatchFix: false,
+      requirementComplete: review.requirementComplete,
       completedFixCount: completed,
       nextFixAttempt: null,
     });
@@ -315,6 +320,7 @@ export function routeReviewDecision(
       nextState: "STOPPED" as const,
       shouldCreatePullRequest: false,
       shouldDispatchFix: false,
+      requirementComplete: review.requirementComplete,
       completedFixCount: completed,
       nextFixAttempt: null,
     });
@@ -327,6 +333,7 @@ export function routeReviewDecision(
         nextState: "STOPPED" as const,
         shouldCreatePullRequest: false,
         shouldDispatchFix: false,
+        requirementComplete: review.requirementComplete,
         completedFixCount: completed,
         nextFixAttempt: null,
       });
@@ -336,6 +343,7 @@ export function routeReviewDecision(
       nextState: "FIXING" as const,
       shouldCreatePullRequest: false,
       shouldDispatchFix: true,
+      requirementComplete: review.requirementComplete,
       completedFixCount: completed,
       nextFixAttempt: next,
     });
@@ -443,6 +451,7 @@ export function createOrchestrationProvenance(input: {
     },
     fromState: route.fromState,
     decision: review.decision,
+    requirementComplete: review.requirementComplete,
     nextState: route.nextState,
     completedFixCount: route.completedFixCount,
     nextFixAttempt: route.nextFixAttempt,

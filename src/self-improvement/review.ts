@@ -40,6 +40,8 @@ export interface SemanticReviewFinding {
 
 export interface SemanticReviewerOutput {
   readonly decision: ReviewDecision;
+  /** 현재 reviewed candidate가 원본 부모 업무 요구 전체를 충족할 때만 true. slice PASS와 독립이다. */
+  readonly requirementComplete: boolean;
   readonly summary: string;
   readonly findings: readonly SemanticReviewFinding[];
 }
@@ -105,6 +107,7 @@ export interface ReviewProvenance {
     readonly outputDigest: string;
   };
   readonly decision: ReviewDecision;
+  readonly requirementComplete: boolean;
   readonly summary: string;
   readonly findings: readonly SemanticReviewFinding[];
 }
@@ -113,11 +116,14 @@ export const SEMANTIC_REVIEW_OUTPUT_SCHEMA = Object.freeze({
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
   additionalProperties: false,
-  required: ["decision", "summary", "findings"],
+  required: ["decision", "requirementComplete", "summary", "findings"],
   properties: {
     decision: {
       type: "string",
       enum: ["PASS", "LOCAL_FIX", "STRUCTURAL_CHANGE"],
+    },
+    requirementComplete: {
+      type: "boolean",
     },
     summary: {
       type: "string",
@@ -543,11 +549,14 @@ export function validateVerifiedCandidateForReview(
 }
 
 export function validateSemanticReviewerOutput(value: unknown): SemanticReviewerOutput {
-  if (!record(value) || !exactKeys(value, ["decision", "summary", "findings"])) {
+  if (!record(value) || !exactKeys(value, ["decision", "requirementComplete", "summary", "findings"])) {
     throw new Error("Reviewer output 구조가 올바르지 않습니다");
   }
   if (typeof value.decision !== "string" || !isReviewDecision(value.decision)) {
     throw new Error("Reviewer decision이 올바르지 않습니다");
+  }
+  if (typeof value.requirementComplete !== "boolean") {
+    throw new Error("Reviewer requirementComplete가 올바르지 않습니다");
   }
   if (!nonEmptyString(value.summary, 4000) || !Array.isArray(value.findings) || value.findings.length > 20) {
     throw new Error("Reviewer summary/findings가 올바르지 않습니다");
@@ -606,6 +615,7 @@ export function validateSemanticReviewerOutput(value: unknown): SemanticReviewer
 
   return Object.freeze({
     decision: value.decision,
+    requirementComplete: value.requirementComplete,
     summary: value.summary,
     findings: Object.freeze(findings),
   });
@@ -715,6 +725,7 @@ export function createSemanticReviewProvenance(input: {
       outputDigest: sha256Bytes(input.rawReviewerOutput),
     },
     decision: reviewerOutput.decision,
+    requirementComplete: reviewerOutput.requirementComplete,
     summary: reviewerOutput.summary,
     findings: reviewerOutput.findings,
   });
@@ -784,14 +795,16 @@ export function createSemanticReviewPrompt(input: {
       `5. LOCAL_FIX: allowedPaths 안의 국소 수정만으로 해결 가능한, 승인된 slice 자체의 blocker가 있습니다. 모든 BLOCKER의 scope는 LOCAL이어야 합니다.\n` +
       `6. STRUCTURAL_CHANGE: 승인된 slice 자체가 잘못되어 allowedPaths 밖 변경이나 forbiddenChanges 변경 없이는 acceptanceCriteria를 만족할 수 없습니다. 그 BLOCKER의 scope는 STRUCTURAL이어야 하며 사람이 다시 PLAN합니다.\n` +
       `7. FOLLOW_UP finding은 decision을 막지 않으며 scope는 NONE으로 작성하세요.\n` +
-      `8. 근거 없는 추측은 blocker로 만들지 마세요. evidence에는 구체적인 파일/코드/승인된 slice 근거를 적으세요.\n\n`
+      `8. 근거 없는 추측은 blocker로 만들지 마세요. evidence에는 구체적인 파일/코드/승인된 slice 근거를 적으세요.\n` +
+      `9. requirementComplete는 decision과 별도입니다. 원본 Issue 요구 전체가 이 exact verified candidate로 충족됐을 때만 true입니다. 승인 PLAN의 approach/forbiddenChanges에 후속 범위가 남아 있거나 사용자 가시 완료조건이 candidate에 없으면, slice가 PASS여도 false로 반환하세요.\n\n`
     : `## 판정 규칙\n` +
       `1. 제공된 bounded patch가 승인된 요구사항을 의미적으로 만족하는지 확인하세요. patch 밖의 사실은 추정하지 마세요.\n` +
       `2. PASS: 요구사항을 만족하고 merge를 막을 semantic blocker가 없습니다. 스타일/리팩터링/P2 이하 개선은 FOLLOW_UP으로만 기록할 수 있습니다.\n` +
       `3. LOCAL_FIX: 현재 요구사항과 아키텍처를 유지한 국소 수정으로 해결 가능한 blocker가 있습니다. 모든 BLOCKER의 scope는 LOCAL이어야 합니다.\n` +
       `4. STRUCTURAL_CHANGE: 요구사항 변경, 아키텍처 재설계, Trust Boundary 변경 등 구조적 변경이 필요한 blocker가 하나 이상 있습니다. 그 BLOCKER의 scope는 STRUCTURAL이어야 합니다.\n` +
       `5. FOLLOW_UP finding은 decision을 막지 않으며 scope는 NONE으로 작성하세요.\n` +
-      `6. 근거 없는 추측은 blocker로 만들지 마세요. evidence에는 구체적인 파일/코드/요구사항 근거를 적으세요.\n\n`;
+      `6. 근거 없는 추측은 blocker로 만들지 마세요. evidence에는 구체적인 파일/코드/요구사항 근거를 적으세요.\n` +
+      `7. requirementComplete는 원본 승인 요구 전체가 이 exact verified candidate로 충족됐을 때만 true입니다. decision과 별도로 판단하세요.\n\n`;
   return `당신은 AI Development Framework의 독립 Semantic Reviewer입니다.\n\n` +
     `검토 대상은 review-context/patch.diff에 고정된 exact base SHA → verified SHA 변경입니다.\n` +
     `변경 파일 목록은 review-context/changed-files.txt에 있습니다. 이 두 파일만 코드 근거로 사용하세요.\n` +

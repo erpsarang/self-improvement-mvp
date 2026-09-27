@@ -105,6 +105,7 @@ const authorizationArtifactName = `authorize-approval-${authorization.approvalCo
 
 const passOutput = {
   decision: "PASS",
+  requirementComplete: true,
   summary: "승인된 요구사항을 만족하며 blocker가 없다.",
   findings: [
     {
@@ -164,9 +165,16 @@ test("승인 요구사항 snapshot이 compact authorization digest와 다르면 
 
 test("PASS는 BLOCKER가 없을 때만 허용한다", () => {
   assert.equal(validateSemanticReviewerOutput(passOutput).decision, "PASS");
+  assert.equal(validateSemanticReviewerOutput(passOutput).requirementComplete, true);
+  assert.throws(() => validateSemanticReviewerOutput({
+    decision: "PASS",
+    summary: "완료 여부 누락",
+    findings: [],
+  }), /Reviewer output 구조/);
   assert.throws(
     () => validateSemanticReviewerOutput({
       decision: "PASS",
+      requirementComplete: false,
       summary: "잘못된 PASS",
       findings: [{
         severity: "BLOCKER",
@@ -183,6 +191,7 @@ test("PASS는 BLOCKER가 없을 때만 허용한다", () => {
 test("LOCAL_FIX와 STRUCTURAL_CHANGE는 blocker scope와 일관되어야 한다", () => {
   assert.equal(validateSemanticReviewerOutput({
     decision: "LOCAL_FIX",
+    requirementComplete: false,
     summary: "국소 수정 필요",
     findings: [{
       severity: "BLOCKER",
@@ -195,6 +204,7 @@ test("LOCAL_FIX와 STRUCTURAL_CHANGE는 blocker scope와 일관되어야 한다"
 
   assert.equal(validateSemanticReviewerOutput({
     decision: "STRUCTURAL_CHANGE",
+    requirementComplete: false,
     summary: "구조 변경 필요",
     findings: [{
       severity: "BLOCKER",
@@ -207,6 +217,7 @@ test("LOCAL_FIX와 STRUCTURAL_CHANGE는 blocker scope와 일관되어야 한다"
 
   assert.throws(() => validateSemanticReviewerOutput({
     decision: "LOCAL_FIX",
+    requirementComplete: false,
     summary: "잘못된 local fix",
     findings: [{
       severity: "BLOCKER",
@@ -237,6 +248,7 @@ test("trusted REVIEW provenance는 exact verified SHA와 requirements digest를 
   assert.equal(provenance.reviewedHeadSha, verify.verifiedHeadSha);
   assert.equal(provenance.requirementsDigest, requirements.digest);
   assert.equal(provenance.decision, "PASS");
+  assert.equal(provenance.requirementComplete, true);
   assert.match(provenance.reviewer.outputDigest, /^sha256:[0-9a-f]{64}$/);
 });
 
