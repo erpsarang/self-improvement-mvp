@@ -120,6 +120,11 @@ test("PLAN 계보 Reviewer prompt는 승인된 slice만 심사 기준으로 주�
   assert.match(prompt, /allowedPaths 밖 파일 변경이나 forbiddenChanges에 해당하는 변경을 요구하는 finding은 만들지 마세요/);
   assert.match(prompt, /LOCAL_FIX: allowedPaths 안의 국소 수정만으로 해결 가능한/);
   assert.match(prompt, /STRUCTURAL_CHANGE: 승인된 slice 자체가 잘못되어/);
+  // #299: 후속 범위가 남은 부분 slice PASS는 부모 요구 완료가 아니다.
+  assert.match(prompt, /approach\/forbiddenChanges에 후속 범위가 남아 있거나 이번 slice acceptanceCriteria의 사용자 가시 완료조건이 candidate에 없으면, slice가 PASS여도 false/);
+  // #310: 마지막 slice는 이전 slice 작업이 patch에 없다는 이유만으로 미완료가 되지 않는다(불필요한 continuation PLAN 방지).
+  assert.match(prompt, /이전 slice는 이미 base SHA에 merge되어 있어 patch\.diff에 보이지 않습니다/);
+  assert.match(prompt, /이전 slice 작업이 patch에 없다는 이유만으로 requirementComplete를 false로 반환하지 마세요/);
   // 배경 절은 심사 기준 절 뒤에 온다.
   assert.ok(prompt.indexOf("## 승인된 PLAN slice") < prompt.indexOf("## Issue 요구"));
   // 기존 read-only 경계는 그대로다.
@@ -139,6 +144,7 @@ test("legacy AUTHORIZE 계보 prompt는 그대로 Issue 요구를 승인된 요�
   assert.match(prompt, /## 승인된 요구사항\n제목: /);
   assert.doesNotMatch(prompt, /승인된 PLAN slice|allowedPaths|forbiddenChanges|배경 정보/);
   assert.match(prompt, /1\. 제공된 bounded patch가 승인된 요구사항을 의미적으로 만족하는지 확인하세요/);
+  assert.doesNotMatch(prompt, /이전 slice/);
 });
 
 test("PLAN 계보 REVIEW provenance는 승인된 PLAN.json 없이는 만들 수 없고, 만들면 심사 기준 scope를 기록한다", () => {
