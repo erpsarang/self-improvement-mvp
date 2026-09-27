@@ -351,10 +351,22 @@ test("LEARN Source rejects tampered FIX provenance after two successful attempts
     (sourceFix: typeof fixture.sourceFix) => { sourceFix.sourceRequest.artifactName += "-wrong"; },
     (sourceFix: typeof fixture.sourceFix) => { sourceFix.sourceRequest.trustedCodeSha = "7".repeat(40); },
     (sourceFix: typeof fixture.sourceFix) => { sourceFix.controlPlaneSha = "7".repeat(40); },
+    (sourceFix: typeof fixture.sourceFix) => { sourceFix.candidateArtifactName += "-wrong"; },
   ];
   for (const mutate of mutations) {
     const orchestration = structuredClone(fixture.orchestration);
     mutate(orchestration.sourceReview.sourceVerify.sourcePublish.sourceSeal.sourceFix);
+    assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, orchestration));
+  }
+});
+
+test("LEARN Source rejects tampered final SEAL base SHA and patch digest after FIX", () => {
+  const fixture = fixedExecutionFixture();
+  for (const field of ["baseSha", "sealedPatchDigest"] as const) {
+    const orchestration = structuredClone(fixture.orchestration);
+    const seal = orchestration.sourceReview.sourceVerify.sourcePublish.sourceSeal;
+    if (field === "baseSha") seal.baseSha = "7".repeat(40);
+    else seal.sealedPatchDigest = `sha256:${"7".repeat(64)}`;
     assert.throws(() => createTrustedLearnSourceArtifacts(fixture.facts, orchestration));
   }
 });

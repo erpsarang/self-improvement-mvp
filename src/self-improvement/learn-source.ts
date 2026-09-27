@@ -409,8 +409,10 @@ export function createTrustedLearnSourceArtifacts(
     const validatedBridge = source.bridge;
     const validation = validatedBridge.deterministicValidation;
     const sourceFix = seal.sourceFix;
+    const bridgeValidationMatches = validation.baseSha === validatedBridge.baseSha;
     const finalCandidateMatchesSeal = sourceFix === undefined
-      ? validatedBridge.candidatePatchDigest === seal.sealedPatchDigest && validation.baseSha === seal.baseSha
+      ? validatedBridge.candidatePatchDigest === seal.sealedPatchDigest &&
+        validatedBridge.baseSha === seal.baseSha
       : sourceFix.candidatePatchDigest === seal.sealedPatchDigest &&
         sourceFix.sourceReview.reviewedHeadSha === seal.baseSha &&
         sourceFix.sourceReview.requirementsDigest === validatedBridge.requirement.digest &&
@@ -418,6 +420,8 @@ export function createTrustedLearnSourceArtifacts(
           `review-provenance-issue-${seal.issueNumber}-${sourceFix.sourceReview.runId}-attempt-${sourceFix.sourceReview.runAttempt}` &&
         sourceFix.sourceRequest.artifactName ===
           `fix-request-${sourceFix.sourceReview.runId}-fix-${sourceFix.fixAttempt}-${sourceFix.sourceRequest.runId}-attempt-${sourceFix.sourceRequest.runAttempt}` &&
+        sourceFix.candidateArtifactName ===
+          `implement-candidate-${sourceFix.sourceRequest.runId}-${sourceFix.runId}-attempt-${sourceFix.runAttempt}` &&
         sourceFix.sourceRequest.trustedCodeSha === facts.trustedRail.headSha &&
         sourceFix.controlPlaneSha === facts.trustedRail.headSha;
     if (
@@ -429,7 +433,7 @@ export function createTrustedLearnSourceArtifacts(
         (workflow) => workflow.trustedCodeSha !== facts.trustedRail.headSha,
       ) ||
       validatedBridge.requirement.digest !== exactRequirementDigest ||
-      validation.baseSha !== validatedBridge.baseSha ||
+      !bridgeValidationMatches ||
       !finalCandidateMatchesSeal
     ) {
       throw new Error("test-execution exact content chain mismatch");
