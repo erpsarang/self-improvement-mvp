@@ -46,6 +46,53 @@ test("PLAN Context는 Requirement의 실재 exact path를 등장 순서대로 he
   }
 });
 
+test("structured planContext 역할은 과거 backtick 경로보다 우선하고 historical reference는 explicit slot을 소비하지 않는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-structured-context-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "test"));
+    writeFileSync(join(root, "src", "change.ts"), "export const change = true;\n");
+    writeFileSync(join(root, "src", "shared.ts"), "export const shared = true;\n");
+    writeFileSync(join(root, "src", "evidence.ts"), "export const evidence = true;\n");
+    writeFileSync(join(root, "src", "history.ts"), "export const history = true;\n");
+    writeFileSync(join(root, "test", "change.test.ts"), "const ok = true; void ok;\n");
+
+    const requirement = [
+      "과거 관측 파일은 `src/history.ts`였다.",
+      "",
+      "```yaml",
+      "planContext:",
+      "  changeTargets:",
+      "    - src/change.ts",
+      "    - src/shared.ts",
+      "  requiredEvidence:",
+      "    - src/evidence.ts",
+      "  validationEvidence:",
+      "    - test/change.test.ts",
+      "  historicalReferences:",
+      "    - src/history.ts",
+      "    - src/shared.ts",
+      "```",
+    ].join("\n");
+
+    const base = selectPlanContext("history change evidence", root, "example/framework", "9".repeat(40));
+    const first = augmentPlanContextWithExplicitPaths(requirement, root, base, { maxFiles: 4, maxBytes: 10_000 });
+    const second = augmentPlanContextWithExplicitPaths(requirement, root, base, { maxFiles: 4, maxBytes: 10_000 });
+
+    assert.deepEqual(first, second);
+    verifyPlanContextPack(first);
+    assert.deepEqual(first.files.map((file) => file.path), [
+      "src/change.ts",
+      "src/shared.ts",
+      "src/evidence.ts",
+      "test/change.test.ts",
+    ]);
+    assert.ok(!first.files.some((file) => file.path === "src/history.ts"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("PLAN Context explicit path augmentation은 byte budget을 넘지 않고 뒤 heuristic context만 생략한다", () => {
   const root = mkdtempSync(join(tmpdir(), "planner-explicit-byte-"));
   try {
