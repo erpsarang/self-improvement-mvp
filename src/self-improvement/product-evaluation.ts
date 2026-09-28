@@ -390,14 +390,14 @@ function collectProductPaths(targetRoot: string): string[] {
   return paths;
 }
 
-function readSnapshotFile(realRoot: string, path: string): ProductSnapshotFile | null {
+function readSnapshotFile(realRoot: string, path: string, maxBytes: number): ProductSnapshotFile | null {
   const absolute = resolve(realRoot, path);
   const rel = relative(realRoot, absolute);
   if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`product snapshot path escapes target root: ${path}`);
   }
   const bytes = readFileSync(absolute);
-  if (bytes.byteLength > PRODUCT_EVALUATION_BUDGET.maxFileBytes) return null;
+  if (bytes.byteLength > maxBytes) return null;
   let content: string;
   try {
     content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -458,10 +458,26 @@ function normalizeRejectedCandidates(value: readonly RejectedCandidate[]): Rejec
   return normalized.sort((left, right) => right.issueNumber - left.issueNumber);
 }
 
+/**
+ * 변경 목록이 확정된 경우에만 이번 cycle이 바꾼 제품 snapshot 경로를 돌려준다. 확정할 수 없으면 빈 목록이다.
+ * snapshot은 이 경로를 먼저 담는다(createProductSnapshot의 changedProductPaths).
+ */
+export function changedProductSnapshotPaths(evidence: unknown): string[] {
+  const value = evidence as Partial<ChangedPathsEvidence> | null;
+  if (
+    typeof value !== "object" || value === null || value.complete !== true ||
+    !Array.isArray(value.paths) || !value.paths.every(isPlainRelativePath)
+  ) {
+    return [];
+  }
+  return value.paths.filter(isProductSnapshotPath);
+}
+
 export function createProductSnapshot(
   identity: ProductCycleIdentity,
   targetRoot: string,
   rejectedCandidates: readonly RejectedCandidate[] = [],
+  changedProductPaths: readonly string[] = [],
 ): ProductSnapshot {
   const cycle = normalizeCycleIdentity(identity);
   const rejected = normalizeRejectedCandidates(rejectedCandidates);
@@ -472,7 +488,12 @@ export function createProductSnapshot(
   }
   const realRoot = realpathSync(root);
 
+  // 이번 cycle이 바꾼 제품 파일은 평가의 핵심이다. 먼저 담고, 파일별 한도 대신 전체 한도 안에서만 제한한다.
+  // 파일별 한도 때문에 변경 파일이 빠지면 평가 자체가 중단된다 (#319: src/web-main.ts 25,773B > 16,384B).
+  const changed = new Set(changedProductPaths);
   const candidates = collectProductPaths(realRoot).sort((left, right) => {
+    const byChanged = Number(changed.has(right)) - Number(changed.has(left));
+    if (byChanged !== 0) return byChanged;
     const byPriority = snapshotPriority(left) - snapshotPriority(right);
     return byPriority !== 0 ? byPriority : left.localeCompare(right);
   });
@@ -486,7 +507,8 @@ export function createProductSnapshot(
       omittedPaths.push(path);
       continue;
     }
-    const file = readSnapshotFile(realRoot, path);
+    const maxBytes = changed.has(path) ? PRODUCT_EVALUATION_BUDGET.maxTotalBytes : PRODUCT_EVALUATION_BUDGET.maxFileBytes;
+    const file = readSnapshotFile(realRoot, path, maxBytes);
     if (file === null) {
       omittedPaths.push(path);
       continue;

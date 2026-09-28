@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  changedProductSnapshotPaths,
   createProductEvaluationOutputSchema,
   createProductEvaluationPrompt,
   createProductEvaluationReport,
@@ -506,4 +507,39 @@ test("이번 cycle의 변경 제품 파일이 snapshot 예산으로 빠지면 AI
     snapshot,
   );
   assert.equal(unaffected.needed, true);
+});
+
+test("#319: 파일별 한도를 넘는 변경 제품 파일은 전체 한도 안에서 통째로 담겨 평가가 진행된다", () => {
+  // App #263/#264 관측: src/web-main.ts 25,773B > maxFileBytes 16,384B 때문에 평가가 중단됐다.
+  const changedWeb = `export const web = 1;\n${"// 변경된 화면 로직\n".repeat(1_100)}`;
+  const unchangedHuge = `// ${"y".repeat(PRODUCT_EVALUATION_BUDGET.maxFileBytes)}\n`;
+  assert.ok(Buffer.byteLength(changedWeb, "utf8") > PRODUCT_EVALUATION_BUDGET.maxFileBytes);
+  const root = appFixture({ "src/web-main.ts": changedWeb, "src/huge.js": unchangedHuge });
+  const evidence = { complete: true, paths: ["src/web-main.ts", "test/web-main.test.ts", ".github/workflows/ci.yml"] };
+  const changed = changedProductSnapshotPaths(evidence);
+  assert.deepEqual(changed, ["src/web-main.ts"]);
+
+  const snapshot = createProductSnapshot(cycle, root, [], changed);
+  verifyProductSnapshot(snapshot);
+  const web = snapshot.files.find((file) => file.path === "src/web-main.ts");
+  assert.equal(web?.content, changedWeb, "변경 파일은 발췌 없이 전체 내용이 담긴다");
+  assert.equal(snapshot.omittedPaths.includes("src/huge.js"), true, "변경되지 않은 파일에는 파일별 한도가 그대로다");
+  assert.ok(snapshot.totalSnapshotBytes <= PRODUCT_EVALUATION_BUDGET.maxTotalBytes);
+  const need = decideProductEvaluationNeed(evidence, snapshot);
+  assert.equal(need.needed, true, need.reason);
+
+  // 같은 입력이면 같은 snapshot이다.
+  assert.equal(createProductSnapshot(cycle, root, [], changed).snapshotDigest, snapshot.snapshotDigest);
+});
+
+test("#319: 전체 한도도 넘는 변경 파일과 확정되지 않은 변경 목록은 기존처럼 fail-closed 동작을 유지한다", () => {
+  const root = appFixture({ "src/web.js": "x".repeat(PRODUCT_EVALUATION_BUDGET.maxTotalBytes + 1) });
+  const evidence = { complete: true, paths: ["src/web.js"] };
+  const snapshot = createProductSnapshot(cycle, root, [], changedProductSnapshotPaths(evidence));
+  assert.equal(snapshot.omittedPaths.includes("src/web.js"), true);
+  assert.equal(decideProductEvaluationNeed(evidence, snapshot).needed, false);
+
+  for (const incomplete of [null, { complete: false, paths: ["src/web.js"] }, { complete: true, paths: ["../src/web.js"] }]) {
+    assert.deepEqual(changedProductSnapshotPaths(incomplete), [], JSON.stringify(incomplete));
+  }
 });

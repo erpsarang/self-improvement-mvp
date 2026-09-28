@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
+  changedProductSnapshotPaths,
   createProductEvaluationOutputSchema,
   createProductEvaluationPrompt,
   createProductEvaluationReport,
@@ -66,7 +67,14 @@ if (command === "prepare") {
   const rejectedCandidates = rejectedPath && existsSync(rejectedPath)
     ? parseJson<readonly RejectedCandidate[]>(rejectedPath)
     : [];
-  const snapshot = createProductSnapshot(identity, requiredEnv("PRODUCT_TARGET_ROOT"), rejectedCandidates);
+  const changedPathsPath = process.env.PRODUCT_CHANGED_PATHS_JSON;
+  const changedPaths = changedPathsPath && existsSync(changedPathsPath) ? parseJson<unknown>(changedPathsPath) : null;
+  const snapshot = createProductSnapshot(
+    identity,
+    requiredEnv("PRODUCT_TARGET_ROOT"),
+    rejectedCandidates,
+    changedProductSnapshotPaths(changedPaths),
+  );
   verifyProductSnapshot(snapshot);
 
   const runtimeDir = requiredEnv("PRODUCT_EVALUATION_RUNTIME_DIR");
@@ -87,11 +95,7 @@ if (command === "prepare") {
   writeOutput("rejected_candidate_count", snapshot.rejectedCandidates.length);
 
   // 제품 파일을 바꾸지 않은 cycle은 AI 평가를 생략한다. 사유는 사람이 볼 수 있게 남긴다.
-  const changedPathsPath = process.env.PRODUCT_CHANGED_PATHS_JSON;
-  const need = decideProductEvaluationNeed(
-    changedPathsPath && existsSync(changedPathsPath) ? parseJson<unknown>(changedPathsPath) : null,
-    snapshot,
-  );
+  const need = decideProductEvaluationNeed(changedPaths, snapshot);
   writeOutput("should_evaluate", need.needed ? "true" : "false");
   console.log(`Product Evaluation: ${need.reason}`);
   if (process.env.GITHUB_STEP_SUMMARY) {
