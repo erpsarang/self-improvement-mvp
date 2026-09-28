@@ -228,6 +228,7 @@ function runtimeSourcesFromSpecifiers(
 // source 사이의 의존 분석 의미는 바꾸지 않도록 테스트 파일에만 적용한다.
 // 이 관계는 이미 Context에 있는 파일 사이에서만 쓰인다. Context 보호 목록을 늘리면 8개 한도를 넘어
 // 업무 Context 보강 전체가 생략되므로 보호 목록에는 더하지 않는다 (#282 실제 App 트리 재현).
+// Context 밖 harness는 마지막 단계(withSourceHarnessTests)가 예산 안에서만 best-effort로 더한다.
 function importedRuntimeSources(testPath: string, testText: string, sourcePaths: readonly string[]): string[] {
   const specifiers = relativeImportSpecifiers(testPath, testText);
   if (isTestLike(testPath)) specifiers.push(...relativeLiteralSourceReadSpecifiers(testPath, testText));
@@ -537,7 +538,7 @@ export function augmentPlanContextWithDirectTestEvidence(
   let current = context;
   for (;;) {
     const fitted = fitDirectTestEvidence(target, current);
-    if (fitted.pack) return fitted.pack;
+    if (fitted.pack) return withSourceHarnessTests(target, fitted.pack);
     // 보호 evidence가 예산을 넘으면 PLAN 전체를 멈추지 않고, 직접 테스트가 Context에 없는 App source를
     // 뒤(낮은 우선순위)부터 뺀다. source가 빠지면 그 테스트도 필요 없으므로 "Context의 App source에는
     // 직접 테스트가 함께 있다"는 경계는 유지된다 (App #266 PLAN run 36448765210: 요구와 무관한
@@ -555,6 +556,60 @@ export function augmentPlanContextWithDirectTestEvidence(
     }
     current = rebind(current.repository, current.sha, current.files.filter((file) => file.path !== droppable.path));
   }
+}
+
+/**
+ * Context의 App source를 VM으로 읽어 실행하는 기존 테스트(literal-read harness)를 예산 안에서만 더한다.
+ * 이런 테스트는 가짜 DOM 같은 구현 세부에 묶여 있어 source 변경으로 깨지기 쉽다. Context에 있어야
+ * applyImpactedTestCompanions가 allowedPaths에 넣어 IMPLEMENT/FIX가 함께 맞출 수 있다
+ * (App #266 FIX run 36452224539: allowedPaths 밖 test/exception-stock-display.test.ts 16건 실패).
+ * best-effort다. 보호되지 않은 뒤쪽 파일만 밀어내며, 들어가지 않으면 그 harness를 생략한다.
+ */
+function withSourceHarnessTests(target: string, context: PlanContextPack): PlanContextPack {
+  const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
+  const contextPaths = new Set(context.files.map((file) => file.path));
+  const appSources = new Set(
+    context.files.map((file) => file.path).filter((path) => isRuntimeSource(path) && !isFrameworkSource(path)),
+  );
+  if (appSources.size === 0) return context;
+
+  const harnesses = walkFiles(target, "test")
+    .filter((path) => isTestLike(path) && !isFrameworkTest(path) && !contextPaths.has(path))
+    .filter((path) => {
+      const text = decodeText(join(target, path));
+      if (text === null) return false;
+      const read = runtimeSourcesFromSpecifiers(path, relativeLiteralSourceReadSpecifiers(path, text), sourcePaths);
+      return read.some((source) => appSources.has(source));
+    })
+    .sort((a, b) => a.localeCompare(b));
+  if (harnesses.length === 0) return context;
+
+  const protectedPaths = selectedRelationProtection(target, context);
+  let files = [...context.files];
+  const added = new Set<string>();
+  for (const path of harnesses) {
+    const harness = contextFile(target, path, [], PLAN_CONTEXT_MAX_FILE_BYTES);
+    if (!harness) continue;
+    const next = [...files];
+    const totalBytes = () => next.reduce((sum, file) => sum + file.byteLength, 0);
+    while (next.length + 1 > PLAN_CONTEXT_MAX_FILES || totalBytes() + harness.byteLength > PLAN_CONTEXT_MAX_BYTES) {
+      let removeIndex = -1;
+      for (let index = next.length - 1; index >= 0; index -= 1) {
+        const candidate = next[index]!.path;
+        if (!protectedPaths.has(candidate) && !added.has(candidate)) {
+          removeIndex = index;
+          break;
+        }
+      }
+      if (removeIndex < 0) break;
+      next.splice(removeIndex, 1);
+    }
+    if (next.length + 1 > PLAN_CONTEXT_MAX_FILES || totalBytes() + harness.byteLength > PLAN_CONTEXT_MAX_BYTES) continue;
+    next.push(harness);
+    added.add(path);
+    files = next;
+  }
+  return added.size === 0 ? context : rebind(context.repository, context.sha, files);
 }
 
 function fitDirectTestEvidence(
