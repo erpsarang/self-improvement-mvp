@@ -90,7 +90,7 @@ test("Semantic REVIEW patch는 trusted package-lock.json만 제외하고 나머�
   const step = agentSection.slice(start, agentSection.indexOf("\n      - name:", start + 10));
 
   // patch.diff에서만 repository root의 exact package-lock.json을 제외한다.
-  assert.ok(step.includes(`git diff --no-ext-diff --no-color --unified=80 "$BASE_SHA" "$VERIFIED_SHA" -- . ':(top,exclude,literal)package-lock.json' \\`));
+  assert.ok(step.includes(`git diff --no-ext-diff --no-color --unified="$context_lines" "$BASE_SHA" "$VERIFIED_SHA" -- . ':(top,exclude,literal)package-lock.json' \\`));
   assert.equal((step.match(/exclude/g) ?? []).length, 1);
   assert.equal((step.match(/package-lock\.json/g) ?? []).length, 2); // 주석 1 + pathspec 1
   assert.doesNotMatch(step, /exclude[^\n]*(\*|package\.json'|src\/|test\/)/);
@@ -105,6 +105,10 @@ test("Semantic REVIEW patch는 trusted package-lock.json만 제외하고 나머�
   assert.match(step, /MAX_PATCH_BYTES: "65536"/);
   assert.match(step, /\[ "\$changed_count" -eq 0 \] \|\| \[ "\$changed_count" -gt "\$MAX_CHANGED_FILES" \]/);
   assert.match(step, /\[ "\$patch_bytes" -eq 0 \] \|\| \[ "\$patch_bytes" -gt "\$MAX_PATCH_BYTES" \]/);
+  // 예산을 넘으면 문맥 줄 수만 80 → 20 → 3으로 줄여 다시 만든다. 3줄로도 넘으면 기존처럼 AI 호출 전에 중단한다 (App #266).
+  assert.ok(step.includes("for context_lines in 80 20 3; do"));
+  assert.ok(step.includes('if [ "$patch_bytes" -le "$MAX_PATCH_BYTES" ]; then break; fi'));
+  assert.ok(step.indexOf("for context_lines in 80 20 3; do") < step.indexOf('[ "$patch_bytes" -gt "$MAX_PATCH_BYTES" ]'));
   // binary 차단은 lock을 포함한 전체 diff에 대해 그대로 수행된다.
   assert.ok(step.includes('git diff --numstat "$BASE_SHA" "$VERIFIED_SHA" -- |'));
   assert.match(step, /refuses binary diffs before AI invocation/);

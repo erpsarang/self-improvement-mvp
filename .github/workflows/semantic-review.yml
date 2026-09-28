@@ -319,10 +319,14 @@ jobs:
           printf '%s\n' "${changed_files[@]}" > ../review-neutral/review-context/changed-files.txt
           # package-lock.json은 trusted deterministic step이 생성하고 VERIFY의 `npm ci`가 기계적으로 검증한다.
           # AI Reviewer에게 줄 patch에서만 제외한다 (changed-files.txt에는 그대로 남는다). repository root의 exact path만 제외.
-          git diff --no-ext-diff --no-color --unified=80 "$BASE_SHA" "$VERIFIED_SHA" -- . ':(top,exclude,literal)package-lock.json' \
-            > ../review-neutral/review-context/patch.diff
-
-          patch_bytes="$(wc -c < ../review-neutral/review-context/patch.diff | tr -d '[:space:]')"
+          # 변경 자체는 작아도 80줄 문맥이 겹쳐 예산을 넘을 수 있다. 예산 안에 들 때까지 문맥만 줄인다
+          # (App #266 Rail run 36495361085: +77/-4줄 변경이 80줄 문맥으로 68,244B). 예산과 차단 규칙은 그대로다.
+          for context_lines in 80 20 3; do
+            git diff --no-ext-diff --no-color --unified="$context_lines" "$BASE_SHA" "$VERIFIED_SHA" -- . ':(top,exclude,literal)package-lock.json' \
+              > ../review-neutral/review-context/patch.diff
+            patch_bytes="$(wc -c < ../review-neutral/review-context/patch.diff | tr -d '[:space:]')"
+            if [ "$patch_bytes" -le "$MAX_PATCH_BYTES" ]; then break; fi
+          done
           if [ "$patch_bytes" -eq 0 ] || [ "$patch_bytes" -gt "$MAX_PATCH_BYTES" ]; then
             echo "semantic review patch budget exceeded: actual=${patch_bytes}, max=${MAX_PATCH_BYTES}" >&2
             exit 1
@@ -331,7 +335,7 @@ jobs:
           cd ..
           rm -rf review-target
           test ! -e review-target
-          echo "bounded semantic review context: files=${changed_count}, patch_bytes=${patch_bytes}"
+          echo "bounded semantic review context: files=${changed_count}, patch_bytes=${patch_bytes}, context_lines=${context_lines}"
 
       - name: Untrusted read-only Semantic Reviewer
         id: semantic_reviewer
