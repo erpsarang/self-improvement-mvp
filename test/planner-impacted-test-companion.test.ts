@@ -292,3 +292,51 @@ test("직접 테스트까지 예산에 못 들어가는 뒤쪽 App source는 PLA
   }
   assert.deepEqual(augmentPlanContextWithDirectTestEvidence(root, context), augmented, "같은 입력이면 같은 결과");
 });
+
+function packOf(root: string, paths: readonly string[], createHash: typeof import("node:crypto").createHash, read: (path: string) => string): PlanContextPack {
+  const files = paths.map((path, index) => {
+    const content = read(join(root, path));
+    return {
+      evidenceId: `E${index + 1}`, path, startOffset: 0, byteLength: Buffer.byteLength(content, "utf8"),
+      digestAlgorithm: "sha256" as const, contentDigest: createHash("sha256").update(content, "utf8").digest("hex"), content,
+    };
+  });
+  const payload = { schemaVersion: 1 as const, kind: "trusted-plan-context-pack" as const, repository: "example/orders", sha: SHA, files, totalBytes: files.reduce((sum, file) => sum + file.byteLength, 0) };
+  return { ...payload, digestAlgorithm: "sha256", contextDigest: createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex") };
+}
+
+test("Context 밖에서 App source를 VM으로 읽어 실행하는 기존 테스트는 예산 안에서 Context와 allowedPaths에 들어간다 (App #266)", async () => {
+  const { createHash } = await import("node:crypto");
+  const { readFileSync } = await import("node:fs");
+  const { verifyPlanContextPack } = await import("../src/self-improvement/planner.js");
+  const read = (path: string) => readFileSync(path, "utf8");
+  const root = mkdtempSync(join(tmpdir(), "planner-harness-"));
+  mkdirSync(join(root, "src"));
+  mkdirSync(join(root, "test"));
+  const write = (path: string, head: string, bytes: number) => writeFileSync(join(root, path), `${head}\n//${"x".repeat(bytes - head.length - 4)}\n`);
+  write("src/web-main.ts", "export const web = 1;", 20_000);
+  write("test/web-main.test.ts", "import { web } from '../src/web-main.js'; void web;", 20_000);
+  // #266의 test/exception-stock-display.test.ts처럼 source를 import하지 않고 읽어 VM에서 실행한다.
+  write("test/stock-display.test.ts", "const source = readFileSync(new URL(\"../src/web-main.ts\", import.meta.url), \"utf8\"); void source;", 15_000);
+  write("test/unrelated.test.ts", "const ok = true; void ok;", 3_000);
+  write("README.md", "# App", 20_000);
+  write("GUIDE.md", "# Guide", 20_000);
+
+  const context = packOf(root, ["src/web-main.ts", "test/web-main.test.ts", "README.md", "GUIDE.md"], createHash, read);
+  assert.equal(context.totalBytes + 15_000 > 80_000, true, "harness를 넣으려면 보호되지 않은 파일을 밀어내야 한다");
+  const augmented = augmentPlanContextWithDirectTestEvidence(root, context);
+  verifyPlanContextPack(augmented);
+  assert.deepEqual(augmented.files.map((file) => file.path), ["src/web-main.ts", "test/web-main.test.ts", "README.md", "test/stock-display.test.ts"], "보호되지 않은 뒤쪽 GUIDE만 밀려난다");
+  assert.ok(augmented.totalBytes <= 80_000);
+  assert.deepEqual(augmentPlanContextWithDirectTestEvidence(root, context), augmented, "같은 입력이면 같은 결과");
+
+  const raw = { implementationScope: { ready: true, allowedPaths: ["src/web-main.ts", "test/web-main.test.ts"], contextPaths: [], requiredChanges: ["화면을 바꾼다"] } };
+  assert.deepEqual(applyImpactedTestCompanions(root, augmented, raw).companions, ["test/stock-display.test.ts"]);
+
+  // 보호 evidence만으로 예산이 차면 harness는 생략하고 PLAN을 멈추지 않는다.
+  write("src/other.ts", "export const other = 1;", 20_000);
+  write("test/other.test.ts", "import { other } from '../src/other.js'; void other;", 20_000);
+  const full = packOf(root, ["src/web-main.ts", "test/web-main.test.ts", "src/other.ts", "test/other.test.ts"], createHash, read);
+  const skipped = augmentPlanContextWithDirectTestEvidence(root, full);
+  assert.deepEqual(skipped.files.map((file) => file.path), full.files.map((file) => file.path));
+});
