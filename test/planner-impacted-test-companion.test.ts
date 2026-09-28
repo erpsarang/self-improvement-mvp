@@ -251,3 +251,44 @@ test("literal readFileSync harness가 있어도 업무 Context 보강 결과는 
   const harnessPaths = augmented(withHarness).filter((path) => path !== "test/exception-stock-display.test.ts");
   assert.deepEqual(harnessPaths, augmented(without).filter((path) => path !== "test/exception-stock-display.test.ts"));
 });
+
+test("직접 테스트까지 예산에 못 들어가는 뒤쪽 App source는 PLAN을 멈추지 않고 Context에서 뺀다 (App #266)", async () => {
+  const { createHash } = await import("node:crypto");
+  const { readFileSync } = await import("node:fs");
+  const { verifyPlanContextPack } = await import("../src/self-improvement/planner.js");
+  const root = mkdtempSync(join(tmpdir(), "planner-266-"));
+  mkdirSync(join(root, "src"));
+  mkdirSync(join(root, "test"));
+  const write = (path: string, head: string, bytes: number) => writeFileSync(join(root, path), `${head}\n//${"x".repeat(bytes - head.length - 4)}\n`);
+  // App #266 모양: 요구의 source/test 쌍이 먼저 있고, 뒤에 요구와 무관한 source가 테스트 없이 남았다.
+  write("src/main.ts", "export const main = 1;", 20_000);
+  write("test/main.test.ts", "import { main } from '../src/main.js'; void main;", 20_000);
+  write("src/other.ts", "export const other = 1;", 18_000);
+  write("test/other.test.ts", "import { other } from '../src/other.js'; void other;", 15_000);
+  write("src/extra.ts", "export const extra = 1;", 5_000);
+  write("test/extra.test.ts", "import { extra } from '../src/extra.js'; void extra;", 12_000);
+  const files = ["src/main.ts", "test/main.test.ts", "src/other.ts", "test/other.test.ts", "src/extra.ts"].map((path, index) => {
+    const content = readFileSync(join(root, path), "utf8");
+    return {
+      evidenceId: `E${index + 1}`, path, startOffset: 0, byteLength: Buffer.byteLength(content, "utf8"),
+      digestAlgorithm: "sha256" as const, contentDigest: createHash("sha256").update(content, "utf8").digest("hex"), content,
+    };
+  });
+  const payload = { schemaVersion: 1 as const, kind: "trusted-plan-context-pack" as const, repository: "example/orders", sha: SHA, files, totalBytes: files.reduce((sum, file) => sum + file.byteLength, 0) };
+  const context: PlanContextPack = { ...payload, digestAlgorithm: "sha256", contextDigest: createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex") };
+  verifyPlanContextPack(context);
+  assert.equal(strongestDirectTest(root, "src/extra.ts"), "test/extra.test.ts");
+  assert.ok(context.totalBytes + 12_000 > 80_000, "extra의 직접 테스트까지 넣으면 예산을 넘는다");
+
+  const augmented = augmentPlanContextWithDirectTestEvidence(root, context);
+  verifyPlanContextPack(augmented);
+  assert.deepEqual(augmented.files.map((file) => file.path), ["src/main.ts", "test/main.test.ts", "src/other.ts", "test/other.test.ts"]);
+  assert.ok(augmented.totalBytes <= 80_000);
+  // 남은 App source는 모두 직접 테스트와 함께 있다.
+  const paths = new Set(augmented.files.map((file) => file.path));
+  for (const path of paths) {
+    const direct = path.startsWith("src/") ? strongestDirectTest(root, path) : null;
+    if (direct) assert.ok(paths.has(direct), `${path} must keep ${direct}`);
+  }
+  assert.deepEqual(augmentPlanContextWithDirectTestEvidence(root, context), augmented, "같은 입력이면 같은 결과");
+});

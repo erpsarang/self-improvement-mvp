@@ -534,12 +534,39 @@ export function augmentPlanContextWithDirectTestEvidence(
   context: PlanContextPack,
 ): PlanContextPack {
   verifyPlanContextPack(context);
+  let current = context;
+  for (;;) {
+    const fitted = fitDirectTestEvidence(target, current);
+    if (fitted.pack) return fitted.pack;
+    // 보호 evidence가 예산을 넘으면 PLAN 전체를 멈추지 않고, 직접 테스트가 Context에 없는 App source를
+    // 뒤(낮은 우선순위)부터 뺀다. source가 빠지면 그 테스트도 필요 없으므로 "Context의 App source에는
+    // 직접 테스트가 함께 있다"는 경계는 유지된다 (App #266 PLAN run 36448765210: 요구와 무관한
+    // src/app-evidence.ts의 테스트 15KB 때문에 fail-closed).
+    const currentPaths = new Set(current.files.map((file) => file.path));
+    const droppable = [...current.files].reverse().find((file) => {
+      if (isTestLike(file.path) || !isRuntimeSource(file.path)) return false;
+      const direct = strongestDirectTest(target, file.path);
+      return direct !== null && !currentPaths.has(direct);
+    });
+    if (!droppable) {
+      throw new Error(
+        `PLAN Context cannot fit direct impacted test evidence within trusted budget: ${fitted.missingDirectTests.join(", ")}`,
+      );
+    }
+    current = rebind(current.repository, current.sha, current.files.filter((file) => file.path !== droppable.path));
+  }
+}
+
+function fitDirectTestEvidence(
+  target: string,
+  context: PlanContextPack,
+): { readonly pack: PlanContextPack | null; readonly missingDirectTests: readonly string[] } {
   const protectedPaths = selectedRelationProtection(target, context);
   const existingPaths = new Set(context.files.map((file) => file.path));
   const missingDirectTests = [...protectedPaths]
     .filter((path) => isTestLike(path) && !isFrameworkTest(path) && !existingPaths.has(path))
     .sort((a, b) => a.localeCompare(b));
-  if (missingDirectTests.length === 0) return context;
+  if (missingDirectTests.length === 0) return { pack: context, missingDirectTests };
 
   const protectedFiles: PlanContextFile[] = [];
   const seen = new Set<string>();
@@ -562,9 +589,7 @@ export function augmentPlanContextWithDirectTestEvidence(
 
   const protectedBytes = protectedFiles.reduce((sum, file) => sum + file.byteLength, 0);
   if (protectedFiles.length > PLAN_CONTEXT_MAX_FILES || protectedBytes > PLAN_CONTEXT_MAX_BYTES) {
-    throw new Error(
-      `PLAN Context cannot fit direct impacted test evidence within trusted budget: ${missingDirectTests.join(", ")}`,
-    );
+    return { pack: null, missingDirectTests };
   }
 
   const ordinary = context.files.filter((file) => !protectedPaths.has(file.path));
@@ -574,12 +599,8 @@ export function augmentPlanContextWithDirectTestEvidence(
     const removed = files.pop()!;
     totalBytes -= removed.byteLength;
   }
-  if (totalBytes > PLAN_CONTEXT_MAX_BYTES) {
-    throw new Error(
-      `PLAN Context cannot fit direct impacted test evidence within trusted budget: ${missingDirectTests.join(", ")}`,
-    );
-  }
-  return rebind(context.repository, context.sha, files);
+  if (totalBytes > PLAN_CONTEXT_MAX_BYTES) return { pack: null, missingDirectTests };
+  return { pack: rebind(context.repository, context.sha, files), missingDirectTests };
 }
 
 export interface ImpactedTestCompanionResult {
