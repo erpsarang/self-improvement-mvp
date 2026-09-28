@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { TextDecoder } from "node:util";
+import { selectedRelationProtection } from "./plan-business-context.js";
 import { needsAiExecutionPlanContext } from "./plan-context-policy.js";
 import {
   PLAN_CONTEXT_MAX_BYTES,
@@ -291,7 +292,15 @@ export function augmentPlanContextWithAiCallSites(
   }
 
   // 호출 지점이 슬롯 전부를 차지하지 않도록 기존 선택에 최소 1슬롯을 남긴다.
-  const maxCallSites = Math.max(1, maxFiles - 1);
+  // 앞 단계가 보호한 source/직접 테스트 쌍은 호출 지점 창보다 먼저 지킨다. 요구 본문의 "AI 호출 수 증가 금지" 같은
+  // 원칙 문구만으로 이 보강이 켜져도 실제 변경 대상 evidence가 밀려나지 않게 한다 (#319 PLAN run 36417515609).
+  const protectedPaths = selectedRelationProtection(target, context);
+  const protectedRetained = context.files.filter((file) => protectedPaths.has(file.path) && !isProtectedProjectContext(file.path));
+  // 보호 쌍이 없으면 기존처럼 1슬롯만 남긴다. 있으면 그 쌍과 이미 선택된 package.json/tsconfig.json 자리를 남긴다.
+  const reservedSlots = protectedRetained.length === 0
+    ? 1
+    : protectedRetained.length + context.files.filter((file) => isProtectedProjectContext(file.path)).length;
+  const maxCallSites = Math.max(1, maxFiles - reservedSlots);
   const candidates = aiCallSiteCandidates(requirement, target, maxFileBytes).slice(0, maxCallSites);
   if (candidates.length === 0) return context;
 
@@ -318,7 +327,7 @@ export function augmentPlanContextWithAiCallSites(
     if (remaining < 1) break;
     add(projectBootstrapFile(target, path, terms, Math.min(PLAN_CONTEXT_MAX_FILE_BYTES, remaining)));
   }
-  for (const file of retained) {
+  for (const file of [...protectedRetained, ...retained]) {
     if (isProtectedProjectContext(file.path)) continue;
     add(file);
   }
