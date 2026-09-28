@@ -242,10 +242,15 @@ test("호출 지점이 슬롯보다 많아도 기존 선택에 최소 1슬롯을
     const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target, base);
     verifyPlanContextPack(augmented);
     const callSites = augmented.files.filter((file) => /uses: openai\/codex-action/.test(file.content));
-    assert.equal(callSites.length, PLAN_CONTEXT_MAX_FILES - 1);
-    assert.deepEqual(callSites.map((file) => file.path), all.slice(0, PLAN_CONTEXT_MAX_FILES - 1).map((file) => file.path));
+    const retained = augmented.files.filter((file) => !/uses: openai\/codex-action/.test(file.content));
+    // 기존 선택이 보호한 source/직접 테스트 쌍(#319)과 package.json/tsconfig.json 자리를 남기고, 나머지 slot은 관련도 순 호출 지점으로 채운다.
+    for (const path of ["src/self-improvement/learn-handler.ts", "test/learn-handler.test.ts", "package.json"]) {
+      assert.ok(retained.some((file) => file.path === path), `protected evidence must stay: ${path}`);
+    }
+    assert.ok(retained.length >= 1, "the primary selection keeps at least one slot");
+    assert.equal(callSites.length, PLAN_CONTEXT_MAX_FILES - retained.length);
+    assert.deepEqual(callSites.map((file) => file.path), all.slice(0, callSites.length).map((file) => file.path));
     assert.equal(augmented.files.length, PLAN_CONTEXT_MAX_FILES);
-    assert.ok(!augmented.files[PLAN_CONTEXT_MAX_FILES - 1]!.content.includes("openai/codex-action"), "the last slot stays with the primary selection");
     // 순위는 결정적이다: 같은 입력이면 같은 순서.
     assert.deepEqual(aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, fixture.target).map((file) => file.path), all.map((file) => file.path));
   } finally {
@@ -367,4 +372,39 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
     const frozenText = readFileSync(join(target, file.path), "utf8");
     assert.equal(frozenText.slice(file.startOffset, file.startOffset + file.content.length), file.content, `${file.path} evidence must match frozen repository`);
   }
+});
+
+test("#319: 원칙 문구로 호출 지점 보강이 켜져도 canonical Framework의 변경 대상 source/직접 테스트가 PLAN Context에 남는다", async () => {
+  const { cpSync } = await import("node:fs");
+  const { augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence } = await import("../src/self-improvement/plan-business-context.js");
+  const { augmentPlanContextWithExplicitPaths } = await import("../src/self-improvement/plan-explicit-path-context.js");
+  const root = mkdtempSync(join(tmpdir(), "planner-319-"));
+  try {
+    for (const entry of ["src", "test", "docs", ".github", "package.json", "tsconfig.json"]) cpSync(join(process.cwd(), entry), join(root, entry), { recursive: true });
+    // #319 PLAN run 36417515609의 요구 핵심 문장. "AI 호출 수 증가 금지"는 주제가 아니라 원칙이다.
+    const requirement = [
+      "[Framework] Product Evaluation snapshot에서 변경 파일이 누락되면 Self-Improvement 루프가 중단됨",
+      "Product Evaluation: 제품 변경 파일이 snapshot 예산에서 누락되어 평가를 중단합니다: src/web-main.ts",
+      "- `should_evaluate=false`",
+      "- isolated AI Product Evaluator: skipped",
+      "변경된 제품 파일이 snapshot 예산 때문에 빠지는 경우에도 Product Evaluation이 해당 변경을 판단할 수 있도록 snapshot 선택을 보완합니다.",
+      "## 원칙",
+      "- AI 호출 수 증가 금지",
+      "- 불필요한 Context 확대 금지",
+    ].join("\n");
+    assert.equal(needsAiExecutionPlanContext(requirement), true, "fixture must reproduce the call-site trigger");
+    const selected = selectPlanContext(requirement, root, "erpsarang/self-improvement-mvp", "e".repeat(40));
+    const business = augmentPlanContextWithBusinessRelations(requirement, root, selected);
+    const callSites = augmentPlanContextWithAiCallSites(requirement, root, business);
+    const pack = augmentPlanContextWithDirectTestEvidence(root, augmentPlanContextWithExplicitPaths(requirement, root, callSites));
+    verifyPlanContextPack(pack);
+    const paths = pack.files.map((file) => file.path);
+    for (const path of ["src/self-improvement/product-evaluation.ts", "test/product-evaluation.test.ts"]) {
+      assert.ok(selected.files.some((file) => file.path === path), `primary selector must pick ${path}`);
+      assert.ok(paths.includes(path), `${path} must survive later augmenters: ${paths.join(", ")}`);
+    }
+    assert.ok(!paths.some((path) => path.startsWith("src/ai-usage-")), `unrelated App-like pairs must not displace it: ${paths.join(", ")}`);
+    assert.ok(pack.files.length <= PLAN_CONTEXT_MAX_FILES);
+    assert.ok(pack.totalBytes <= 80_000);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

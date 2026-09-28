@@ -13,6 +13,7 @@ import {
   type PlanContextPack,
   type PlanContextPackPayload,
 } from "./planner.js";
+import { isCanonicalFrameworkTarget } from "./plan-ai-call-site-context.js";
 
 interface BusinessContextBudget {
   readonly maxFiles?: number;
@@ -252,11 +253,15 @@ export function strongestDirectTest(target: string, sourcePath: string): string 
   return direct ?? null;
 }
 
-function selectedRelationProtection(target: string, context: PlanContextPack): ReadonlySet<string> {
+export function selectedRelationProtection(target: string, context: PlanContextPack): ReadonlySet<string> {
   const contextPaths = new Set(context.files.map((file) => file.path));
   const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
   const protectedPaths = new Set<string>();
   const coveredSources = new Set<string>();
+  // App 배포본에서 Framework source는 배포 파일일 뿐이다. canonical Framework에서는 그것이 제품 runtime이므로
+  // primary selector가 고른 Framework source/직접 테스트 쌍도 보호한다. 보호하지 않으면 요구어와 약하게
+  // 겹치는 다른 source/test 쌍이 그 자리를 모두 차지한다 (#319 PLAN run 36417515609: product-evaluation.ts 탈락).
+  const skipFrameworkSources = !isCanonicalFrameworkTarget(target);
 
   for (const file of context.files) {
     if (isProjectExecutionContext(file.path)) protectedPaths.add(file.path);
@@ -264,7 +269,7 @@ function selectedRelationProtection(target: string, context: PlanContextPack): R
     const text = decodeText(join(target, file.path));
     if (text === null) continue;
     for (const sourcePath of importedRuntimeSources(file.path, text, sourcePaths)) {
-      if (!contextPaths.has(sourcePath) || isFrameworkSource(sourcePath)) continue;
+      if (!contextPaths.has(sourcePath) || (skipFrameworkSources && isFrameworkSource(sourcePath))) continue;
       protectedPaths.add(sourcePath);
       protectedPaths.add(file.path);
       coveredSources.add(sourcePath);
@@ -370,12 +375,15 @@ function businessRelationCandidates(
   if (tests.length === 0) return [];
 
   const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
+  // App 우선 선택은 Framework 배포본을 가진 App에서만 의미가 있다. canonical Framework에서는
+  // src/self-improvement가 제품 runtime이므로 우선순위를 낮추지 않는다 (#319 PLAN run 36417515609).
+  const canonicalFramework = isCanonicalFrameworkTarget(target);
   const relations = tests.flatMap((test) => importedRuntimeSources(test.path, test.text, sourcePaths).map((sourcePath, sourceRank) => ({
     test,
     sourcePath,
     sourceRank,
     affinity: sourceAffinity(test.path, sourcePath),
-    application: !isFrameworkSource(sourcePath),
+    application: canonicalFramework || !isFrameworkSource(sourcePath),
   })));
   if (relations.length === 0) return [];
 
