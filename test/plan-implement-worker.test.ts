@@ -16,6 +16,7 @@ import {
   type PlanAuthorizeArtifact,
 } from "../src/self-improvement/plan-authorization.js";
 import {
+  acceptPlanWorkerOutput,
   createWorkerCandidateProvenance,
   validatePlanImplementWorkerSource,
   verifyPlanImplementWorkerBundle,
@@ -26,6 +27,7 @@ import {
 import {
   createCandidateChangeSet,
   createSinglePassPrompt,
+  PLAN_WORKER_OUTPUT_SCHEMA,
   WORKER_OUTPUT_SCHEMA,
 } from "../src/self-improvement/single-pass-worker.js";
 
@@ -97,14 +99,14 @@ function fixture() {
     contextDigest: context.contextDigest,
   });
   const source = { authorization: approved, sourceArtifact: sourcePlanAuthorizeArtifact };
-  const prompt = createSinglePassPrompt(contract, context);
+  const prompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
   const bundle = verifyPlanImplementWorkerBundle({
     contract,
     context,
     handoff,
     source,
     prompt,
-    schema: WORKER_OUTPUT_SCHEMA,
+    schema: PLAN_WORKER_OUTPUT_SCHEMA,
   });
   return { approved, contract, context, handoff, source, prompt, bundle };
 }
@@ -146,16 +148,16 @@ test("canonical production handoff bundle을 Worker input으로 exact 검증한�
 test("prompt/schema/handoff/source 위변조는 Worker 실행 전에 fail-closed 한다", () => {
   const { contract, context, handoff, source, prompt } = fixture();
   assert.throws(() => verifyPlanImplementWorkerBundle({
-    contract, context, handoff, source, prompt: `${prompt}\n위변조`, schema: WORKER_OUTPUT_SCHEMA,
+    contract, context, handoff, source, prompt: `${prompt}\n위변조`, schema: PLAN_WORKER_OUTPUT_SCHEMA,
   }), /prompt mismatch/);
   assert.throws(() => verifyPlanImplementWorkerBundle({
-    contract, context, handoff, source, prompt, schema: { ...WORKER_OUTPUT_SCHEMA, extra: true },
+    contract, context, handoff, source, prompt, schema: { ...PLAN_WORKER_OUTPUT_SCHEMA, extra: true },
   }), /schema mismatch/);
   assert.throws(() => verifyPlanImplementWorkerBundle({
-    contract, context, handoff: { ...handoff, contextDigest: "0".repeat(64) }, source, prompt, schema: WORKER_OUTPUT_SCHEMA,
+    contract, context, handoff: { ...handoff, contextDigest: "0".repeat(64) }, source, prompt, schema: PLAN_WORKER_OUTPUT_SCHEMA,
   }), /handoff manifest mismatch/);
   assert.throws(() => verifyPlanImplementWorkerBundle({
-    contract, context, handoff, source: { ...source, sourceArtifact: { ...source.sourceArtifact, digest: "1".repeat(64) } }, prompt, schema: WORKER_OUTPUT_SCHEMA,
+    contract, context, handoff, source: { ...source, sourceArtifact: { ...source.sourceArtifact, digest: "1".repeat(64) } }, prompt, schema: PLAN_WORKER_OUTPUT_SCHEMA,
   }), /handoff manifest mismatch/);
 });
 
@@ -307,13 +309,13 @@ function excerptFixture() {
     contextMaterialization: { representation: "plan-excerpt", excerptPaths: ["docs/reference.md"], approvedPlanContextDigest },
   });
   const source = { authorization: approved, sourceArtifact: sourcePlanAuthorizeArtifact };
-  const prompt = createSinglePassPrompt(contract, context);
+  const prompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
   return { contract, context, handoff, source, prompt, approvedPlanContextDigest };
 }
 
 test("plan-excerpt Context를 가진 handoff bundle은 Worker가 표현을 pack에서 재도출해 exact 검증한다", () => {
   const { contract, context, handoff, source, prompt, approvedPlanContextDigest } = excerptFixture();
-  const bundle = verifyPlanImplementWorkerBundle({ contract, context, handoff, source, prompt, schema: WORKER_OUTPUT_SCHEMA });
+  const bundle = verifyPlanImplementWorkerBundle({ contract, context, handoff, source, prompt, schema: PLAN_WORKER_OUTPUT_SCHEMA });
   assert.equal(bundle.handoff.handoffDigest, handoff.handoffDigest);
   assert.deepEqual(bundle.handoff.contextMaterialization, {
     representation: "plan-excerpt",
@@ -324,7 +326,7 @@ test("plan-excerpt Context를 가진 handoff bundle은 Worker가 표현을 pack�
 
 test("Context 표현과 어긋나는 handoff manifest는 Worker 실행 전에 fail-closed 한다", () => {
   const { contract, context, handoff, source, prompt } = excerptFixture();
-  const run = (manifest: unknown) => verifyPlanImplementWorkerBundle({ contract, context, handoff: manifest, source, prompt, schema: WORKER_OUTPUT_SCHEMA });
+  const run = (manifest: unknown) => verifyPlanImplementWorkerBundle({ contract, context, handoff: manifest, source, prompt, schema: PLAN_WORKER_OUTPUT_SCHEMA });
 
   // pack에는 발췌가 있는데 manifest가 full이라고 주장.
   const full = createPlanImplementHandoffManifest({ authorization: source.authorization, sourceArtifact: source.sourceArtifact, contract, contextDigest: context.contextDigest });
@@ -335,4 +337,31 @@ test("Context 표현과 어긋나는 handoff manifest는 Worker 실행 전에 fa
   assert.throws(() => run({ ...handoff, contextMaterialization: { ...handoff.contextMaterialization, excerptPaths: [] } }), /handoff manifest mismatch/);
   // 표현만 바꿈.
   assert.throws(() => run({ ...handoff, contextMaterialization: { ...handoff.contextMaterialization, representation: "full" } }), /handoff manifest mismatch/);
+});
+
+test("PLAN Worker는 complete=true인 변경안만 받고 미완료 선언은 AI 후속 호출 전에 거부한다 (App issue 266)", () => {
+  // schema: PLAN Worker만 complete를 필수로 받는다. smoke/bounded-fix의 공용 schema는 그대로다.
+  assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.required, ["summary", "changes", "complete"]);
+  assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.properties.complete, { type: "boolean" });
+  assert.deepEqual(WORKER_OUTPUT_SCHEMA.required, ["summary", "changes"]);
+  assert.equal("complete" in WORKER_OUTPUT_SCHEMA.properties, false);
+
+  // prompt: PLAN Worker prompt에만 완료 규칙이 들어간다.
+  const { contract, context } = fixture();
+  const planPrompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
+  const genericPrompt = createSinglePassPrompt(contract, context);
+  assert.match(planPrompt, /requiredChanges 전체를 담은 완전한 변경안이면 complete=true/);
+  assert.doesNotMatch(genericPrompt, /complete=/);
+  assert.equal(planPrompt.replace(/- CONTRACT의 requiredChanges 전체를[^\n]*\n/, ""), genericPrompt);
+
+  const change = { path: "src/a.ts", operation: "modify" as const, baseContentDigest: "a".repeat(64), content: "x" };
+  assert.deepEqual(acceptPlanWorkerOutput({ summary: "done", changes: [change], complete: true }), { summary: "done", changes: [change] });
+  // issue 266 Worker run 36494272455의 실제 모양: 구현을 포기했다는 summary와 파일 1개 변경.
+  assert.throws(
+    () => acceptPlanWorkerOutput({ summary: "요구된 5개 파일의 완전한 변경 내용을 반환할 수 없습니다", changes: [change], complete: false }),
+    /승인 범위를 모두 담지 못했다고 반환했습니다 \(complete=false\): 요구된 5개 파일/,
+  );
+  assert.throws(() => acceptPlanWorkerOutput({ summary: "legacy", changes: [change] }), /complete=undefined/);
+  assert.throws(() => acceptPlanWorkerOutput({ summary: "x", changes: [change], complete: "true" }), /complete=true/);
+  assert.throws(() => acceptPlanWorkerOutput(null), /must be an object/);
 });

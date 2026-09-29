@@ -18,9 +18,10 @@ import {
 import type { PlanAuthorizeArtifact } from "./plan-authorization.js";
 import {
   createSinglePassPrompt,
+  PLAN_WORKER_OUTPUT_SCHEMA,
   verifyCandidateChangeSet,
-  WORKER_OUTPUT_SCHEMA,
   type CandidateChangeSet,
+  type WorkerProposal,
 } from "./single-pass-worker.js";
 
 export const PLAN_IMPLEMENT_HANDOFF_WORKFLOW_NAME = "Trusted PLAN IMPLEMENT Handoff" as const;
@@ -178,11 +179,11 @@ export function verifyPlanImplementWorkerBundle(input: {
     throw new Error("handoff manifest mismatch");
   }
 
-  const expectedPrompt = createSinglePassPrompt(contract, context);
+  const expectedPrompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
   if (typeof input.prompt !== "string" || input.prompt !== expectedPrompt) {
     throw new Error("handoff prompt mismatch");
   }
-  if (JSON.stringify(input.schema) !== JSON.stringify(WORKER_OUTPUT_SCHEMA)) {
+  if (JSON.stringify(input.schema) !== JSON.stringify(PLAN_WORKER_OUTPUT_SCHEMA)) {
     throw new Error("handoff worker schema mismatch");
   }
 
@@ -194,6 +195,20 @@ export function verifyPlanImplementWorkerBundle(input: {
     sourcePlanAuthorizeArtifact: source.sourceArtifact,
     prompt: expectedPrompt,
   };
+}
+
+/**
+ * PLAN Worker 출력에서 complete=true인 변경안만 받는다. 미완료 선언이나 누락은 fail-closed로 거부해
+ * 불완전한 candidate가 Rail/REVIEW/FIX로 넘어가 AI 호출을 더 쓰지 않게 한다 (App issue 266).
+ */
+export function acceptPlanWorkerOutput(value: unknown): WorkerProposal {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("PLAN Worker output must be an object");
+  const output = value as { readonly summary?: unknown; readonly changes?: unknown; readonly complete?: unknown };
+  if (output.complete !== true) {
+    const summary = typeof output.summary === "string" ? output.summary : "";
+    throw new Error(`PLAN Worker가 승인 범위를 모두 담지 못했다고 반환했습니다 (complete=${String(output.complete)}): ${summary}`);
+  }
+  return { summary: output.summary as string, changes: output.changes as WorkerProposal["changes"] };
 }
 
 export function validatePlanImplementWorkerSource(
