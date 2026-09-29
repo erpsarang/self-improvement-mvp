@@ -339,29 +339,59 @@ test("Context 표현과 어긋나는 handoff manifest는 Worker 실행 전에 fa
   assert.throws(() => run({ ...handoff, contextMaterialization: { ...handoff.contextMaterialization, representation: "full" } }), /handoff manifest mismatch/);
 });
 
-test("PLAN Worker는 complete=true인 변경안만 받고 미완료 선언은 AI 후속 호출 전에 거부한다 (App issue 266)", () => {
-  // schema: PLAN Worker만 complete를 필수로 받는다. smoke/bounded-fix의 공용 schema는 그대로다.
+test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate로 materialize한다", () => {
+  // PLAN Worker만 complete + edit 출력을 사용한다. smoke/bounded-fix의 공용 full-content schema는 그대로다.
   assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.required, ["summary", "changes", "complete"]);
   assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.properties.complete, { type: "boolean" });
+  assert.ok("edits" in PLAN_WORKER_OUTPUT_SCHEMA.properties.changes.items.properties);
   assert.deepEqual(WORKER_OUTPUT_SCHEMA.required, ["summary", "changes"]);
   assert.equal("complete" in WORKER_OUTPUT_SCHEMA.properties, false);
 
-  // prompt: PLAN Worker prompt에만 완료 규칙이 들어간다.
   const { contract, context } = fixture();
   const planPrompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
   const genericPrompt = createSinglePassPrompt(contract, context);
   assert.match(planPrompt, /requiredChanges 전체를 담은 완전한 변경안이면 complete=true/);
+  assert.match(planPrompt, /전체 파일 content를 다시 출력하지 말고 edits만 반환/);
   assert.doesNotMatch(genericPrompt, /complete=/);
-  assert.equal(planPrompt.replace(/- CONTRACT의 requiredChanges 전체를[^\n]*\n/, ""), genericPrompt);
 
-  const change = { path: "src/a.ts", operation: "modify" as const, baseContentDigest: "a".repeat(64), content: "x" };
-  assert.deepEqual(acceptPlanWorkerOutput({ summary: "done", changes: [change], complete: true }), { summary: "done", changes: [change] });
-  // issue 266 Worker run 36494272455의 실제 모양: 구현을 포기했다는 summary와 파일 1개 변경.
+  const present = context.files.find((file) => file.path === "README.md")!;
+  assert.equal(present.state, "present");
+  if (present.state !== "present") throw new Error("fixture README must be present");
+  const rawChange = {
+    path: "README.md",
+    operation: "modify" as const,
+    baseContentDigest: present.contentDigest,
+    edits: [{ oldText: "# Framework\n\n", newText: "# Framework\n\n현재 상태: PLAN\n\n" }],
+  };
+  const accepted = acceptPlanWorkerOutput({ summary: "done", changes: [rawChange], complete: true }, context);
+  assert.equal(accepted.changes[0]!.content, "# Framework\n\n현재 상태: PLAN\n\n기존 설명\n");
+  assert.deepEqual(accepted.changes[0]!.edits, rawChange.edits);
+
+  // full-content modify는 PLAN Worker 경계에서 거부한다.
   assert.throws(
-    () => acceptPlanWorkerOutput({ summary: "요구된 5개 파일의 완전한 변경 내용을 반환할 수 없습니다", changes: [change], complete: false }),
+    () => acceptPlanWorkerOutput({
+      summary: "full",
+      changes: [{ ...rawChange, edits: undefined, content: "# Framework\n" }],
+      complete: true,
+    }, context),
+    /modify must return edits, not full content|modify edits missing/,
+  );
+  // exact oldText가 두 번 이상이면 trusted materialization이 모호성을 거부한다.
+  assert.throws(
+    () => acceptPlanWorkerOutput({
+      summary: "ambiguous",
+      changes: [{ ...rawChange, edits: [{ oldText: "\n", newText: "\n\n" }] }],
+      complete: true,
+    }, context),
+    /ambiguous/,
+  );
+
+  // incomplete는 candidate materialization 전에 명확히 거부한다.
+  assert.throws(
+    () => acceptPlanWorkerOutput({ summary: "요구된 5개 파일의 완전한 변경 내용을 반환할 수 없습니다", changes: [rawChange], complete: false }, context),
     /승인 범위를 모두 담지 못했다고 반환했습니다 \(complete=false\): 요구된 5개 파일/,
   );
-  assert.throws(() => acceptPlanWorkerOutput({ summary: "legacy", changes: [change] }), /complete=undefined/);
-  assert.throws(() => acceptPlanWorkerOutput({ summary: "x", changes: [change], complete: "true" }), /complete=true/);
-  assert.throws(() => acceptPlanWorkerOutput(null), /must be an object/);
+  assert.throws(() => acceptPlanWorkerOutput({ summary: "legacy", changes: [rawChange] }, context), /complete=undefined/);
+  assert.throws(() => acceptPlanWorkerOutput({ summary: "x", changes: [rawChange], complete: "true" }, context), /complete=true/);
+  assert.throws(() => acceptPlanWorkerOutput(null, context), /must be an object/);
 });
