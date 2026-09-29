@@ -16,11 +16,18 @@ import {
 export const TRUSTED_LOCKFILE_PATH = "package-lock.json" as const;
 export const TRUSTED_LOCKFILE_MAX_BYTES = 512 * 1024;
 
+export interface WorkerTextEdit {
+  readonly oldText: string;
+  readonly newText: string;
+}
+
 export interface WorkerChangeProposal {
   readonly path: string;
   readonly operation: "modify" | "create";
   readonly baseContentDigest: string | null;
   readonly content: string;
+  /** PLAN Worker가 전체 파일 재출력 대신 보낸 exact 부분 교체. trusted materialization 후 candidate에도 보존한다. */
+  readonly edits?: readonly WorkerTextEdit[];
 }
 
 export interface WorkerProposal {
@@ -89,11 +96,45 @@ export const WORKER_OUTPUT_SCHEMA = {
  * 파일 1개 변경). complete=false면 trusted 단계가 candidate를 거부해 뒤의 REVIEW/FIX AI 호출을 막는다.
  */
 export const PLAN_WORKER_OUTPUT_SCHEMA = {
-  ...WORKER_OUTPUT_SCHEMA,
+  type: "object",
+  additionalProperties: false,
   required: ["summary", "changes", "complete"],
   properties: {
-    ...WORKER_OUTPUT_SCHEMA.properties,
+    summary: { type: "string", minLength: 1 },
     complete: { type: "boolean" },
+    changes: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "operation", "baseContentDigest"],
+        properties: {
+          path: { type: "string", minLength: 1 },
+          operation: { type: "string", enum: ["modify", "create"] },
+          baseContentDigest: {
+            anyOf: [
+              { type: "string", pattern: "^[0-9a-f]{64}$" },
+              { type: "null" },
+            ],
+          },
+          content: { type: "string" },
+          edits: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["oldText", "newText"],
+              properties: {
+                oldText: { type: "string", minLength: 1 },
+                newText: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 } as const;
 
@@ -117,8 +158,9 @@ export function createSinglePassPrompt(
 - 제공된 Context Pack 밖의 지식을 근거로 파일 내용을 추측하지 마세요.
 - allowedPaths 밖의 파일은 변경하지 마세요.
 - contextPaths는 읽기 전용 참고 문맥입니다. contextPaths에만 있는 파일은 절대 변경하지 마세요.
-- present 파일은 operation=modify와 해당 파일의 exact contentDigest를 baseContentDigest로 사용하세요.
-- missing 파일은 operation=create와 baseContentDigest=null을 사용하세요.
+- present 파일은 operation=modify와 해당 파일의 exact contentDigest를 baseContentDigest로 사용하세요. 전체 파일 content를 다시 출력하지 말고 edits만 반환하세요.
+- modify의 edits는 [{oldText,newText}] 형식입니다. oldText는 현재 파일에서 정확히 한 번만 나타나는 최소 충분 문맥이어야 하며, trusted 단계가 나열 순서대로 exact 교체합니다.
+- modify에는 content를 넣지 마세요. missing 파일은 operation=create와 baseContentDigest=null 및 전체 content를 사용하고 edits를 넣지 마세요.
 - excerpt 파일은 승인된 PLAN이 본 read-only 발췌입니다(startOffset은 원본 파일의 문자 위치, 전체 파일이 아님). 참고만 하고 절대 변경하지 마세요.
 - delete는 허용되지 않습니다.
 - 한 번의 후보 변경안만 반환하고 스스로 수정/재시도 loop를 만들지 마세요.
@@ -132,6 +174,37 @@ ${JSON.stringify(contract)}
 CONTEXT PACK:
 ${JSON.stringify(contextPack)}
 `;
+}
+
+export function materializeWorkerEdits(
+  baseContent: string,
+  edits: readonly WorkerTextEdit[],
+  path: string,
+): string {
+  if (!Array.isArray(edits) || edits.length === 0) throw new Error(`worker edit list must be non-empty: ${path}`);
+  let content = baseContent;
+  for (const [index, edit] of edits.entries()) {
+    if (typeof edit?.oldText !== "string" || edit.oldText.length === 0) throw new Error(`worker edit oldText must be non-empty: ${path}#${index + 1}`);
+    if (typeof edit.newText !== "string") throw new Error(`worker edit newText must be a string: ${path}#${index + 1}`);
+    if (edit.oldText === edit.newText) throw new Error(`worker edit is a no-op: ${path}#${index + 1}`);
+    const first = content.indexOf(edit.oldText);
+    if (first < 0) throw new Error(`worker edit oldText not found in exact base: ${path}#${index + 1}`);
+    if (content.indexOf(edit.oldText, first + edit.oldText.length) >= 0) {
+      throw new Error(`worker edit oldText is ambiguous in exact base: ${path}#${index + 1}`);
+    }
+    content = content.slice(0, first) + edit.newText + content.slice(first + edit.oldText.length);
+  }
+  return content;
+}
+
+function encodedChangeBytes(change: WorkerChangeProposal): number {
+  if (change.edits) {
+    return change.edits.reduce(
+      (sum, edit) => sum + Buffer.byteLength(edit.oldText, "utf8") + Buffer.byteLength(edit.newText, "utf8"),
+      0,
+    );
+  }
+  return Buffer.byteLength(change.content, "utf8");
 }
 
 function validateChange(
@@ -150,10 +223,14 @@ function validateChange(
   if (context.state === "present") {
     if (change.operation !== "modify") throw new Error(`present path must use modify: ${change.path}`);
     if (change.baseContentDigest !== context.contentDigest) throw new Error(`base content digest mismatch: ${change.path}`);
+    if (change.edits && materializeWorkerEdits(context.content, change.edits, change.path) !== change.content) {
+      throw new Error(`worker materialized edit content mismatch: ${change.path}`);
+    }
     if (change.content === context.content) throw new Error(`worker produced no-op change: ${change.path}`);
   } else {
     if (change.operation !== "create") throw new Error(`missing path must use create: ${change.path}`);
     if (change.baseContentDigest !== null) throw new Error(`new file baseContentDigest must be null: ${change.path}`);
+    if (change.edits !== undefined) throw new Error(`new file must not contain edits: ${change.path}`);
   }
 
   return {
@@ -161,6 +238,7 @@ function validateChange(
     operation: change.operation,
     baseContentDigest: change.baseContentDigest,
     content: change.content,
+    ...(change.edits ? { edits: change.edits.map((edit) => ({ oldText: edit.oldText, newText: edit.newText })) } : {}),
   };
 }
 
@@ -182,12 +260,15 @@ export function createCandidateChangeSet(
   if (new Set(changes.map(({ path }) => path)).size !== changes.length) throw new Error("worker proposal paths must be unique");
   changes.sort((a, b) => a.path.localeCompare(b.path));
 
-  const outputBytes = changes.reduce((sum, change) => sum + Buffer.byteLength(change.content, "utf8"), 0);
-  const trustedLockfileBytes = changes
+  const outputBytes = changes.reduce((sum, change) => sum + encodedChangeBytes(change), 0);
+  const trustedLockfileContentBytes = changes
     .filter((change) => change.path === TRUSTED_LOCKFILE_PATH)
     .reduce((sum, change) => sum + Buffer.byteLength(change.content, "utf8"), 0);
-  if (trustedLockfileBytes > TRUSTED_LOCKFILE_MAX_BYTES) throw new Error("package-lock.json exceeds trusted lockfile size bound");
-  if (outputBytes - trustedLockfileBytes > contract.scope.maxPatchBytes) throw new Error("worker proposal exceeds maxPatchBytes");
+  const trustedLockfileOutputBytes = changes
+    .filter((change) => change.path === TRUSTED_LOCKFILE_PATH)
+    .reduce((sum, change) => sum + encodedChangeBytes(change), 0);
+  if (trustedLockfileContentBytes > TRUSTED_LOCKFILE_MAX_BYTES) throw new Error("package-lock.json exceeds trusted lockfile size bound");
+  if (outputBytes - trustedLockfileOutputBytes > contract.scope.maxPatchBytes) throw new Error("worker proposal exceeds maxPatchBytes");
 
   const payload: CandidateChangeSetPayload = {
     schemaVersion: 1,
