@@ -18,6 +18,7 @@ import {
 import type { PlanAuthorizeArtifact } from "./plan-authorization.js";
 import {
   createSinglePassPrompt,
+  materializeWorkerEdits,
   PLAN_WORKER_OUTPUT_SCHEMA,
   verifyCandidateChangeSet,
   type CandidateChangeSet,
@@ -201,14 +202,63 @@ export function verifyPlanImplementWorkerBundle(input: {
  * PLAN Worker 출력에서 complete=true인 변경안만 받는다. 미완료 선언이나 누락은 fail-closed로 거부해
  * 불완전한 candidate가 Rail/REVIEW/FIX로 넘어가 AI 호출을 더 쓰지 않게 한다 (App issue 266).
  */
-export function acceptPlanWorkerOutput(value: unknown): WorkerProposal {
+export function acceptPlanWorkerOutput(value: unknown, contextPack: ImplementContextPack): WorkerProposal {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("PLAN Worker output must be an object");
   const output = value as { readonly summary?: unknown; readonly changes?: unknown; readonly complete?: unknown };
   if (output.complete !== true) {
     const summary = typeof output.summary === "string" ? output.summary : "";
     throw new Error(`PLAN Worker가 승인 범위를 모두 담지 못했다고 반환했습니다 (complete=${String(output.complete)}): ${summary}`);
   }
-  return { summary: output.summary as string, changes: output.changes as WorkerProposal["changes"] };
+  if (typeof output.summary !== "string" || !output.summary.trim()) throw new Error("PLAN Worker summary must be non-empty");
+  if (!Array.isArray(output.changes) || output.changes.length === 0) throw new Error("PLAN Worker changes must be non-empty");
+
+  const contextByPath = new Map(contextPack.files.map((file) => [file.path, file] as const));
+  const changes: WorkerProposal["changes"] = output.changes.map((raw, index) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error(`PLAN Worker change must be an object: #${index + 1}`);
+    const change = raw as {
+      readonly path?: unknown;
+      readonly operation?: unknown;
+      readonly baseContentDigest?: unknown;
+      readonly content?: unknown;
+      readonly edits?: unknown;
+    };
+    if (typeof change.path !== "string" || !change.path) throw new Error(`PLAN Worker change path missing: #${index + 1}`);
+    const context = contextByPath.get(change.path);
+    if (!context || context.state === "excerpt") throw new Error(`PLAN Worker change path is not writable context: ${change.path}`);
+
+    if (change.operation === "modify") {
+      if (context.state !== "present") throw new Error(`PLAN Worker modify path is not present: ${change.path}`);
+      if (change.baseContentDigest !== context.contentDigest) throw new Error(`PLAN Worker base digest mismatch: ${change.path}`);
+      if (change.content !== undefined) throw new Error(`PLAN Worker modify must return edits, not full content: ${change.path}`);
+      if (!Array.isArray(change.edits) || change.edits.length === 0) throw new Error(`PLAN Worker modify edits missing: ${change.path}`);
+      const edits = change.edits.map((edit, editIndex) => {
+        if (typeof edit !== "object" || edit === null || Array.isArray(edit)) throw new Error(`PLAN Worker edit must be an object: ${change.path}#${editIndex + 1}`);
+        const record = edit as { readonly oldText?: unknown; readonly newText?: unknown };
+        if (typeof record.oldText !== "string" || record.oldText.length === 0) throw new Error(`PLAN Worker edit oldText missing: ${change.path}#${editIndex + 1}`);
+        if (typeof record.newText !== "string") throw new Error(`PLAN Worker edit newText missing: ${change.path}#${editIndex + 1}`);
+        return { oldText: record.oldText, newText: record.newText };
+      });
+      return {
+        path: change.path,
+        operation: "modify",
+        baseContentDigest: context.contentDigest,
+        content: materializeWorkerEdits(context.content, edits, change.path),
+        edits,
+      };
+    }
+
+    if (change.operation === "create") {
+      if (context.state !== "missing") throw new Error(`PLAN Worker create path is not missing: ${change.path}`);
+      if (change.baseContentDigest !== null) throw new Error(`PLAN Worker create baseContentDigest must be null: ${change.path}`);
+      if (typeof change.content !== "string") throw new Error(`PLAN Worker create content missing: ${change.path}`);
+      if (change.edits !== undefined) throw new Error(`PLAN Worker create must not contain edits: ${change.path}`);
+      return { path: change.path, operation: "create", baseContentDigest: null, content: change.content };
+    }
+
+    throw new Error(`PLAN Worker operation invalid: ${change.path}`);
+  });
+
+  return { summary: output.summary, changes };
 }
 
 export function validatePlanImplementWorkerSource(
