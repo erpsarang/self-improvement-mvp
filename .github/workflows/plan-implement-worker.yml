@@ -33,6 +33,7 @@ jobs:
       repair_ready: ${{ steps.ci0.outputs.repair_ready }}
       repair_blocked_reason: ${{ steps.ci0.outputs.repair_blocked_reason }}
       retry_required: ${{ steps.timeout0.outputs.retry }}
+      worker_incomplete: ${{ steps.completion0.outputs.incomplete }}
 
     steps:
       - name: RECOVERY_READY artifact 다운로드
@@ -336,6 +337,20 @@ jobs:
           echo "bounded IMPLEMENT failed before retry eligibility" >&2
           exit 1
 
+      - name: PLAN Worker complete 상태 분류 0
+        if: steps.source.outputs.should_run == 'true' && steps.implement_gate.outcome == 'success' && steps.timeout0.outputs.retry != 'true'
+        id: completion0
+        shell: bash
+        env:
+          RAW_PROPOSAL: ${{ runner.temp }}/worker-output/raw-proposal.json
+        run: |
+          set -euo pipefail
+          incomplete="$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(x.complete === false ? "true" : "false")' "$RAW_PROPOSAL")"
+          echo "incomplete=$incomplete" >> "$GITHUB_OUTPUT"
+          if [ "$incomplete" = "true" ]; then
+            echo "PLAN Worker가 complete=false를 반환했습니다. infrastructure failure와 구분해 fail-closed 합니다."
+          fi
+
       - name: timeout retry input artifact 저장
         if: steps.timeout0.outputs.retry == 'true'
         uses: actions/upload-artifact@v4
@@ -485,6 +500,7 @@ jobs:
       ci_status: ${{ steps.ci0_retry.outputs.status }}
       repair_ready: ${{ steps.ci0_retry.outputs.repair_ready }}
       repair_blocked_reason: ${{ steps.ci0_retry.outputs.repair_blocked_reason }}
+      worker_incomplete: ${{ steps.completion_retry.outputs.incomplete }}
 
     steps:
       - name: timeout retry input artifact 다운로드
@@ -519,6 +535,19 @@ jobs:
           model: gpt-6-sol
           effort: medium
           codex-args: '["-c","project_doc_max_bytes=0"]'
+
+      - name: PLAN Worker complete 상태 분류 retry
+        id: completion_retry
+        shell: bash
+        env:
+          RAW_PROPOSAL: ${{ runner.temp }}/worker-output/raw-proposal.json
+        run: |
+          set -euo pipefail
+          incomplete="$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(x.complete === false ? "true" : "false")' "$RAW_PROPOSAL")"
+          echo "incomplete=$incomplete" >> "$GITHUB_OUTPUT"
+          if [ "$incomplete" = "true" ]; then
+            echo "timeout retry PLAN Worker가 complete=false를 반환했습니다. infrastructure failure와 구분합니다."
+          fi
 
       - name: timeout retry input 제거
         shell: bash
@@ -655,6 +684,7 @@ jobs:
       repair_ready: ${{ steps.effective.outputs.repair_ready }}
       repair_blocked_reason: ${{ steps.effective.outputs.repair_blocked_reason }}
       infrastructure_failed: ${{ steps.effective.outputs.infrastructure_failed }}
+      worker_incomplete: ${{ steps.effective.outputs.worker_incomplete }}
       source_name: ${{ steps.effective.outputs.source_name }}
       source_id: ${{ steps.effective.outputs.source_id }}
       source_digest: ${{ steps.effective.outputs.source_digest }}
@@ -681,6 +711,8 @@ jobs:
           RETRY_STATUS: ${{ needs.timeout_retry.outputs.ci_status }}
           RETRY_REPAIR_READY: ${{ needs.timeout_retry.outputs.repair_ready }}
           RETRY_BLOCKED_REASON: ${{ needs.timeout_retry.outputs.repair_blocked_reason }}
+          DIRECT_INCOMPLETE: ${{ needs.attempt0.outputs.worker_incomplete }}
+          RETRY_INCOMPLETE: ${{ needs.timeout_retry.outputs.worker_incomplete }}
           SOURCE_NAME: ${{ needs.attempt0.outputs.source_name }}
           SOURCE_ID: ${{ needs.attempt0.outputs.source_id }}
           SOURCE_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
@@ -694,12 +726,18 @@ jobs:
         run: |
           set -euo pipefail
           infrastructure_failed=false
+          worker_incomplete=false
           ci_status="$DIRECT_STATUS"
           repair_ready="$DIRECT_REPAIR_READY"
           repair_blocked_reason="$DIRECT_BLOCKED_REASON"
 
           if [ "$RETRY_REQUIRED" = "true" ]; then
-            if [ "$RETRY_RESULT" != "success" ]; then
+            if [ "$RETRY_INCOMPLETE" = "true" ]; then
+              worker_incomplete=true
+              ci_status=""
+              repair_ready=""
+              repair_blocked_reason=""
+            elif [ "$RETRY_RESULT" != "success" ]; then
               infrastructure_failed=true
               ci_status=""
               repair_ready=""
@@ -709,6 +747,11 @@ jobs:
               repair_ready="$RETRY_REPAIR_READY"
               repair_blocked_reason="$RETRY_BLOCKED_REASON"
             fi
+          elif [ "$DIRECT_INCOMPLETE" = "true" ]; then
+            worker_incomplete=true
+            ci_status=""
+            repair_ready=""
+            repair_blocked_reason=""
           elif [ "$ATTEMPT0_RESULT" != "success" ]; then
             infrastructure_failed=true
             ci_status=""
@@ -722,6 +765,7 @@ jobs:
             echo "repair_ready=$repair_ready"
             echo "repair_blocked_reason=$repair_blocked_reason"
             echo "infrastructure_failed=$infrastructure_failed"
+            echo "worker_incomplete=$worker_incomplete"
             echo "source_name=$SOURCE_NAME"
             echo "source_id=$SOURCE_ID"
             echo "source_digest=$SOURCE_DIGEST"
@@ -1172,6 +1216,67 @@ jobs:
           ATTEMPT1_REASON: ${{ needs.repair1.outputs.repair_blocked_reason }}
         run: |
           echo "AI repair blocked by deterministic repair policy: attempt0=${ATTEMPT0_REASON}, attempt1=${ATTEMPT1_REASON}" >&2
+          exit 1
+
+      - name: WORKER_INCOMPLETE stalled cycle 기록
+        if: needs.attempt0_result.outputs.worker_incomplete == 'true'
+        uses: actions/github-script@v7
+        env:
+          SOURCE_HANDOFF_RUN_ID: ${{ needs.attempt0_result.outputs.source_run_id }}
+          SOURCE_HANDOFF_RUN_ATTEMPT: ${{ needs.attempt0_result.outputs.source_run_attempt }}
+          SOURCE_HANDOFF_ARTIFACT: ${{ needs.attempt0_result.outputs.source_name }}
+          APPROVED_BASE_SHA: ${{ needs.attempt0_result.outputs.base_sha }}
+          WORKER_RUN_ID: ${{ github.run_id }}
+          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const artifact = process.env.SOURCE_HANDOFF_ARTIFACT || '';
+            const match = /^plan-implement-handoff-issue-(\d+)-plan-\d+-attempt-\d+-approval-\d+$/.exec(artifact);
+            if (!match) {
+              core.setFailed(`cannot derive issue from Handoff artifact: ${artifact}`);
+              return;
+            }
+            const issueNumber = Number(match[1]);
+            const handoffRunId = Number(process.env.SOURCE_HANDOFF_RUN_ID);
+            const handoffRunAttempt = Number(process.env.SOURCE_HANDOFF_RUN_ATTEMPT);
+            const workerRunId = Number(process.env.WORKER_RUN_ID);
+            const workerRunAttempt = Number(process.env.WORKER_RUN_ATTEMPT);
+            const baseSha = process.env.APPROVED_BASE_SHA || '';
+            if (
+              ![issueNumber, handoffRunId, handoffRunAttempt, workerRunId, workerRunAttempt]
+                .every((value) => Number.isSafeInteger(value) && value > 0) ||
+              !/^[0-9a-f]{40,64}$/.test(baseSha)
+            ) {
+              core.setFailed('invalid stalled cycle identity');
+              return;
+            }
+            const marker =
+              `<!-- ai-dev-framework:STALLED_WORKER issue=${issueNumber} handoff-run=${handoffRunId} handoff-attempt=${handoffRunAttempt} artifact=${artifact} base-sha=${baseSha} worker-run=${workerRunId} worker-attempt=${workerRunAttempt} reason=WORKER_INCOMPLETE -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            if (comments.some((comment) => (comment.body || '').includes(marker))) {
+              core.info('exact WORKER_INCOMPLETE marker already exists');
+              return;
+            }
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                marker,
+                '## Worker 중단 — WORKER_INCOMPLETE',
+                'AI Worker가 승인 범위 전체를 완전한 candidate로 만들지 못했다고 명시했습니다.',
+                '인프라 장애가 아니므로 자동 Recovery 대상으로 분류하지 않습니다. 범위를 보완하거나 다시 PLAN/IMPLEMENT할지 사람이 판단하세요.',
+              ].join('\n\n'),
+            });
+
+      - name: WORKER_INCOMPLETE 시 fail-closed
+        if: needs.attempt0_result.outputs.worker_incomplete == 'true'
+        shell: bash
+        run: |
+          echo "PLAN Worker returned complete=false; stopped as WORKER_INCOMPLETE" >&2
           exit 1
 
       - name: INFRA_FAILURE stalled cycle 기록
