@@ -108,7 +108,7 @@ export const PLAN_WORKER_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["path", "operation", "baseContentDigest"],
+        required: ["path", "operation", "baseContentDigest", "content", "edits"],
         properties: {
           path: { type: "string", minLength: 1 },
           operation: { type: "string", enum: ["modify", "create"] },
@@ -118,19 +118,29 @@ export const PLAN_WORKER_OUTPUT_SCHEMA = {
               { type: "null" },
             ],
           },
-          content: { type: "string" },
+          content: {
+            anyOf: [
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
           edits: {
-            type: "array",
-            minItems: 1,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["oldText", "newText"],
-              properties: {
-                oldText: { type: "string", minLength: 1 },
-                newText: { type: "string" },
+            anyOf: [
+              {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["oldText", "newText"],
+                  properties: {
+                    oldText: { type: "string", minLength: 1 },
+                    newText: { type: "string" },
+                  },
+                },
               },
-            },
+              { type: "null" },
+            ],
           },
         },
       },
@@ -158,9 +168,9 @@ export function createSinglePassPrompt(
 - 제공된 Context Pack 밖의 지식을 근거로 파일 내용을 추측하지 마세요.
 - allowedPaths 밖의 파일은 변경하지 마세요.
 - contextPaths는 읽기 전용 참고 문맥입니다. contextPaths에만 있는 파일은 절대 변경하지 마세요.
-- present 파일은 operation=modify와 해당 파일의 exact contentDigest를 baseContentDigest로 사용하세요. 전체 파일 content를 다시 출력하지 말고 edits만 반환하세요.
-- modify의 edits는 [{oldText,newText}] 형식입니다. oldText는 현재 파일에서 정확히 한 번만 나타나는 최소 충분 문맥이어야 하며, trusted 단계가 나열 순서대로 exact 교체합니다.
-- modify에는 content를 넣지 마세요. missing 파일은 operation=create와 baseContentDigest=null 및 전체 content를 사용하고 edits를 넣지 마세요.
+- present 파일은 operation=modify와 해당 파일의 exact contentDigest를 baseContentDigest로 사용하세요. 전체 파일 content를 다시 출력하지 말고 content=null, edits=[{oldText,newText}]를 반환하세요.
+- modify의 oldText는 현재 파일에서 정확히 한 번만 나타나는 최소 충분 문맥이어야 하며, trusted 단계가 나열 순서대로 exact 교체합니다.
+- missing 파일은 operation=create와 baseContentDigest=null, content=전체 신규 파일, edits=null을 반환하세요.
 - excerpt 파일은 승인된 PLAN이 본 read-only 발췌입니다(startOffset은 원본 파일의 문자 위치, 전체 파일이 아님). 참고만 하고 절대 변경하지 마세요.
 - delete는 허용되지 않습니다.
 - 한 번의 후보 변경안만 반환하고 스스로 수정/재시도 loop를 만들지 마세요.
