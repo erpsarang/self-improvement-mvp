@@ -66,6 +66,9 @@ test("Context Pack에 있는 기존 테스트가 변경 대상 소스를 import�
   const scope = plan.implementationScope as { allowedPaths: string[]; requiredChanges: string[]; contextPaths: string[] };
   assert.deepEqual(scope.allowedPaths, ["src/classics.js", "src/recommendation.js", "src/web.js", "test/web.test.js"]);
   assert.match(scope.requiredChanges.at(-1)!, /test\/web\.test\.js.*삭제하거나 건너뛰지 않는다/);
+  // 영향 없는 companion 테스트까지 갱신을 강제하면 Worker가 complete=false로 멈춘다 (App issue 266).
+  assert.match(scope.requiredChanges.at(-1)!, /실제로 달라질 때만 갱신하고, 영향이 없으면 수정하지 않아도 이 항목을 충족한 것으로 본다/);
+  assert.doesNotMatch(scope.requiredChanges.at(-1)!, /새 동작에 맞게 기대값을 갱신한다/);
   // app.test.js는 변경 대상을 import하지 않으므로 넓히지 않는다.
   assert.equal(scope.allowedPaths.includes("test/app.test.js"), false);
 
