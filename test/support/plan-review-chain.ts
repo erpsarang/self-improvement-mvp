@@ -37,7 +37,7 @@ import { sealPlanBridgeCandidate } from "../../src/self-improvement/seal.js";
 import {
   createCandidateChangeSet,
   createSinglePassPrompt,
-  WORKER_OUTPUT_SCHEMA,
+  PLAN_WORKER_OUTPUT_SCHEMA,
 } from "../../src/self-improvement/single-pass-worker.js";
 import { createVerifyProvenance } from "../../src/self-improvement/verify.js";
 
@@ -116,8 +116,8 @@ export function createPlanReviewChain() {
     context,
     handoff,
     source: { authorization, sourceArtifact: sourcePlanAuthorizeArtifact },
-    prompt: createSinglePassPrompt(contract, context),
-    schema: WORKER_OUTPUT_SCHEMA,
+    prompt: createSinglePassPrompt(contract, context, { requireCompletion: true }),
+    schema: PLAN_WORKER_OUTPUT_SCHEMA,
   });
   const file = context.files[0]!;
   if (file.state !== "present") throw new Error("fixture README must be present");

@@ -20,7 +20,7 @@ import {
 } from "./plan-implement-handoff.js";
 import { planAuthorizeArtifactName, type PlanAuthorizeArtifact } from "./plan-authorization.js";
 import { verifyPlanContextPack, type PlanContextPack } from "./planner.js";
-import { createSinglePassPrompt, WORKER_OUTPUT_SCHEMA } from "./single-pass-worker.js";
+import { createSinglePassPrompt, PLAN_WORKER_OUTPUT_SCHEMA } from "./single-pass-worker.js";
 
 interface SourceRecord {
   readonly authorization: PlanAuthorizeArtifact;
@@ -246,7 +246,7 @@ function buildContext(): void {
   const contextMaterialization = excerptPaths.length === 0
     ? FULL_CONTEXT_MATERIALIZATION
     : { representation: "plan-excerpt" as const, excerptPaths, approvedPlanContextDigest: planContext.contextDigest };
-  const prompt = createSinglePassPrompt(contract, context);
+  const prompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
   const manifest = createPlanImplementHandoffManifest({
     authorization,
     sourceArtifact: source.sourceArtifact,
@@ -258,7 +258,7 @@ function buildContext(): void {
 
   writeFileSync(join(directory, "context.json"), JSON.stringify(context, null, 2));
   writeFileSync(join(directory, "prompt.md"), prompt);
-  writeFileSync(join(directory, "schema.json"), JSON.stringify(WORKER_OUTPUT_SCHEMA, null, 2));
+  writeFileSync(join(directory, "schema.json"), JSON.stringify(PLAN_WORKER_OUTPUT_SCHEMA, null, 2));
   writeFileSync(join(directory, "handoff.json"), JSON.stringify(manifest, null, 2));
 }
 

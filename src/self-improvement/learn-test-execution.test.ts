@@ -25,7 +25,7 @@ import {
 import {
   createCandidateChangeSet,
   createSinglePassPrompt,
-  WORKER_OUTPUT_SCHEMA,
+  PLAN_WORKER_OUTPUT_SCHEMA,
 } from "./single-pass-worker.js";
 import {
   createPlanCandidateBridgeProvenance,
@@ -109,8 +109,8 @@ function fixture() {
     context,
     handoff,
     source: { authorization, sourceArtifact: sourcePlanAuthorizeArtifact },
-    prompt: createSinglePassPrompt(contract, context),
-    schema: WORKER_OUTPUT_SCHEMA,
+    prompt: createSinglePassPrompt(contract, context, { requireCompletion: true }),
+    schema: PLAN_WORKER_OUTPUT_SCHEMA,
   });
   const file = context.files[0]!;
   assert.equal(file.state, "present");
