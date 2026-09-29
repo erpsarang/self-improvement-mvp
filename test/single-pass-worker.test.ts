@@ -166,6 +166,42 @@ test("파일 수와 output byte budget을 Worker 밖 Trusted validator가 강제
   }
 });
 
+test("trusted edit candidate는 exact base에 materialize되고 patch budget은 edit bytes로 센다", () => {
+  const { root, contract, contextPack, present } = fixture();
+  try {
+    const edits = [{ oldText: "export const a = 1;", newText: "export const a = 2;" }];
+    const candidate = createCandidateChangeSet(contract, contextPack, {
+      summary: "부분 교체",
+      changes: [{
+        path: "src/a.ts",
+        operation: "modify",
+        baseContentDigest: present.contentDigest,
+        content: "export const a = 2;\n",
+        edits,
+      }],
+    });
+    assert.deepEqual(candidate.changes[0]!.edits, edits);
+    assert.equal(
+      candidate.outputBytes,
+      Buffer.byteLength(edits[0]!.oldText, "utf8") + Buffer.byteLength(edits[0]!.newText, "utf8"),
+    );
+    assert.doesNotThrow(() => verifyCandidateChangeSet(candidate, contract, contextPack));
+
+    assert.throws(() => createCandidateChangeSet(contract, contextPack, {
+      summary: "위조된 materialization",
+      changes: [{
+        path: "src/a.ts",
+        operation: "modify",
+        baseContentDigest: present.contentDigest,
+        content: "export const a = 9;\n",
+        edits,
+      }],
+    }), /materialized edit content mismatch/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("candidate 위변조와 no-op을 거부하고 output schema에는 delete가 없다", () => {
   const { root, contract, contextPack, present } = fixture();
   try {
