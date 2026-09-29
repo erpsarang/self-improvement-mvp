@@ -229,7 +229,7 @@ export function acceptPlanWorkerOutput(value: unknown, contextPack: ImplementCon
     if (change.operation === "modify") {
       if (context.state !== "present") throw new Error(`PLAN Worker modify path is not present: ${change.path}`);
       if (change.baseContentDigest !== context.contentDigest) throw new Error(`PLAN Worker base digest mismatch: ${change.path}`);
-      if (change.content !== undefined) throw new Error(`PLAN Worker modify must return edits, not full content: ${change.path}`);
+      if (change.content !== null) throw new Error(`PLAN Worker modify content must be null: ${change.path}`);
       if (!Array.isArray(change.edits) || change.edits.length === 0) throw new Error(`PLAN Worker modify edits missing: ${change.path}`);
       const edits = change.edits.map((edit, editIndex) => {
         if (typeof edit !== "object" || edit === null || Array.isArray(edit)) throw new Error(`PLAN Worker edit must be an object: ${change.path}#${editIndex + 1}`);
@@ -251,7 +251,7 @@ export function acceptPlanWorkerOutput(value: unknown, contextPack: ImplementCon
       if (context.state !== "missing") throw new Error(`PLAN Worker create path is not missing: ${change.path}`);
       if (change.baseContentDigest !== null) throw new Error(`PLAN Worker create baseContentDigest must be null: ${change.path}`);
       if (typeof change.content !== "string") throw new Error(`PLAN Worker create content missing: ${change.path}`);
-      if (change.edits !== undefined) throw new Error(`PLAN Worker create must not contain edits: ${change.path}`);
+      if (change.edits !== null) throw new Error(`PLAN Worker create edits must be null: ${change.path}`);
       return { path: change.path, operation: "create", baseContentDigest: null, content: change.content };
     }
 
