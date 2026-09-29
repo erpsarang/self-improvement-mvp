@@ -724,8 +724,10 @@ export function applyImpactedTestCompanions(
     );
   }
 
+  // 갱신을 무조건 요구하면 영향 없는 테스트 때문에 Worker가 complete=false를 반환한다
+  // (App issue 266 Worker run 36541013233: 함수 추가만 하는 변경에서 test/web-main-file-change.test.ts 갱신을 못 해 중단).
   const companionNote =
-    `기존 테스트 ${companions.map((path) => `\`${path}\``).join(", ")}는 변경 대상 소스를 import하므로 새 동작에 맞게 기대값을 갱신한다. 테스트를 삭제하거나 건너뛰지 않는다.`;
+    `기존 테스트 ${companions.map((path) => `\`${path}\``).join(", ")}는 변경 대상 소스를 import한다. 이번 변경으로 기대값이 실제로 달라질 때만 갱신하고, 영향이 없으면 수정하지 않아도 이 항목을 충족한 것으로 본다. 테스트를 삭제하거나 건너뛰지 않는다.`;
   const nextRequiredChanges = requiredChanges.length < 8 ? [...requiredChanges, companionNote] : requiredChanges;
 
   return {
