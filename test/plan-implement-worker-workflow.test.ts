@@ -237,6 +237,27 @@ test("timeout 경계 failure만 fresh runner에서 1회 bounded 자동 재시도
   assert.match(workflow, /needs\.attempt0_result\.outputs\.infrastructure_failed == 'true'/);
 });
 
+test("complete=false는 INFRA_FAILURE가 아니라 WORKER_INCOMPLETE로 fail-closed 한다", () => {
+  const attempt0 = jobBlock("attempt0");
+  const timeoutRetry = jobBlock("timeout_retry");
+  const attempt0Result = jobBlock("attempt0_result");
+  const finalize = jobBlock("finalize");
+
+  assert.match(attempt0, /name: PLAN Worker complete 상태 분류 0/);
+  assert.match(attempt0, /worker_incomplete: \$\{\{ steps\.completion0\.outputs\.incomplete \}\}/);
+  assert.match(timeoutRetry, /name: PLAN Worker complete 상태 분류 retry/);
+  assert.match(timeoutRetry, /worker_incomplete: \$\{\{ steps\.completion_retry\.outputs\.incomplete \}\}/);
+  assert.match(attempt0Result, /DIRECT_INCOMPLETE: \$\{\{ needs\.attempt0\.outputs\.worker_incomplete \}\}/);
+  assert.match(attempt0Result, /RETRY_INCOMPLETE: \$\{\{ needs\.timeout_retry\.outputs\.worker_incomplete \}\}/);
+  assert.match(attempt0Result, /worker_incomplete=true/);
+
+  assert.match(finalize, /name: WORKER_INCOMPLETE stalled cycle 기록\n\s+if: needs\.attempt0_result\.outputs\.worker_incomplete == 'true'/);
+  assert.match(finalize, /reason=WORKER_INCOMPLETE/);
+  assert.match(finalize, /인프라 장애가 아니므로 자동 Recovery 대상으로 분류하지 않습니다/);
+  assert.match(finalize, /name: WORKER_INCOMPLETE 시 fail-closed/);
+  assert.ok(finalize.indexOf("WORKER_INCOMPLETE stalled cycle 기록") < finalize.indexOf("INFRA_FAILURE stalled cycle 기록"));
+});
+
 test("INFRA_FAILURE는 exact stalled marker로만 기록하고 Worker 스스로 Resume하지 않는다", () => {
   const finalize = jobBlock("finalize");
   assert.match(workflow, /source_run_id: \$\{\{ steps\.source\.outputs\.run_id \}\}/);
