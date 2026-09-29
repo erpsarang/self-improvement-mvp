@@ -343,6 +343,10 @@ test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate
   // PLAN Worker만 complete + edit 출력을 사용한다. smoke/bounded-fix의 공용 full-content schema는 그대로다.
   assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.required, ["summary", "changes", "complete"]);
   assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.properties.complete, { type: "boolean" });
+  assert.deepEqual(
+    PLAN_WORKER_OUTPUT_SCHEMA.properties.changes.items.required,
+    ["path", "operation", "baseContentDigest", "content", "edits"],
+  );
   assert.ok("edits" in PLAN_WORKER_OUTPUT_SCHEMA.properties.changes.items.properties);
   assert.deepEqual(WORKER_OUTPUT_SCHEMA.required, ["summary", "changes"]);
   assert.equal("complete" in WORKER_OUTPUT_SCHEMA.properties, false);
@@ -351,7 +355,7 @@ test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate
   const planPrompt = createSinglePassPrompt(contract, context, { requireCompletion: true });
   const genericPrompt = createSinglePassPrompt(contract, context);
   assert.match(planPrompt, /requiredChanges 전체를 담은 완전한 변경안이면 complete=true/);
-  assert.match(planPrompt, /전체 파일 content를 다시 출력하지 말고 edits만 반환/);
+  assert.match(planPrompt, /전체 파일 content를 다시 출력하지 말고 content=null, edits=/);
   assert.doesNotMatch(genericPrompt, /complete=/);
 
   const present = context.files.find((file) => file.path === "README.md")!;
@@ -361,6 +365,7 @@ test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate
     path: "README.md",
     operation: "modify" as const,
     baseContentDigest: present.contentDigest,
+    content: null,
     edits: [{ oldText: "# Framework\n\n", newText: "# Framework\n\n현재 상태: PLAN\n\n" }],
   };
   const accepted = acceptPlanWorkerOutput({ summary: "done", changes: [rawChange], complete: true }, context);
@@ -371,11 +376,20 @@ test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate
   assert.throws(
     () => acceptPlanWorkerOutput({
       summary: "full",
-      changes: [{ ...rawChange, edits: undefined, content: "# Framework\n" }],
+      changes: [{ ...rawChange, edits: null, content: "# Framework\n" }],
       complete: true,
     }, context),
-    /modify must return edits, not full content|modify edits missing/,
+    /modify content must be null/,
   );
+  assert.throws(
+    () => acceptPlanWorkerOutput({
+      summary: "missing nullable field",
+      changes: [{ path: "README.md", operation: "modify", baseContentDigest: present.contentDigest, edits: rawChange.edits }],
+      complete: true,
+    }, context),
+    /modify content must be null/,
+  );
+
   // exact oldText가 두 번 이상이면 trusted materialization이 모호성을 거부한다.
   assert.throws(
     () => acceptPlanWorkerOutput({
