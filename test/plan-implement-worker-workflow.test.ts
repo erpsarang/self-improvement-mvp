@@ -197,8 +197,8 @@ test("repair candidate는 매번 fresh trusted validation과 exact-base CI를 �
 
 test("CI evidence는 최종 finalize Job에서 합치고 최대 두 repair 실패 시 fail-closed 한다", () => {
   assert.match(workflow, /bounded-worker-ci-evidence-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
-  assert.match(workflow, /worker-ci-evidence\/validation-\$\{attempt\}\.json/);
-  assert.match(workflow, /deterministic CI failed after two bounded repairs/);
+  assert.match(workflow, /worker-ci-evidence\/\$\{name\}-\$\{attempt\}\.json/);
+  assert.match(workflow, /deterministic CI or exact-base edit application failed after two bounded repairs/);
   assert.match(workflow, /upstream infrastructure failure 시 fail-closed/);
   assert.match(workflow, /final-candidate\/candidate\.json/);
   assert.match(workflow, /final-candidate\/candidate-provenance\.json/);
@@ -341,4 +341,28 @@ test("timeout 경계에서 완성된 output은 버리지 않고 trusted 검증�
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("edit 적용 실패는 candidate 없이도 attempt state에 evidence로 남고 기존 repair 한도로 흐른다 (#332)", () => {
+  // attempt0 / timeout retry / repair1 / repair2 모두 candidate가 없으면 edit-failure 기록만 evidence로 옮긴다.
+  for (const [attempt, candidateDir, job] of [
+    ["0", "validated-candidate-0", "attempt0"],
+    ["0", "validated-candidate-retry", "timeout_retry"],
+    ["1", "validated-candidate-1", "repair1"],
+    ["2", "validated-candidate-2", "repair2"],
+  ] as const) {
+    const block = jobBlock(job);
+    assert.ok(
+      block.includes(`if [ -f "$RUNNER_TEMP/${candidateDir}/candidate.json" ]; then`),
+      `${job} must guard candidate copy`,
+    );
+    assert.ok(
+      block.includes(`cp "$RUNNER_TEMP/worker-ci-${attempt}/edit-failure.json" "$RUNNER_TEMP/worker-state-${attempt}/evidence/edit-failure-${attempt}.json"`),
+      `${job} must keep the edit failure evidence`,
+    );
+  }
+  // 새 실패 분류가 INFRA_FAILURE 판정 로직을 넓히지 않는다: infrastructure_failed는 attempt job 자체 실패에서만 켠다.
+  const attempt0Result = jobBlock("attempt0_result");
+  assert.match(attempt0Result, /elif \[ "\$ATTEMPT0_RESULT" != "success" \]; then\n\s+infrastructure_failed=true/);
+  assert.doesNotMatch(attempt0Result, /edit-failure|EDIT_APPLICATION/);
 });

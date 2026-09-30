@@ -6,10 +6,11 @@ import {
 } from "./single-pass-worker.js";
 import { applyTrustedLockfile } from "./trusted-lockfile.js";
 import {
-  acceptPlanWorkerOutput,
+  classifyPlanWorkerOutput,
   createWorkerCandidateProvenance,
   validatePlanImplementWorkerSource,
   verifyPlanImplementWorkerBundle,
+  WORKER_EDIT_FAILURE_FILE,
   workerCandidateArtifactName,
   type HandoffArtifactMetadata,
   type PlanImplementWorkerBundle,
@@ -199,10 +200,16 @@ async function validate(): Promise<void> {
   const workerRunId = positiveInteger("WORKER_RUN_ID");
   const workerRunAttempt = positiveInteger("WORKER_RUN_ATTEMPT");
 
-  const rawProposal: WorkerProposal = acceptPlanWorkerOutput(
-    JSON.parse(readFileSync(rawProposalPath, "utf8")),
-    bundle.context,
-  );
+  const classified = classifyPlanWorkerOutput(JSON.parse(readFileSync(rawProposalPath, "utf8")), bundle.context);
+  if (classified.status === "EDIT_APPLICATION_FAILED") {
+    // Worker가 edit를 다시 만들면 고칠 수 있는 오류다. infrastructure failure가 아니므로 candidate 대신 trusted 기록만 남기고,
+    // 이어지는 deterministic CI 단계(plan-worker-ci-repair-handler)가 기존 bounded repair 입력으로 넘긴다.
+    mkdirSync(outputDirectory, { recursive: true });
+    writeFileSync(join(outputDirectory, WORKER_EDIT_FAILURE_FILE), JSON.stringify(classified.failure, null, 2));
+    console.log(`worker edit could not be applied to the exact base; routing to bounded repair: ${classified.failure.message}`);
+    return;
+  }
+  const rawProposal: WorkerProposal = classified.proposal;
   // package-lock.json은 AI가 아니라 trusted deterministic step이 생성한다 (AI가 제안한 lock은 버린다).
   const lockfile = applyTrustedLockfile(bundle.contract, bundle.context, rawProposal);
   console.log(`trusted package-lock.json: ${lockfile.status}${lockfile.droppedUntrustedLockfile ? " (untrusted lockfile proposal dropped)" : ""}`);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +18,11 @@ import {
 } from "../src/self-improvement/plan-authorization.js";
 import {
   acceptPlanWorkerOutput,
+  classifyPlanWorkerOutput,
   createWorkerCandidateProvenance,
+  createWorkerEditRepairPrompt,
+  verifyWorkerEditFailureRecord,
+  WORKER_EDIT_FAILURE_FILE,
   validatePlanImplementWorkerSource,
   verifyPlanImplementWorkerBundle,
   workerCandidateArtifactName,
@@ -25,6 +30,7 @@ import {
   type PlanImplementWorkerSourceRun,
 } from "../src/self-improvement/plan-implement-worker.js";
 import {
+  WorkerEditError,
   createCandidateChangeSet,
   createSinglePassPrompt,
   PLAN_WORKER_OUTPUT_SCHEMA,
@@ -408,4 +414,145 @@ test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate
   assert.throws(() => acceptPlanWorkerOutput({ summary: "legacy", changes: [rawChange] }, context), /complete=undefined/);
   assert.throws(() => acceptPlanWorkerOutput({ summary: "x", changes: [rawChange], complete: "true" }, context), /complete=true/);
   assert.throws(() => acceptPlanWorkerOutput(null, context), /must be an object/);
+});
+
+function ambiguousOutput() {
+  const { context } = fixture();
+  const present = context.files.find((file) => file.path === "README.md")!;
+  if (present.state !== "present") throw new Error("fixture README must be present");
+  // "\n"은 fixture README에 여러 번 나타난다 (App issue 280 Worker run 36669624377과 같은 유형).
+  return {
+    context,
+    output: {
+      summary: "ambiguous anchor",
+      complete: true,
+      changes: [{
+        path: "README.md",
+        operation: "modify",
+        baseContentDigest: present.contentDigest,
+        content: null,
+        edits: [{ oldText: "\n", newText: "\n\n" }],
+      }],
+    },
+  };
+}
+
+test("Worker가 다시 만들면 고칠 수 있는 edit 적용 오류는 throw 대신 repair 대상 기록으로 분류한다 (#332)", () => {
+  const { context, output } = ambiguousOutput();
+  const classified = classifyPlanWorkerOutput(output, context);
+  assert.equal(classified.status, "EDIT_APPLICATION_FAILED");
+  if (classified.status !== "EDIT_APPLICATION_FAILED") return;
+  assert.equal(classified.failure.code, "OLD_TEXT_AMBIGUOUS");
+  assert.equal(classified.failure.path, "README.md");
+  assert.equal(classified.failure.editNumber, 1);
+  assert.equal(classified.failure.message, "worker edit oldText is ambiguous in exact base: README.md#1");
+  assert.deepEqual(classified.failure.rawOutput, output);
+  assert.deepEqual(verifyWorkerEditFailureRecord(JSON.parse(JSON.stringify(classified.failure))), classified.failure);
+
+  const change = output.changes[0]!;
+  const notFound = classifyPlanWorkerOutput({ ...output, changes: [{ ...change, edits: [{ oldText: "없는 문장", newText: "x" }] }] }, context);
+  assert.equal(notFound.status === "EDIT_APPLICATION_FAILED" && notFound.failure.code, "OLD_TEXT_NOT_FOUND");
+  const noop = classifyPlanWorkerOutput({ ...output, changes: [{ ...change, edits: [{ oldText: "기존 설명", newText: "기존 설명" }] }] }, context);
+  assert.equal(noop.status === "EDIT_APPLICATION_FAILED" && noop.failure.code, "NO_OP_EDIT");
+
+  const unique = classifyPlanWorkerOutput({ ...output, changes: [{ ...change, edits: [{ oldText: "기존 설명", newText: "새 설명" }] }] }, context);
+  assert.equal(unique.status, "ACCEPTED");
+});
+
+test("edit 적용 오류가 아닌 Worker 출력 결함은 그대로 throw해 기존 fail-closed 분류를 유지한다 (#332)", () => {
+  const { context, output } = ambiguousOutput();
+  const change = output.changes[0]!;
+  assert.throws(() => classifyPlanWorkerOutput({ ...output, complete: false }, context), /complete=false/);
+  assert.throws(() => classifyPlanWorkerOutput({ ...output, changes: [{ ...change, baseContentDigest: "0".repeat(64) }] }, context), /base digest mismatch/);
+  assert.throws(() => classifyPlanWorkerOutput({ ...output, changes: [{ ...change, path: "package.json" }] }, context), /not writable context/);
+  assert.throws(() => classifyPlanWorkerOutput(null, context), /must be an object/);
+  assert.throws(() => verifyWorkerEditFailureRecord({ kind: "worker-edit-application-failure" }), /shape is invalid/);
+  assert.ok(new WorkerEditError("NO_OP_EDIT", "a", 1, "m") instanceof Error);
+});
+
+test("edit 적용 실패 repair prompt는 exact base·CONTRACT를 유지하고 오류를 그대로 전달한다 (#332)", () => {
+  const { bundle } = fixture();
+  const { context, output } = ambiguousOutput();
+  const classified = classifyPlanWorkerOutput(output, context);
+  if (classified.status !== "EDIT_APPLICATION_FAILED") throw new Error("fixture must fail edit application");
+
+  const prompt = createWorkerEditRepairPrompt(bundle, classified.failure, 1);
+  assert.match(prompt, /repair attempt: 1 \/ 2/);
+  assert.ok(prompt.includes(`ORIGINAL BOUNDED WORKER PROMPT:\n${bundle.prompt}`));
+  assert.ok(prompt.includes("worker edit oldText is ambiguous in exact base: README.md#1"));
+  assert.match(prompt, /OLD_TEXT_AMBIGUOUS/);
+  assert.match(prompt, /정확히 한 번만 나타나야 합니다/);
+  assert.match(prompt, /범위와 base SHA를 절대 확장하거나 바꾸지 마세요/);
+  assert.match(createWorkerEditRepairPrompt(bundle, classified.failure, 2), /repair attempt: 2 \/ 2/);
+});
+
+function runRepairCheck(nextRepairAttempt: "1" | "2" | undefined) {
+  const { bundle, contract, context, handoff, source, prompt } = fixture();
+  const { context: ambiguousContext, output } = ambiguousOutput();
+  const classified = classifyPlanWorkerOutput(output, ambiguousContext);
+  if (classified.status !== "EDIT_APPLICATION_FAILED") throw new Error("fixture must fail edit application");
+
+  const root = mkdtempSync(join(tmpdir(), "plan-worker-edit-repair-"));
+  const sourceDirectory = join(root, "source");
+  const candidateDirectory = join(root, "candidate");
+  mkdirSync(sourceDirectory);
+  mkdirSync(candidateDirectory);
+  writeFileSync(join(sourceDirectory, "contract.json"), JSON.stringify(contract));
+  writeFileSync(join(sourceDirectory, "context.json"), JSON.stringify(context));
+  writeFileSync(join(sourceDirectory, "handoff.json"), JSON.stringify(handoff));
+  writeFileSync(join(sourceDirectory, "source.json"), JSON.stringify(source));
+  writeFileSync(join(sourceDirectory, "prompt.md"), prompt);
+  writeFileSync(join(sourceDirectory, "schema.json"), JSON.stringify(PLAN_WORKER_OUTPUT_SCHEMA));
+  writeFileSync(join(candidateDirectory, WORKER_EDIT_FAILURE_FILE), JSON.stringify(classified.failure));
+  const githubOutput = join(root, "github-output");
+  writeFileSync(githubOutput, "");
+
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    SOURCE_DIRECTORY: sourceDirectory,
+    CANDIDATE_DIRECTORY: candidateDirectory,
+    TARGET_DIRECTORY: join(root, "target"),
+    OBSERVED_BASE_SHA: bundle.contract.baseSha,
+    STATE_DIRECTORY: join(root, "state"),
+    REPAIR_INPUT_DIRECTORY: join(root, "repair-input"),
+    GITHUB_OUTPUT: githubOutput,
+    ...(nextRepairAttempt ? { NEXT_REPAIR_ATTEMPT: nextRepairAttempt } : {}),
+  };
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "src/self-improvement/plan-worker-ci-repair-handler.ts", "check"],
+    { env, encoding: "utf8" },
+  );
+  const read = (path: string) => readFileSync(path, "utf8");
+  const outputs = Object.fromEntries(read(githubOutput).trim().split("\n").filter(Boolean).map((line) => {
+    const [key, ...rest] = line.split("=");
+    return [key, rest.join("=")];
+  }));
+  const repairFiles = (() => { try { return readdirSync(join(root, "repair-input")).sort(); } catch { return []; } })();
+  const stateFiles = (() => { try { return readdirSync(join(root, "state")).sort(); } catch { return []; } })();
+  const repairPrompt = repairFiles.includes("prompt.md") ? read(join(root, "repair-input", "prompt.md")) : "";
+  rmSync(root, { recursive: true, force: true });
+  return { result, outputs, repairFiles, stateFiles, repairPrompt };
+}
+
+test("deterministic CI 단계는 edit 적용 실패 기록을 기존 repair 입력으로 넘기고 마지막 attempt에서는 fail-closed 한다 (#332)", () => {
+  const first = runRepairCheck("1");
+  assert.equal(first.result.status, 0, first.result.stderr);
+  assert.equal(first.outputs.status, "FAIL");
+  assert.equal(first.outputs.repair_ready, "true");
+  assert.equal(first.outputs.repair_blocked_reason, "");
+  assert.deepEqual(first.repairFiles, ["prompt.md", "schema.json"]);
+  assert.deepEqual(first.stateFiles, [WORKER_EDIT_FAILURE_FILE]);
+  assert.match(first.repairPrompt, /repair attempt: 1 \/ 2/);
+  assert.match(first.repairPrompt, /worker edit oldText is ambiguous in exact base: README\.md#1/);
+
+  const second = runRepairCheck("2");
+  assert.equal(second.outputs.repair_ready, "true");
+  assert.match(second.repairPrompt, /repair attempt: 2 \/ 2/);
+
+  const last = runRepairCheck(undefined);
+  assert.equal(last.result.status, 0, last.result.stderr);
+  assert.equal(last.outputs.status, "FAIL");
+  assert.equal(last.outputs.repair_ready, "false");
+  assert.deepEqual(last.repairFiles, []);
 });

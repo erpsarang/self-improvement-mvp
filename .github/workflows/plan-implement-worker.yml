@@ -471,9 +471,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/worker-state-0/candidate" "$RUNNER_TEMP/worker-state-0/evidence"
-          cp "$RUNNER_TEMP/validated-candidate-0/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-0/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
-          cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
+          if [ -f "$RUNNER_TEMP/validated-candidate-0/candidate.json" ]; then
+            cp "$RUNNER_TEMP/validated-candidate-0/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
+            cp "$RUNNER_TEMP/validated-candidate-0/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
+            cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
+          else
+            # candidate 전에 edit 적용에 실패한 attempt: candidate 없이 trusted 실패 기록만 evidence로 남긴다.
+            cp "$RUNNER_TEMP/worker-ci-0/edit-failure.json" "$RUNNER_TEMP/worker-state-0/evidence/edit-failure-0.json"
+          fi
           if [ "${{ steps.ci0.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci0.outputs.repair_ready }}" = "true" ]; then
             mkdir -p "$RUNNER_TEMP/worker-state-0/repair-input"
             cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md"
@@ -656,9 +661,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/worker-state-0/candidate" "$RUNNER_TEMP/worker-state-0/evidence"
-          cp "$RUNNER_TEMP/validated-candidate-retry/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-retry/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
-          cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
+          if [ -f "$RUNNER_TEMP/validated-candidate-retry/candidate.json" ]; then
+            cp "$RUNNER_TEMP/validated-candidate-retry/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
+            cp "$RUNNER_TEMP/validated-candidate-retry/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
+            cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
+          else
+            # candidate 전에 edit 적용에 실패한 attempt: candidate 없이 trusted 실패 기록만 evidence로 남긴다.
+            cp "$RUNNER_TEMP/worker-ci-0/edit-failure.json" "$RUNNER_TEMP/worker-state-0/evidence/edit-failure-0.json"
+          fi
           if [ "${{ steps.ci0_retry.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci0_retry.outputs.repair_ready }}" = "true" ]; then
             mkdir -p "$RUNNER_TEMP/worker-state-0/repair-input"
             cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md"
@@ -940,9 +950,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/worker-state-1/candidate" "$RUNNER_TEMP/worker-state-1/evidence"
-          cp "$RUNNER_TEMP/validated-candidate-1/candidate.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-1/candidate-provenance.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate-provenance.json"
-          cp "$RUNNER_TEMP/worker-ci-1/validation.json" "$RUNNER_TEMP/worker-state-1/evidence/validation-1.json"
+          if [ -f "$RUNNER_TEMP/validated-candidate-1/candidate.json" ]; then
+            cp "$RUNNER_TEMP/validated-candidate-1/candidate.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate.json"
+            cp "$RUNNER_TEMP/validated-candidate-1/candidate-provenance.json" "$RUNNER_TEMP/worker-state-1/candidate/candidate-provenance.json"
+            cp "$RUNNER_TEMP/worker-ci-1/validation.json" "$RUNNER_TEMP/worker-state-1/evidence/validation-1.json"
+          else
+            # candidate 전에 edit 적용에 실패한 attempt: candidate 없이 trusted 실패 기록만 evidence로 남긴다.
+            cp "$RUNNER_TEMP/worker-ci-1/edit-failure.json" "$RUNNER_TEMP/worker-state-1/evidence/edit-failure-1.json"
+          fi
           if [ "${{ steps.ci1.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci1.outputs.repair_ready }}" = "true" ]; then
             mkdir -p "$RUNNER_TEMP/worker-state-1/repair-input"
             cp "$RUNNER_TEMP/repair-input-2/prompt.md" "$RUNNER_TEMP/worker-state-1/repair-input/prompt.md"
@@ -1114,9 +1129,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/worker-state-2/candidate" "$RUNNER_TEMP/worker-state-2/evidence"
-          cp "$RUNNER_TEMP/validated-candidate-2/candidate.json" "$RUNNER_TEMP/worker-state-2/candidate/candidate.json"
-          cp "$RUNNER_TEMP/validated-candidate-2/candidate-provenance.json" "$RUNNER_TEMP/worker-state-2/candidate/candidate-provenance.json"
-          cp "$RUNNER_TEMP/worker-ci-2/validation.json" "$RUNNER_TEMP/worker-state-2/evidence/validation-2.json"
+          if [ -f "$RUNNER_TEMP/validated-candidate-2/candidate.json" ]; then
+            cp "$RUNNER_TEMP/validated-candidate-2/candidate.json" "$RUNNER_TEMP/worker-state-2/candidate/candidate.json"
+            cp "$RUNNER_TEMP/validated-candidate-2/candidate-provenance.json" "$RUNNER_TEMP/worker-state-2/candidate/candidate-provenance.json"
+            cp "$RUNNER_TEMP/worker-ci-2/validation.json" "$RUNNER_TEMP/worker-state-2/evidence/validation-2.json"
+          else
+            # candidate 전에 edit 적용에 실패한 attempt: candidate 없이 trusted 실패 기록만 evidence로 남긴다.
+            cp "$RUNNER_TEMP/worker-ci-2/edit-failure.json" "$RUNNER_TEMP/worker-state-2/evidence/edit-failure-2.json"
+          fi
 
       - name: attempt 2 state artifact 저장
         if: steps.ci2.outcome == 'success'
@@ -1190,10 +1210,12 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/worker-ci-evidence"
           for attempt in 0 1 2; do
-            source="$RUNNER_TEMP/worker-state-${attempt}/evidence/validation-${attempt}.json"
-            if [ -f "$source" ]; then
-              cp "$source" "$RUNNER_TEMP/worker-ci-evidence/validation-${attempt}.json"
-            fi
+            for name in validation edit-failure; do
+              source="$RUNNER_TEMP/worker-state-${attempt}/evidence/${name}-${attempt}.json"
+              if [ -f "$source" ]; then
+                cp "$source" "$RUNNER_TEMP/worker-ci-evidence/${name}-${attempt}.json"
+              fi
+            done
           done
 
       - name: deterministic CI evidence artifact 저장
@@ -1353,7 +1375,7 @@ jobs:
           needs.repair2.outputs.ci_status == 'FAIL'
         shell: bash
         run: |
-          echo "deterministic CI failed after two bounded repairs" >&2
+          echo "deterministic CI or exact-base edit application failed after two bounded repairs" >&2
           exit 1
 
       - name: Validated candidate artifact 저장
