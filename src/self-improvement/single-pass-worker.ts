@@ -186,6 +186,24 @@ ${JSON.stringify(contextPack)}
 `;
 }
 
+export type WorkerEditErrorCode = "OLD_TEXT_NOT_FOUND" | "OLD_TEXT_AMBIGUOUS" | "NO_OP_EDIT";
+
+/**
+ * Worker가 edit 제안을 다시 만들면 해결되는 exact 적용 오류. infrastructure failure와 구분하기 위해 타입으로 남긴다.
+ * editNumber는 오류 메시지의 `path#N`과 같은 1부터 시작하는 번호다.
+ */
+export class WorkerEditError extends Error {
+  constructor(
+    readonly code: WorkerEditErrorCode,
+    readonly path: string,
+    readonly editNumber: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkerEditError";
+  }
+}
+
 export function materializeWorkerEdits(
   baseContent: string,
   edits: readonly WorkerTextEdit[],
@@ -196,11 +214,15 @@ export function materializeWorkerEdits(
   for (const [index, edit] of edits.entries()) {
     if (typeof edit?.oldText !== "string" || edit.oldText.length === 0) throw new Error(`worker edit oldText must be non-empty: ${path}#${index + 1}`);
     if (typeof edit.newText !== "string") throw new Error(`worker edit newText must be a string: ${path}#${index + 1}`);
-    if (edit.oldText === edit.newText) throw new Error(`worker edit is a no-op: ${path}#${index + 1}`);
+    if (edit.oldText === edit.newText) {
+      throw new WorkerEditError("NO_OP_EDIT", path, index + 1, `worker edit is a no-op: ${path}#${index + 1}`);
+    }
     const first = content.indexOf(edit.oldText);
-    if (first < 0) throw new Error(`worker edit oldText not found in exact base: ${path}#${index + 1}`);
+    if (first < 0) {
+      throw new WorkerEditError("OLD_TEXT_NOT_FOUND", path, index + 1, `worker edit oldText not found in exact base: ${path}#${index + 1}`);
+    }
     if (content.indexOf(edit.oldText, first + edit.oldText.length) >= 0) {
-      throw new Error(`worker edit oldText is ambiguous in exact base: ${path}#${index + 1}`);
+      throw new WorkerEditError("OLD_TEXT_AMBIGUOUS", path, index + 1, `worker edit oldText is ambiguous in exact base: ${path}#${index + 1}`);
     }
     content = content.slice(0, first) + edit.newText + content.slice(first + edit.oldText.length);
   }
