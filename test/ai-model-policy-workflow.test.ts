@@ -4,7 +4,6 @@ import test from "node:test";
 
 const codexWorkflowPaths = [
   ".github/workflows/implement.yml",
-  ".github/workflows/fix-worker.yml",
   ".github/workflows/learn.yml",
   ".github/workflows/product-evaluation.yml",
   ".github/workflows/bounded-fix-smoke.yml",
@@ -26,7 +25,7 @@ test("PLAN model은 subscription request에 명시하고 나머지 lifecycle AI 
   }
 });
 
-test("고레버리지 PLAN은 Opus, 구 IMPLEMENT·FIX는 Sol, PLAN Worker와 REVIEW는 subscription executor를 쓴다", async () => {
+test("고레버리지 PLAN은 Opus, 구 IMPLEMENT는 Sol, PLAN Worker·REVIEW·FIX는 subscription executor를 쓴다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
   assert.match(plan, /productImprovementCandidate \? 'sonnet' : 'opus'/);
 
@@ -37,8 +36,10 @@ test("고레버리지 PLAN은 Opus, 구 IMPLEMENT·FIX는 Sol, PLAN Worker와 RE
   const implement = await readFile(".github/workflows/implement.yml", "utf8");
   assert.match(implement, /model: gpt-6-sol\n\s+effort: medium/);
 
+  // bounded FIX Worker는 Private subscription executor(sonnet)로 옮겨 Codex model을 쓰지 않는다.
   const fix = await readFile(".github/workflows/fix-worker.yml", "utf8");
-  assert.match(fix, /model: gpt-6-sol\n\s+effort: medium/);
+  assert.doesNotMatch(fix, /uses:\s*openai\/codex-action@|model: gpt-/);
+  assert.match(fix, /kind: FIX\n/);
 
   // Semantic REVIEW는 Private subscription executor(opus)로 옮겨 Codex model을 쓰지 않는다.
   const review = await readFile(".github/workflows/semantic-review.yml", "utf8");

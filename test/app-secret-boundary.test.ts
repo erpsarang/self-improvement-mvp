@@ -5,7 +5,6 @@ import { readFile } from "node:fs/promises";
 const selector = "${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}";
 
 const directCodexWorkflows = [
-  ".github/workflows/fix-worker.yml",
   ".github/workflows/learn.yml",
 ] as const;
 
@@ -23,12 +22,13 @@ test("PLAN public workflow는 subscription/API credential을 보유하지 않고
     total += matches;
     assert.doesNotMatch(workflow, /openai-api-key:\s*\$\{\{\s*secrets\.(?:FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY)\s*\}\}/);
   }
-  assert.equal(total, 2);
+  assert.equal(total, 1);
 
-  // PLAN Worker의 IMPLEMENT/repair와 Semantic REVIEW는 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
+  // PLAN Worker의 IMPLEMENT/repair, Semantic REVIEW, bounded FIX Worker는 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
   for (const path of [
     ".github/workflows/plan-implement-worker.yml",
     ".github/workflows/semantic-review.yml",
+    ".github/workflows/fix-worker.yml",
     ".github/workflows/subscription-exchange.yml",
   ]) {
     const workflow = await readFile(path, "utf8");

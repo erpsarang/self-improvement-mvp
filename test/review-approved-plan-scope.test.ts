@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { createFixWorkerPrompt } from "../src/self-improvement/fix.js";
+import {
+  FIX_CONTEXT_MAX_BYTES,
+  createFixRequestProvenance,
+  createFixSubscriptionRequest,
+  createFixWorkerPrompt,
+  materializeFixSubscriptionProposal,
+} from "../src/self-improvement/fix.js";
+import { PLAN_WORKER_OUTPUT_SCHEMA } from "../src/self-improvement/single-pass-worker.js";
 import { validateReviewForOrchestration } from "../src/self-improvement/orchestrator.js";
 import {
   createSemanticReviewPrompt,
@@ -185,13 +193,13 @@ test("Orchestrator/FIX가 다시 읽는 review.json은 PLAN 계보에서 승인 
   assert.doesNotThrow(() => validateReviewForOrchestration({ review: widened, reviewArtifactName, sourceRun }));
 });
 
-test("PLAN 계보 FIX prompt는 승인된 allowedPaths/forbiddenChanges를 경계로 주고, 경계를 넘는 BLOCKER는 수정하지 말라고 지시한다", () => {
+test("PLAN 계보 FIX prompt는 승인된 allowedPaths/forbiddenChanges를 경계로 주고, 경계를 넘는 BLOCKER는 complete=false로 돌려주라고 지시한다", () => {
   const review = planReview(localFixOutput);
   const prompt = createFixWorkerPrompt(review, 1);
   assert.match(prompt, /승인된 PLAN slice \(이 FIX의 경계\):/);
   assert.match(prompt, /allowedPaths \(이 밖의 파일은 절대 변경하지 마세요\):\n  - README\.md\n/);
   for (const item of c.forbiddenChanges) assert.ok(prompt.includes(`  - ${item}\n`), item);
-  assert.match(prompt, /BLOCKER 해결이 allowedPaths 밖 변경이나 forbiddenChanges에 해당하는 변경을 요구하면 아무것도 수정하지 말고 그 이유만 출력하세요/);
+  assert.match(prompt, /BLOCKER 해결이 allowedPaths 밖 변경이나 forbiddenChanges에 해당하는 변경을 요구하면 complete=false와 그 이유를 summary에 반환하세요/);
   assert.match(prompt, /이번 작업은 FIX #1이며 최대 허용 횟수는 2회입니다/);
   assert.match(prompt, new RegExp(`exact reviewed SHA ${c.publishedHeadSha}`));
   assert.ok(prompt.includes(`Issue #${c.issueNumber}: ${c.title}`));
@@ -212,6 +220,89 @@ test("legacy 계보 FIX prompt는 기존 문구 그대로이고 PLAN slice 절�
   assert.doesNotMatch(prompt, /승인된 PLAN slice|allowedPaths|forbiddenChanges/);
   assert.match(prompt, /이번 작업은 FIX #2이며 최대 허용 횟수는 2회입니다/);
   assert.ok(prompt.endsWith(JSON.stringify(localFixOutput.findings, null, 2)));
+});
+
+// bounded FIX: exact reviewed SHA의 allowedPaths 원문만 context로 보내고, Worker JSON edit은 같은 원문 digest에서만 적용한다.
+const README = "# Framework\n\n상태: PLAN\n";
+const readmeDigest = createHash("sha256").update(README, "utf8").digest("hex");
+const readReviewed = (path: string): Buffer | null => (path === "README.md" ? Buffer.from(README, "utf8") : null);
+const fixReview = planReview(localFixOutput);
+const fixRequest = createFixRequestProvenance({
+  review: fixReview,
+  reviewArtifactName,
+  requestRun: { runId: 7001, runAttempt: 1, trustedCodeSha: "c".repeat(40) },
+});
+
+test("bounded FIX_REQUEST는 PLAN allowedPaths 원문과 exact identity만 담고 legacy FIX는 AI 호출 전에 멈춘다", () => {
+  assert.deepEqual(c.allowedPaths, ["README.md"]);
+  const { identity, prompt, schema } = createFixSubscriptionRequest({
+    review: fixReview,
+    request: fixRequest,
+    worker: { runId: 8001, runAttempt: 2 },
+    read: readReviewed,
+  });
+  assert.deepEqual(identity, {
+    schemaVersion: 1,
+    kind: "trusted-fix-request",
+    repository: c.repository,
+    issueNumber: c.issueNumber,
+    baseSha: c.publishedHeadSha,
+    fixAttempt: 1,
+    fixRequest: { runId: 7001, runAttempt: 1, artifactName: `fix-request-${c.railRunId}-fix-1-7001-attempt-1` },
+    worker: { runId: 8001, runAttempt: 2 },
+    model: "sonnet",
+  });
+  assert.equal(schema, PLAN_WORKER_OUTPUT_SCHEMA);
+  assert.ok(prompt.startsWith(createFixWorkerPrompt(fixReview, 1)));
+  assert.ok(prompt.endsWith(JSON.stringify([{ path: "README.md", state: "present", contentDigest: readmeDigest, content: README }])));
+
+  const missing = createFixSubscriptionRequest({ review: fixReview, request: fixRequest, worker: { runId: 8001, runAttempt: 1 }, read: () => null });
+  assert.ok(missing.prompt.endsWith(JSON.stringify([{ path: "README.md", state: "missing", contentDigest: null, content: null }])));
+
+  const input = { review: fixReview, request: fixRequest, worker: { runId: 8001, runAttempt: 1 } };
+  assert.throws(() => createFixSubscriptionRequest({ ...input, read: () => Buffer.from([0x61, 0x00]) }), /binary/);
+  assert.throws(() => createFixSubscriptionRequest({ ...input, read: () => Buffer.from([0xff, 0xfe]) }), /UTF-8/);
+  assert.throws(
+    () => createFixSubscriptionRequest({ ...input, read: () => Buffer.alloc(FIX_CONTEXT_MAX_BYTES + 1, 0x61) }),
+    /예산을 넘습니다/,
+  );
+  const { approvedPlanScope: _scope, sourcePlanAuthorize: _authority, ...rest } = fixReview;
+  const legacy = { ...rest, sourceAuthorizationArtifactName: "authorize-approval-1-attempt-1" } as unknown as ReviewProvenance;
+  assert.throws(() => createFixSubscriptionRequest({ ...input, review: legacy, read: readReviewed }), /PLAN 계보 REVIEW만 지원합니다/);
+});
+
+test("bounded FIX Worker JSON은 allowedPaths와 exact reviewed 원문 digest가 맞을 때만 파일 내용이 된다", () => {
+  const modify = {
+    path: "README.md",
+    operation: "modify",
+    baseContentDigest: readmeDigest,
+    content: null,
+    edits: [{ oldText: "상태: PLAN\n", newText: "상태: PLAN, VERIFY, MERGE_READY\n" }],
+  };
+  const proposal = (changes: unknown[], extra: Record<string, unknown> = {}) => ({ summary: "MERGE_READY 설명 추가", complete: true, changes, ...extra });
+  assert.deepEqual(
+    [...materializeFixSubscriptionProposal(fixReview, proposal([modify]), readReviewed)],
+    [["README.md", "# Framework\n\n상태: PLAN, VERIFY, MERGE_READY\n"]],
+  );
+  const create = { path: "README.md", operation: "create", baseContentDigest: null, content: "# 새 README\n", edits: null };
+  assert.deepEqual([...materializeFixSubscriptionProposal(fixReview, proposal([create]), () => null)], [["README.md", "# 새 README\n"]]);
+
+  for (const [value, read, message] of [
+    [proposal([modify], { extra: true }), readReviewed, /field가 올바르지 않습니다/],
+    [proposal([modify], { complete: false }), readReviewed, /complete=false/],
+    [proposal([]), readReviewed, /changes가 비어 있습니다/],
+    [proposal([{ ...modify, path: ".github/workflows/plan.yml" }]), readReviewed, /allowedPaths 밖/],
+    [proposal([modify, modify]), readReviewed, /중복/],
+    [proposal([{ ...modify, baseContentDigest: "0".repeat(64) }]), readReviewed, /baseContentDigest/],
+    [proposal([{ ...modify, content: "x" }]), readReviewed, /content=null/],
+    [proposal([{ ...modify, edits: [{ oldText: "없는 문장", newText: "x" }] }]), readReviewed, /not found/],
+    [proposal([modify]), () => null, /reviewed SHA에 없습니다/],
+    [proposal([create]), readReviewed, /이미 있습니다/],
+    [proposal([{ ...create, edits: [] }]), () => null, /edits=null/],
+    [proposal([{ ...modify, operation: "delete" }]), readReviewed, /지원하지 않는 FIX operation/],
+  ] as const) {
+    assert.throws(() => materializeFixSubscriptionProposal(fixReview, value, read), message);
+  }
 });
 
 test("#244 run 35999983436 모양: 승인된 slice 밖 요구(workflow/모델 변경)가 Reviewer와 FIX 입력에서 후속 범위·금지 변경으로 명시된다", () => {

@@ -1,16 +1,18 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   FIX_REQUEST_WORKFLOW_PATH,
   createFixProvenance,
   createFixRequestProvenance,
-  createFixWorkerPrompt,
+  createFixSubscriptionRequest,
   fixRequestArtifactName,
+  materializeFixSubscriptionProposal,
   nextFixAttempt,
   validateFixRequestAgainstReview,
   validateFixRequestProvenance,
   type FixRequestProvenance,
+  type FixTargetReader,
 } from "./fix.js";
 import {
   validateReviewForOrchestration,
@@ -145,13 +147,79 @@ export async function createFixRequest(): Promise<void> {
 export async function prepareFix(): Promise<void> {
   await mkdir(required("FIX_RUNTIME_DIR"), { recursive: true });
   const { request, review } = await validateWorkerRequest();
-  const prompt = createFixWorkerPrompt(review, request.fixAttempt);
 
-  await writeFile("fix-prompt.txt", `${prompt}\n`);
   writeOutput("issue_number", review.issueNumber);
   writeOutput("reviewed_branch", review.reviewedBranch);
   writeOutput("reviewed_head_sha", review.reviewedHeadSha);
   writeOutput("fix_attempt", request.fixAttempt);
+}
+
+/**
+ * exact reviewed SHA checkout 안의 일반 파일만 읽는다. 경로의 어느 구성 요소든 symlink면 checkout 밖을 가리킬 수 있으므로 거부한다.
+ * 없는 파일은 null(create 대상)이다.
+ */
+function targetPath(root: string, path: string): string | null {
+  const parts = path.split("/");
+  if (path.startsWith("/") || parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`FIX target path가 올바르지 않습니다: ${path}`);
+  }
+  let current = root;
+  for (const [index, part] of parts.entries()) {
+    current = join(current, part);
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) throw new Error(`FIX target path에 symlink가 있습니다: ${path}`);
+    if (index < parts.length - 1 ? !stat.isDirectory() : !stat.isFile()) {
+      throw new Error(`FIX target path가 일반 파일이 아닙니다: ${path}`);
+    }
+  }
+  return current;
+}
+
+export function fixTargetReader(root: string): FixTargetReader {
+  return (path) => {
+    const file = targetPath(root, path);
+    return file === null ? null : readFileSync(file);
+  };
+}
+
+/** Private subscription executor에 보낼 FIX_REQUEST 입력(identity.json, prompt.md, schema.json)을 만든다. */
+export async function createFixSubscriptionInput(): Promise<void> {
+  const { request, review } = await validateWorkerRequest();
+  const target = required("FIX_TARGET_DIRECTORY");
+  const directory = required("FIX_SUBSCRIPTION_REQUEST_DIR");
+  const { identity, prompt, schema } = createFixSubscriptionRequest({
+    review,
+    request,
+    worker: { runId: positiveInteger("GITHUB_RUN_ID"), runAttempt: positiveInteger("GITHUB_RUN_ATTEMPT") },
+    read: fixTargetReader(target),
+  });
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "identity.json"), `${JSON.stringify(identity, null, 2)}\n`);
+  await writeFile(join(directory, "prompt.md"), `${prompt}\n`);
+  await writeFile(join(directory, "schema.json"), `${JSON.stringify(schema, null, 2)}\n`);
+  if (readdirSync(directory).sort().join(",") !== "identity.json,prompt.md,schema.json") {
+    throw new Error("FIX request directory는 identity.json, prompt.md, schema.json만 가져야 합니다");
+  }
+  writeOutput("request_artifact_name", `fix-request-subscription-issue-${identity.issueNumber}-worker-${identity.worker.runId}-attempt-${identity.worker.runAttempt}`);
+}
+
+/** subscription 결과(raw proposal)를 exact reviewed SHA worktree에 적용한다. 검증이 모두 끝난 뒤에만 쓴다. */
+export async function applyFixSubscriptionProposal(): Promise<void> {
+  const { review } = await validateWorkerRequest();
+  const worktree = required("FIX_WORKTREE_DIRECTORY");
+  const proposal = JSON.parse(await readFile(required("FIX_RAW_PROPOSAL_JSON"), "utf8")) as unknown;
+  const files = materializeFixSubscriptionProposal(review, proposal, fixTargetReader(worktree));
+  for (const [path, content] of files) {
+    const file = join(worktree, path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, content);
+  }
 }
 
 export async function finalizeFix(): Promise<void> {
@@ -177,6 +245,8 @@ if (process.argv[1]?.endsWith("fix-handler.ts")) {
   const mode = process.argv[2];
   if (mode === "request") await createFixRequest();
   else if (mode === "prepare") await prepareFix();
+  else if (mode === "subscription-request") await createFixSubscriptionInput();
+  else if (mode === "apply") await applyFixSubscriptionProposal();
   else if (mode === "finalize") await finalizeFix();
-  else throw new Error("request, prepare 또는 finalize mode가 필요합니다");
+  else throw new Error("request, prepare, subscription-request, apply 또는 finalize mode가 필요합니다");
 }

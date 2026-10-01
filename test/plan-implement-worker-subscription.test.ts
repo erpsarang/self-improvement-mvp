@@ -299,7 +299,70 @@ test("REVIEW marker는 head와 Trusted Rail run을 담고 IMPLEMENT 결과와 �
   assert.deepEqual(accepted && JSON.parse(accepted.raw), review);
   // IMPLEMENT 교환은 같은 request_id의 REVIEW 결과를 결과로 보지 않는다.
   assert.equal(api.selectSubscriptionResult("IMPLEMENT", [resultComment(body)], { ...expected, expectedMarker: "x" }), null);
-  assert.throws(() => api.subscriptionRequestMarker("FIX", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST), /unsupported subscription kind/);
+  assert.throws(() => api.subscriptionRequestMarker("LEARN", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST), /unsupported subscription kind/);
+});
+
+/** bounded FIX Worker가 만드는 trusted-fix-request identity (Private fix_bridge 계약). */
+function fixIdentity(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    kind: "trusted-fix-request",
+    repository: "erpsarang/self-improvement-mvp",
+    issueNumber: 350,
+    baseSha: "a".repeat(40),
+    fixAttempt: 1,
+    fixRequest: { runId: 600, runAttempt: 1, artifactName: "fix-request-500-fix-1-600-attempt-1" },
+    worker: { runId: 707, runAttempt: 2 },
+    model: "sonnet",
+    ...overrides,
+  };
+}
+
+test("FIX marker는 FIX Worker run과 sonnet을 담고 IMPLEMENT·REVIEW 결과와 섞이지 않는다", async () => {
+  const value = fixIdentity();
+  const requestId = api.implementRequestId(value, ARTIFACT_ID, ARTIFACT_DIGEST);
+  assert.equal(
+    api.subscriptionRequestMarker("FIX", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST),
+    `<!-- ai-dev-framework:FIX_REQUEST v=1 request=${requestId} issue=350 repository=erpsarang/self-improvement-mvp base=${"a".repeat(40)} worker-run=707 worker-attempt=2 artifact=808 digest=${ARTIFACT_DIGEST} model=sonnet -->`,
+  );
+  const expectedMarker = api.subscriptionResultMarker("FIX", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
+  const proposal = { summary: "ok", complete: true, changes: [] };
+  const body = `${expectedMarker}\nFIX_RESULT_GZIP_BASE64:\n${gzipSync(Buffer.from(JSON.stringify(proposal), "utf8")).toString("base64")}`;
+  const expected = { requestId, requestCommentId: 10, owner: "erpsarang", expectedMarker };
+  const accepted = api.selectSubscriptionResult("FIX", [resultComment(body)], expected);
+  assert.deepEqual(accepted && JSON.parse(accepted.raw), proposal);
+  for (const kind of ["IMPLEMENT", "REVIEW"]) {
+    assert.equal(api.selectSubscriptionResult(kind, [resultComment(body)], { ...expected, expectedMarker: "x" }), null);
+  }
+
+  const files = (identity: unknown) => ({ "identity.json": JSON.stringify(identity), "prompt.md": "prompt", "schema.json": "{}" });
+  const root = mkdtempSync(join(tmpdir(), "fix-request-load-"));
+  const previousAttempt = process.env.GITHUB_RUN_ATTEMPT;
+  process.env.GITHUB_RUN_ATTEMPT = "2";
+  const load = (identity: unknown, kind = "FIX") => {
+    const { data, digest } = requestArchive(files(identity));
+    return api.loadSubscriptionRequest({
+      kind,
+      github: fakeGithub(data, digest, { workflow_run: { id: 707 } }),
+      context: { repo: { owner: "erpsarang", repo: "self-improvement-mvp" }, runId: 707 },
+      artifactName: "implement-request-a",
+      artifactId: 808,
+      artifactDigest: digest,
+      issueNumber: 350,
+      directory: join(root, "request"),
+    });
+  };
+  try {
+    assert.deepEqual(await load(fixIdentity()), fixIdentity());
+    await assert.rejects(load(fixIdentity({ model: "opus" })), /identity mismatch/);
+    await assert.rejects(load(fixIdentity({ kind: "trusted-implement-request" })), /identity mismatch/);
+    await assert.rejects(load(fixIdentity({ worker: { runId: 707, runAttempt: 1 } })), /identity mismatch/);
+    await assert.rejects(load(fixIdentity(), "IMPLEMENT"), /identity mismatch/);
+  } finally {
+    if (previousAttempt === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
+    else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("REVIEW request artifact는 Trusted Rail run과 opus에 묶인 identity만 받는다", async () => {
