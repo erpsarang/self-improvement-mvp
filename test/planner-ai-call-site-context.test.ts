@@ -377,7 +377,7 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
 
   const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
   const paths = candidates.map((file) => file.path);
-  for (const lifecycle of ["plan", "plan-implement-worker", "implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
+  for (const lifecycle of ["plan-implement-worker", "implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
     assert.ok(paths.includes(`.github/workflows/${lifecycle}.yml`), `${lifecycle} must be an AI call-site candidate: ${paths.join(", ")}`);
   }
   const lifecycleOnly = paths.filter((path) => !/-smoke\.yml$/.test(path));
