@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const codexWorkflowPaths = [
-  ".github/workflows/plan-implement-worker.yml",
   ".github/workflows/implement.yml",
   ".github/workflows/fix-worker.yml",
   ".github/workflows/semantic-review.yml",
@@ -33,9 +32,8 @@ test("고레버리지 PLAN은 Opus, IMPLEMENT·REVIEW·FIX는 Sol을 명시한�
   assert.match(plan, /productImprovementCandidate \? 'sonnet' : 'opus'/);
 
   const worker = await readFile(".github/workflows/plan-implement-worker.yml", "utf8");
-  // 최초 IMPLEMENT는 Private subscription executor(sonnet)로 옮겼고 Codex는 repair 2개만 남는다.
-  assert.equal((worker.match(/model: gpt-6-sol\n\s+effort: medium/g) ?? []).length, 0);
-  assert.equal((worker.match(/model: gpt-6-luna\n\s+effort: medium/g) ?? []).length, 2);
+  // 최초 IMPLEMENT와 repair 1/2는 Private subscription executor(sonnet)로 옮겨 Codex model을 쓰지 않는다.
+  assert.doesNotMatch(worker, /uses:\s*openai\/codex-action@|model: gpt-/);
 
   const implement = await readFile(".github/workflows/implement.yml", "utf8");
   assert.match(implement, /model: gpt-6-sol\n\s+effort: medium/);

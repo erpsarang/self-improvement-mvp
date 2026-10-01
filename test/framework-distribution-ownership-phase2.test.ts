@@ -5,7 +5,7 @@ import { assertTrustedOwnershipList } from '../src/self-improvement/distribution
 
 // Independent, reviewed expectation from the approved Requirement snapshot.
 const workflows = [
-  'fix-request', 'fix-worker', 'improvement-candidate', 'learn-source', 'learn',
+  'fix-request', 'fix-worker', 'implement-subscription', 'improvement-candidate', 'learn-source', 'learn',
   'orchestrator', 'plan-authorize', 'plan-candidate-bridge', 'plan-implement-handoff',
   'plan-implement-worker', 'plan-recovery', 'plan-worker-recovery-preflight', 'plan',
   'post-merge-learn', 'product-evaluation', 'semantic-review', 'trusted-rail',
@@ -40,7 +40,7 @@ test('production ownership is exactly the reviewed full bundle, with no digests 
     'package.json',
     'package-lock.json',
   ].sort();
-  assert.equal(expected.length, 77);
+  assert.equal(expected.length, 78);
   assert.deepEqual(value.entries.map(entry => entry.sourcePath).sort(), expected);
   for (const entry of value.entries) {
     const expectedTarget = entry.sourcePath === 'package.json' || entry.sourcePath === 'package-lock.json'

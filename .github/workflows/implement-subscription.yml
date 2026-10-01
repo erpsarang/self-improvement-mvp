@@ -1,0 +1,417 @@
+name: Subscription IMPLEMENT exchange
+
+# PLAN Bounded IMPLEMENT Worker의 최초 IMPLEMENT와 repair 1/2가 같은 exact request/result 교환을 쓴다.
+# reusable workflow job도 호출한 Worker run 안에서 돌기 때문에 Private Executor가 보는 run id/name/path는 Worker 그대로다.
+on:
+  workflow_call:
+    inputs:
+      attempt:
+        description: "0=최초 IMPLEMENT, 1/2=repair"
+        type: string
+        required: true
+      issue_number:
+        type: string
+        required: true
+      request_artifact_name:
+        type: string
+        required: true
+      request_artifact_id:
+        type: string
+        required: true
+      request_artifact_digest:
+        type: string
+        required: true
+    secrets:
+      EXECUTOR_DISPATCH_TOKEN:
+        required: false
+
+permissions: {}
+
+jobs:
+  request:
+    permissions:
+      actions: read
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      request_id: ${{ steps.marker.outputs.request_id }}
+      request_comment_id: ${{ steps.marker.outputs.request_comment_id }}
+
+    steps:
+      - name: IMPLEMENT_REQUEST 고정 및 marker 기록
+        id: marker
+        uses: actions/github-script@v7
+        env:
+          IMPLEMENT_ATTEMPT: ${{ inputs.attempt }}
+          IMPLEMENT_ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REQUEST_ARTIFACT_NAME: ${{ inputs.request_artifact_name }}
+          REQUEST_ARTIFACT_ID: ${{ inputs.request_artifact_id }}
+          REQUEST_ARTIFACT_DIGEST: ${{ inputs.request_artifact_digest }}
+        with:
+          script: |
+            // BEGIN implement-subscription
+            // Private subscription-ai-executor IMPLEMENT 계약(main 735abd2)과 byte 단위로 맞춘다. request job과 wait job이 같은 사본을 쓴다.
+            const IMPLEMENT_REQUEST_FILES = ['identity.json', 'prompt.md', 'schema.json'];
+
+            // Python json.dumps(sort_keys=True, separators=(",", ":"))와 같은 canonical JSON.
+            function canonicalJson(value) {
+              if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+              if (value !== null && typeof value === 'object') {
+                return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+              }
+              return JSON.stringify(value);
+            }
+
+            function implementRequestId(identity, artifactId, artifactDigest) {
+              return require('crypto')
+                .createHash('sha256')
+                .update(canonicalJson([identity, artifactId, artifactDigest]), 'utf8')
+                .digest('hex');
+            }
+
+            function implementMarkerFields(identity, requestId, artifactId, artifactDigest) {
+              if (!/^[0-9a-f]{64}$/.test(requestId)) throw new Error('IMPLEMENT request ID is invalid');
+              if (!Number.isSafeInteger(artifactId) || artifactId < 1) throw new Error('request artifact id is invalid');
+              if (!/^[0-9a-f]{64}$/.test(artifactDigest)) throw new Error('request artifact digest is invalid');
+              return [
+                `request=${requestId}`,
+                `issue=${identity.issueNumber}`,
+                `repository=${identity.repository}`,
+                `base=${identity.baseSha}`,
+                `worker-run=${identity.worker.runId}`,
+                `worker-attempt=${identity.worker.runAttempt}`,
+                `artifact=${artifactId}`,
+                `digest=${artifactDigest}`,
+                `model=${identity.model}`,
+              ].join(' ');
+            }
+
+            function implementRequestMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_REQUEST v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} -->`;
+            }
+
+            function implementResultMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} encoding=gzip-base64 -->`;
+            }
+
+            // owner가 남긴 exact IMPLEMENT_RESULT 1개만 받는다. 없으면 null, 중복·불일치·손상이면 throw.
+            function selectImplementResult(comments, { requestId, requestCommentId, owner, expectedMarker }) {
+              const prefix = `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 request=${requestId} `;
+              const results = comments
+                .filter((comment) => Number(comment.id) > requestCommentId)
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === owner
+                )
+                .filter((comment) => typeof comment.body === 'string' && comment.body.includes(prefix));
+              if (results.length === 0) return null;
+              if (results.length > 1) throw new Error('Duplicate IMPLEMENT_RESULT comments');
+              const [marker, ...rest] = results[0].body.split(/\r?\n/);
+              if (marker !== expectedMarker) throw new Error('IMPLEMENT_RESULT identity mismatch');
+              const payload = /^IMPLEMENT_RESULT_GZIP_BASE64:\s*([A-Za-z0-9+/=]+)\s*$/.exec(rest.join('\n'))?.[1];
+              if (!payload) throw new Error('Missing IMPLEMENT_RESULT payload');
+              const raw = require('zlib').gunzipSync(Buffer.from(payload, 'base64')).toString('utf8');
+              const value = JSON.parse(raw);
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('IMPLEMENT_RESULT payload must be a JSON object');
+              return { commentId: Number(results[0].id), raw };
+            }
+            // 같은 run의 trusted job이 올린 request artifact를 id로 다시 받아 zip digest, 파일 집합, identity binding을 확인한다.
+            async function loadImplementRequest({ github, context, artifactName, artifactId, artifactDigest, issueNumber, directory }) {
+              const fs = require('fs');
+              const path = require('path');
+              if (!Number.isSafeInteger(artifactId) || artifactId < 1 || !/^[0-9a-f]{64}$/.test(artifactDigest)) {
+                throw new Error('IMPLEMENT request artifact identity is invalid');
+              }
+              const { data: metadata } = await github.rest.actions.getArtifact({ ...context.repo, artifact_id: artifactId });
+              if (
+                metadata.name !== artifactName ||
+                metadata.expired ||
+                Number(metadata.workflow_run?.id) !== context.runId ||
+                (metadata.digest != null && metadata.digest !== `sha256:${artifactDigest}`)
+              ) {
+                throw new Error('IMPLEMENT request artifact metadata mismatch');
+              }
+              const download = await github.rest.actions.downloadArtifact({ ...context.repo, artifact_id: artifactId, archive_format: 'zip' });
+              const archive = Buffer.from(download.data);
+              if (require('crypto').createHash('sha256').update(archive).digest('hex') !== artifactDigest) {
+                throw new Error('IMPLEMENT request artifact digest mismatch');
+              }
+              fs.rmSync(directory, { recursive: true, force: true });
+              fs.mkdirSync(directory, { recursive: true });
+              const archivePath = `${directory}.zip`;
+              fs.writeFileSync(archivePath, archive);
+              require('child_process').execFileSync('unzip', ['-q', archivePath, '-d', directory]);
+              const entries = fs.readdirSync(directory, { withFileTypes: true });
+              if (entries.some((entry) => !entry.isFile()) || entries.map((entry) => entry.name).sort().join(',') !== IMPLEMENT_REQUEST_FILES.join(',')) {
+                throw new Error('IMPLEMENT request artifact file set mismatch');
+              }
+              // identity 전체 schema는 prepare0가 고정했다. 여기서는 이 run과 Issue에 묶였는지만 다시 본다.
+              const identity = JSON.parse(fs.readFileSync(path.join(directory, 'identity.json'), 'utf8'));
+              if (
+                identity.repository !== `${context.repo.owner}/${context.repo.repo}` ||
+                identity.issueNumber !== issueNumber ||
+                identity.worker?.runId !== context.runId ||
+                identity.worker?.runAttempt !== Number(process.env.GITHUB_RUN_ATTEMPT) ||
+                identity.model !== 'sonnet'
+              ) {
+                throw new Error('IMPLEMENT request identity mismatch');
+              }
+              return identity;
+            }
+            // END implement-subscription
+            // Private Executor가 Framework repository만 받으므로 App에서는 요청을 남기기 전에 멈춘다.
+            if (`${context.repo.owner}/${context.repo.repo}` !== 'erpsarang/self-improvement-mvp') {
+              core.setFailed('subscription IMPLEMENT supports only the Framework repository');
+              return;
+            }
+            if (!['0', '1', '2'].includes(process.env.IMPLEMENT_ATTEMPT)) {
+              core.setFailed('IMPLEMENT attempt must be 0, 1 or 2');
+              return;
+            }
+            const issueNumber = Number(process.env.IMPLEMENT_ISSUE_NUMBER);
+            const artifactId = Number(process.env.REQUEST_ARTIFACT_ID);
+            const artifactDigest = process.env.REQUEST_ARTIFACT_DIGEST || '';
+            const identity = await loadImplementRequest({
+              github,
+              context,
+              artifactName: process.env.REQUEST_ARTIFACT_NAME,
+              artifactId,
+              artifactDigest,
+              issueNumber,
+              directory: `${process.env.RUNNER_TEMP}/implement-request`,
+            });
+            const requestId = implementRequestId(identity, artifactId, artifactDigest);
+            const marker = implementRequestMarker(identity, requestId, artifactId, artifactDigest);
+            const label = process.env.IMPLEMENT_ATTEMPT === '0' ? '최초 IMPLEMENT' : `repair ${process.env.IMPLEMENT_ATTEMPT}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) =>
+              comment.user?.login === 'github-actions[bot]' &&
+              (comment.body || '').startsWith(marker)
+            );
+            const comment = existing ?? (await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                marker,
+                `## IMPLEMENT 실행 요청 대기 (${label})`,
+                `Request: \`${requestId}\``,
+                'Private subscription executor가 이 bounded prompt/schema만 사용해 IMPLEMENT candidate를 1회 생성합니다. 결과는 Public trusted 검증과 deterministic CI를 다시 거칩니다.',
+              ].join('\n\n'),
+            })).data;
+            core.setOutput('request_id', requestId);
+            core.setOutput('request_comment_id', String(comment.id));
+
+      - name: Private subscription executor 깨우기
+        env:
+          EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
+          IMPLEMENT_REQUEST_ID: ${{ steps.marker.outputs.request_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${EXECUTOR_DISPATCH_TOKEN:-}" ]; then
+            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: subscription-ai-executor / Actions: write)." >&2
+            exit 1
+          fi
+          if [[ ! "$IMPLEMENT_REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid IMPLEMENT_REQUEST_ID; refusing executor dispatch." >&2
+            exit 1
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/implement-poller.yml/dispatches \
+            -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$IMPLEMENT_REQUEST_ID\"}}"
+
+  wait:
+    needs: request
+    permissions:
+      actions: read
+      issues: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: IMPLEMENT_RESULT 대기 및 exact 검증
+        timeout-minutes: 17
+        uses: actions/github-script@v7
+        env:
+          IMPLEMENT_REQUEST_ID: ${{ needs.request.outputs.request_id }}
+          IMPLEMENT_REQUEST_COMMENT_ID: ${{ needs.request.outputs.request_comment_id }}
+          IMPLEMENT_ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REQUEST_ARTIFACT_NAME: ${{ inputs.request_artifact_name }}
+          REQUEST_ARTIFACT_ID: ${{ inputs.request_artifact_id }}
+          REQUEST_ARTIFACT_DIGEST: ${{ inputs.request_artifact_digest }}
+        with:
+          script: |
+            // BEGIN implement-subscription
+            // Private subscription-ai-executor IMPLEMENT 계약(main 735abd2)과 byte 단위로 맞춘다. request job과 wait job이 같은 사본을 쓴다.
+            const IMPLEMENT_REQUEST_FILES = ['identity.json', 'prompt.md', 'schema.json'];
+
+            // Python json.dumps(sort_keys=True, separators=(",", ":"))와 같은 canonical JSON.
+            function canonicalJson(value) {
+              if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+              if (value !== null && typeof value === 'object') {
+                return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+              }
+              return JSON.stringify(value);
+            }
+
+            function implementRequestId(identity, artifactId, artifactDigest) {
+              return require('crypto')
+                .createHash('sha256')
+                .update(canonicalJson([identity, artifactId, artifactDigest]), 'utf8')
+                .digest('hex');
+            }
+
+            function implementMarkerFields(identity, requestId, artifactId, artifactDigest) {
+              if (!/^[0-9a-f]{64}$/.test(requestId)) throw new Error('IMPLEMENT request ID is invalid');
+              if (!Number.isSafeInteger(artifactId) || artifactId < 1) throw new Error('request artifact id is invalid');
+              if (!/^[0-9a-f]{64}$/.test(artifactDigest)) throw new Error('request artifact digest is invalid');
+              return [
+                `request=${requestId}`,
+                `issue=${identity.issueNumber}`,
+                `repository=${identity.repository}`,
+                `base=${identity.baseSha}`,
+                `worker-run=${identity.worker.runId}`,
+                `worker-attempt=${identity.worker.runAttempt}`,
+                `artifact=${artifactId}`,
+                `digest=${artifactDigest}`,
+                `model=${identity.model}`,
+              ].join(' ');
+            }
+
+            function implementRequestMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_REQUEST v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} -->`;
+            }
+
+            function implementResultMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} encoding=gzip-base64 -->`;
+            }
+
+            // owner가 남긴 exact IMPLEMENT_RESULT 1개만 받는다. 없으면 null, 중복·불일치·손상이면 throw.
+            function selectImplementResult(comments, { requestId, requestCommentId, owner, expectedMarker }) {
+              const prefix = `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 request=${requestId} `;
+              const results = comments
+                .filter((comment) => Number(comment.id) > requestCommentId)
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === owner
+                )
+                .filter((comment) => typeof comment.body === 'string' && comment.body.includes(prefix));
+              if (results.length === 0) return null;
+              if (results.length > 1) throw new Error('Duplicate IMPLEMENT_RESULT comments');
+              const [marker, ...rest] = results[0].body.split(/\r?\n/);
+              if (marker !== expectedMarker) throw new Error('IMPLEMENT_RESULT identity mismatch');
+              const payload = /^IMPLEMENT_RESULT_GZIP_BASE64:\s*([A-Za-z0-9+/=]+)\s*$/.exec(rest.join('\n'))?.[1];
+              if (!payload) throw new Error('Missing IMPLEMENT_RESULT payload');
+              const raw = require('zlib').gunzipSync(Buffer.from(payload, 'base64')).toString('utf8');
+              const value = JSON.parse(raw);
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('IMPLEMENT_RESULT payload must be a JSON object');
+              return { commentId: Number(results[0].id), raw };
+            }
+            // 같은 run의 trusted job이 올린 request artifact를 id로 다시 받아 zip digest, 파일 집합, identity binding을 확인한다.
+            async function loadImplementRequest({ github, context, artifactName, artifactId, artifactDigest, issueNumber, directory }) {
+              const fs = require('fs');
+              const path = require('path');
+              if (!Number.isSafeInteger(artifactId) || artifactId < 1 || !/^[0-9a-f]{64}$/.test(artifactDigest)) {
+                throw new Error('IMPLEMENT request artifact identity is invalid');
+              }
+              const { data: metadata } = await github.rest.actions.getArtifact({ ...context.repo, artifact_id: artifactId });
+              if (
+                metadata.name !== artifactName ||
+                metadata.expired ||
+                Number(metadata.workflow_run?.id) !== context.runId ||
+                (metadata.digest != null && metadata.digest !== `sha256:${artifactDigest}`)
+              ) {
+                throw new Error('IMPLEMENT request artifact metadata mismatch');
+              }
+              const download = await github.rest.actions.downloadArtifact({ ...context.repo, artifact_id: artifactId, archive_format: 'zip' });
+              const archive = Buffer.from(download.data);
+              if (require('crypto').createHash('sha256').update(archive).digest('hex') !== artifactDigest) {
+                throw new Error('IMPLEMENT request artifact digest mismatch');
+              }
+              fs.rmSync(directory, { recursive: true, force: true });
+              fs.mkdirSync(directory, { recursive: true });
+              const archivePath = `${directory}.zip`;
+              fs.writeFileSync(archivePath, archive);
+              require('child_process').execFileSync('unzip', ['-q', archivePath, '-d', directory]);
+              const entries = fs.readdirSync(directory, { withFileTypes: true });
+              if (entries.some((entry) => !entry.isFile()) || entries.map((entry) => entry.name).sort().join(',') !== IMPLEMENT_REQUEST_FILES.join(',')) {
+                throw new Error('IMPLEMENT request artifact file set mismatch');
+              }
+              // identity 전체 schema는 prepare0가 고정했다. 여기서는 이 run과 Issue에 묶였는지만 다시 본다.
+              const identity = JSON.parse(fs.readFileSync(path.join(directory, 'identity.json'), 'utf8'));
+              if (
+                identity.repository !== `${context.repo.owner}/${context.repo.repo}` ||
+                identity.issueNumber !== issueNumber ||
+                identity.worker?.runId !== context.runId ||
+                identity.worker?.runAttempt !== Number(process.env.GITHUB_RUN_ATTEMPT) ||
+                identity.model !== 'sonnet'
+              ) {
+                throw new Error('IMPLEMENT request identity mismatch');
+              }
+              return identity;
+            }
+            // END implement-subscription
+            const fs = require('fs');
+            const path = require('path');
+            const requestId = process.env.IMPLEMENT_REQUEST_ID || '';
+            const requestCommentId = Number(process.env.IMPLEMENT_REQUEST_COMMENT_ID);
+            const issueNumber = Number(process.env.IMPLEMENT_ISSUE_NUMBER);
+            const artifactId = Number(process.env.REQUEST_ARTIFACT_ID);
+            const artifactDigest = process.env.REQUEST_ARTIFACT_DIGEST || '';
+            if (!Number.isSafeInteger(requestCommentId) || requestCommentId < 1) {
+              throw new Error('invalid IMPLEMENT request comment identity');
+            }
+            // request job과 독립적으로 artifact를 다시 받아 같은 request_id인지 확인한 뒤에만 결과를 기다린다.
+            const identity = await loadImplementRequest({
+              github,
+              context,
+              artifactName: process.env.REQUEST_ARTIFACT_NAME,
+              artifactId,
+              artifactDigest,
+              issueNumber,
+              directory: `${process.env.RUNNER_TEMP}/implement-request-verify`,
+            });
+            if (implementRequestId(identity, artifactId, artifactDigest) !== requestId) {
+              throw new Error('IMPLEMENT request identity mismatch');
+            }
+            const expectedMarker = implementResultMarker(identity, requestId, artifactId, artifactDigest);
+
+            for (let poll = 0; poll < 90; poll += 1) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+              const result = selectImplementResult(comments, {
+                requestId,
+                requestCommentId,
+                owner: context.repo.owner,
+                expectedMarker,
+              });
+              if (result) {
+                const output = path.join(process.env.RUNNER_TEMP, 'subscription-output');
+                fs.mkdirSync(output, { recursive: true });
+                fs.writeFileSync(path.join(output, 'raw-proposal.json'), result.raw);
+                core.info(`Received IMPLEMENT_RESULT comment ${result.commentId}`);
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 10_000));
+            }
+            throw new Error('Timed out waiting for private subscription executor IMPLEMENT_RESULT');
+
+      - name: raw proposal artifact 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-worker-raw-proposal-${{ inputs.attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/subscription-output/raw-proposal.json
+          if-no-files-found: error

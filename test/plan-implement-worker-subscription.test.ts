@@ -1,21 +1,26 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
 
 const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "utf8");
+const exchange = readFileSync(".github/workflows/implement-subscription.yml", "utf8");
 
 /** workflow 원문의 BEGIN/END 사이 코드를 들여쓰기만 걷어 그대로 돌려준다. mock 복제본을 검증하지 않는다. */
-function blocks(name: string): string[] {
+function blocks(source: string, name: string): string[] {
   const pattern = new RegExp(`\\n( *)// BEGIN ${name}\\n([\\s\\S]*?)\\n\\1// END ${name}\\n`, "g");
-  return [...workflow.matchAll(pattern)].map(([, indent, body]) =>
+  return [...source.matchAll(pattern)].map(([, indent, body]) =>
     body!.split("\n").map((line) => (line.startsWith(indent!) ? line.slice(indent!.length) : line)).join("\n"),
   );
 }
 
-const coreBlocks = blocks("implement-subscription");
-const identityBlocks = blocks("implement-identity");
+const coreBlocks = blocks(exchange, "implement-subscription");
+const identityBlocks = blocks(workflow, "implement-identity");
 
 interface SubscriptionApi {
   canonicalJson(value: unknown): string;
@@ -24,11 +29,12 @@ interface SubscriptionApi {
   implementResultMarker(identity: unknown, requestId: string, artifactId: number, artifactDigest: string): string;
   selectImplementResult(comments: unknown[], expected: Record<string, unknown>): { commentId: number; raw: string } | null;
   buildImplementIdentity(input: Record<string, unknown>): Record<string, unknown>;
+  loadImplementRequest(input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 const api = new Function(
   "require",
-  `${identityBlocks[0]}\n${coreBlocks[0]}\nreturn { canonicalJson, implementRequestId, implementRequestMarker, implementResultMarker, selectImplementResult, buildImplementIdentity };`,
+  `${identityBlocks[0]}\n${coreBlocks[0]}\nreturn { canonicalJson, implementRequestId, implementRequestMarker, implementResultMarker, selectImplementResult, buildImplementIdentity, loadImplementRequest };`,
 )(createRequire(import.meta.url)) as SubscriptionApi;
 
 const BASE_SHA = "f690a1ae3685d2aeddbfe3509b719690898854f5";
@@ -73,10 +79,12 @@ function resultBody(marker: string, value: unknown): string {
   return `${marker}\nIMPLEMENT_RESULT_GZIP_BASE64:\n${gzipSync(Buffer.from(JSON.stringify(value), "utf8")).toString("base64")}`;
 }
 
-test("공통 request/result 함수는 두 사본이 같고 identity 생성 함수는 prepare0에만 있다", () => {
+test("공통 request/result 함수는 exchange workflow의 두 job이 같은 사본을 쓰고 identity 생성 함수는 prepare0에만 있다", () => {
   assert.equal(coreBlocks.length, 2);
   assert.equal(coreBlocks[0], coreBlocks[1]);
   assert.equal(identityBlocks.length, 1);
+  assert.doesNotMatch(workflow, /BEGIN implement-subscription/);
+  assert.doesNotMatch(exchange, /BEGIN implement-identity/);
 });
 
 test("request_id는 Private canonical_request_id test vector와 같다 (#346)", () => {
@@ -117,7 +125,7 @@ test("identity는 Framework repository와 sha256 Handoff digest, 일치하는 Ha
   assert.doesNotMatch(JSON.stringify(identity()), /token|secret|api[-_]?key/i);
 });
 
-test("IMPLEMENT_REQUEST marker는 Private 계약의 field 순서 그대로이며 request0 검증을 통과한다", () => {
+test("IMPLEMENT_REQUEST marker는 Private 계약의 field 순서 그대로다", () => {
   const value = identity();
   const requestId = api.implementRequestId(value, ARTIFACT_ID, ARTIFACT_DIGEST);
   const marker = api.implementRequestMarker(value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
@@ -125,10 +133,6 @@ test("IMPLEMENT_REQUEST marker는 Private 계약의 field 순서 그대로이며
     marker,
     `<!-- ai-dev-framework:IMPLEMENT_REQUEST v=1 request=${requestId} issue=345 repository=erpsarang/self-improvement-mvp base=${BASE_SHA} worker-run=707 worker-attempt=1 artifact=808 digest=${ARTIFACT_DIGEST} model=sonnet -->`,
   );
-  const source = /const match = (\/\^<!-- ai-dev-framework:IMPLEMENT_REQUEST[^\n]*\$\/)\.exec\(marker\);/.exec(workflow)?.[1];
-  assert.ok(source, "request0 marker regex not found");
-  const requestPattern = new Function(`return ${source};`)() as RegExp;
-  assert.ok(requestPattern.test(marker));
   assert.equal(
     api.implementResultMarker(value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST),
     marker.replace("IMPLEMENT_REQUEST", "IMPLEMENT_RESULT").replace(" -->", " encoding=gzip-base64 -->"),
@@ -184,4 +188,65 @@ test("marker field 하나라도 다르거나 payload가 손상되면 fail-closed
   assert.throws(() => api.selectImplementResult([resultComment(`${expectedMarker}\nno payload`)], expected), /Missing IMPLEMENT_RESULT payload/);
   assert.throws(() => api.selectImplementResult([resultComment(`${expectedMarker}\nIMPLEMENT_RESULT_GZIP_BASE64:\nbm90LWd6aXA=`)], expected));
   assert.throws(() => api.selectImplementResult([resultComment(resultBody(expectedMarker, [proposal]))], expected), /must be a JSON object/);
+});
+
+/** upload-artifact처럼 root에 파일만 담은 zip과 그 sha256을 만든다. */
+function requestArchive(files: Record<string, string>) {
+  const directory = mkdtempSync(join(tmpdir(), "implement-request-"));
+  for (const [name, content] of Object.entries(files)) writeFileSync(join(directory, name), content);
+  const archive = join(directory, "request.zip");
+  execFileSync("zip", ["-q", "-j", archive, ...Object.keys(files).map((name) => join(directory, name))]);
+  const data = readFileSync(archive);
+  rmSync(directory, { recursive: true, force: true });
+  return { data, digest: createHash("sha256").update(data).digest("hex") };
+}
+
+function fakeGithub(data: Buffer, digest: string, metadata: Record<string, unknown> = {}) {
+  return {
+    rest: {
+      actions: {
+        getArtifact: async () => ({ data: { name: "implement-request-a", expired: false, workflow_run: { id: 707 }, digest: `sha256:${digest}`, ...metadata } }),
+        downloadArtifact: async () => ({ data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) }),
+      },
+    },
+  };
+}
+
+test("request artifact는 id로 다시 받아 zip digest, 파일 집합, 이 run/Issue binding을 확인한다", async () => {
+  const value = identity();
+  const files = { "identity.json": JSON.stringify(value), "prompt.md": "prompt", "schema.json": "{}" };
+  const { data, digest } = requestArchive(files);
+  const context = { repo: { owner: "erpsarang", repo: "self-improvement-mvp" }, runId: 707 };
+  const root = mkdtempSync(join(tmpdir(), "implement-request-load-"));
+  const previousAttempt = process.env.GITHUB_RUN_ATTEMPT;
+  process.env.GITHUB_RUN_ATTEMPT = "1";
+  const load = (overrides: Record<string, unknown> = {}) =>
+    api.loadImplementRequest({
+      github: fakeGithub(data, digest),
+      context,
+      artifactName: "implement-request-a",
+      artifactId: 808,
+      artifactDigest: digest,
+      issueNumber: 345,
+      directory: join(root, "request"),
+      ...overrides,
+    });
+  try {
+    assert.deepEqual(await load(), value);
+    assert.deepEqual(readdirSync(join(root, "request")).sort(), ["identity.json", "prompt.md", "schema.json"]);
+
+    await assert.rejects(load({ artifactDigest: "0".repeat(64), github: fakeGithub(data, "0".repeat(64)) }), /digest mismatch/);
+    await assert.rejects(load({ github: fakeGithub(data, digest, { name: "other" }) }), /metadata mismatch/);
+    await assert.rejects(load({ github: fakeGithub(data, digest, { workflow_run: { id: 1 } }) }), /metadata mismatch/);
+    await assert.rejects(load({ github: fakeGithub(data, digest, { expired: true }) }), /metadata mismatch/);
+    await assert.rejects(load({ issueNumber: 346 }), /identity mismatch/);
+    await assert.rejects(load({ context: { ...context, runId: 708 }, github: fakeGithub(data, digest, { workflow_run: { id: 708 } }) }), /identity mismatch/);
+
+    const extra = requestArchive({ ...files, "token.txt": "x" });
+    await assert.rejects(load({ github: fakeGithub(extra.data, extra.digest), artifactDigest: extra.digest }), /file set mismatch/);
+  } finally {
+    if (previousAttempt === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
+    else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;
+    rmSync(root, { recursive: true, force: true });
+  }
 });

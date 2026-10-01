@@ -372,12 +372,15 @@ test("실제 canonical repo에서 #244 모양의 2바이트 package.json excerpt
 test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 모두 문맥에 넣는다", () => {
   // 이 repo 자신을 target으로 쓴다. AI 호출 step을 가진 lifecycle workflow(smoke 제외)는 모두 들어가야 한다.
   const target = process.cwd();
-  const workflows = readFileSync(join(target, ".github", "workflows", "plan.yml"), "utf8");
-  assert.doesNotMatch(workflows, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/);
+  // PLAN과 PLAN Worker IMPLEMENT/repair는 Private subscription executor로 옮겨 직접 AI 호출 step이 없다.
+  for (const subscription of ["plan.yml", "plan-implement-worker.yml", "implement-subscription.yml"]) {
+    const workflow = readFileSync(join(target, ".github", "workflows", subscription), "utf8");
+    assert.doesNotMatch(workflow, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/, subscription);
+  }
 
   const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
   const paths = candidates.map((file) => file.path);
-  for (const lifecycle of ["plan-implement-worker", "implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
+  for (const lifecycle of ["implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
     assert.ok(paths.includes(`.github/workflows/${lifecycle}.yml`), `${lifecycle} must be an AI call-site candidate: ${paths.join(", ")}`);
   }
   const lifecycleOnly = paths.filter((path) => !/-smoke\.yml$/.test(path));
