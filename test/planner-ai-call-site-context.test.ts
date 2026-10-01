@@ -191,6 +191,55 @@ test("aiCallStepWindow는 첫 AI 호출 step 블록만 잘라내고 startOffset�
   assert.match(trimmed.content, /uses: openai\/codex-action@v1/);
 });
 
+test("aiCallStepWindow는 subscription exchange job과 Private poller dispatch step도 호출 지점으로 자른다", () => {
+  const exchangeWorkflow = [
+    "name: LEARN",
+    "on: workflow_dispatch",
+    "jobs:",
+    "  prepare:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - name: 준비 (한글)",
+    "        run: echo ok",
+    "  exchange:",
+    "    name: LEARN subscription 교환",
+    "    needs: prepare",
+    "    uses: ./.github/workflows/subscription-exchange.yml",
+    "    with:",
+    "      kind: LEARN",
+    "    secrets:",
+    "      EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}",
+    "",
+    "  finalize:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - run: echo done",
+  ].join("\n");
+  const job = aiCallStepWindow(exchangeWorkflow, AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES);
+  assert.ok(job);
+  assert.equal(exchangeWorkflow.slice(job.startOffset, job.startOffset + job.content.length), job.content);
+  assert.match(job.content, /^  exchange:\n/);
+  assert.match(job.content, /kind: LEARN/);
+  assert.doesNotMatch(job.content, /finalize:|prepare:/);
+
+  const dispatch = workflow("PLAN", [
+    "      - name: Wake private subscription executor",
+    "        run: |",
+    "          curl -fsS -X POST \\",
+    "            https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/plan-poller.yml/dispatches \\",
+    "            -d '{}'",
+  ]);
+  const step = aiCallStepWindow(dispatch, AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES);
+  assert.ok(step);
+  assert.equal(dispatch.slice(step.startOffset, step.startOffset + step.content.length), step.content);
+  assert.match(step.content, /^      - name: Wake private subscription executor\n/);
+  assert.match(step.content, /plan-poller\.yml\/dispatches/);
+  assert.doesNotMatch(step.content, /name: record/);
+
+  // 다른 reusable workflow job은 호출 지점이 아니다.
+  assert.equal(aiCallStepWindow(exchangeWorkflow.replace("subscription-exchange.yml", "deploy.yml"), AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES), null);
+});
+
 test("Framework 자체 AI 실행 요구에서는 AI 호출 step 창이 evidence로 들어가고 기존 선택은 예산 안에서 유지된다", () => {
   const fixture = makeTarget("self-improvement-mvp");
   try {
@@ -376,15 +425,40 @@ test("#244 모양의 2바이트 package.json excerpt는 보강 후 test/build sc
   }
 });
 
-test("실제 canonical repo에는 직접 AI 호출 step이 없고 lifecycle AI는 모두 subscription executor를 쓴다", () => {
-  // PLAN, PLAN Worker IMPLEMENT/repair, REVIEW, FIX, LEARN, Product Evaluation은 Private subscription executor로 옮겼고,
-  // legacy AUTHORIZE/IMPLEMENT 입구와 수동 smoke는 삭제했다.
+test("실제 canonical repo에서 #244 요구는 subscription executor AI 호출 지점을 모두 문맥에 넣는다", () => {
+  // lifecycle AI는 모두 Private subscription executor를 쓴다. 직접 Codex/Claude Action step은 없다.
   const target = process.cwd();
   for (const name of readdirSync(join(target, ".github", "workflows"))) {
     const workflow = readFileSync(join(target, ".github", "workflows", name), "utf8");
     assert.doesNotMatch(workflow, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/, name);
   }
-  assert.deepEqual(aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target), []);
+
+  const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
+  const paths = candidates.map((file) => file.path).sort();
+  assert.deepEqual(paths, [
+    ".github/workflows/fix-worker.yml",
+    ".github/workflows/learn.yml",
+    ".github/workflows/plan-implement-worker.yml",
+    ".github/workflows/plan.yml",
+    ".github/workflows/product-evaluation.yml",
+    ".github/workflows/semantic-review.yml",
+    ".github/workflows/subscription-exchange.yml",
+  ]);
+  assert.ok(candidates.length <= PLAN_CONTEXT_MAX_FILES - 1, "all lifecycle call sites fit beside one primary slot");
+  const exchange = candidates.find((file) => file.path === ".github/workflows/subscription-exchange.yml")!;
+  // kind별 identity/model 표가 evidence에 들어간다.
+  assert.match(exchange.content, /REVIEW: \{ identityKind: 'trusted-review-request', model: 'opus'/);
+  for (const file of candidates) {
+    assert.match(
+      file.content,
+      /uses: \.\/\.github\/workflows\/subscription-exchange\.yml|const SUBSCRIPTION_KINDS = \{|subscription-ai-executor\/actions\/workflows\//,
+      file.path,
+    );
+    assert.ok(file.byteLength <= AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES, file.path);
+    // trusted validatePlan의 frozen repository 검사 (#244 run 35971708433 회귀: byte 오프셋이 문자 인덱스로 쓰였다).
+    const frozenText = readFileSync(join(target, file.path), "utf8");
+    assert.equal(frozenText.slice(file.startOffset, file.startOffset + file.content.length), file.content, `${file.path} evidence must match frozen repository`);
+  }
 });
 
 test("#319: 원칙 문구로 호출 지점 보강이 켜져도 canonical Framework의 변경 대상 source/직접 테스트가 PLAN Context에 남는다", async () => {
