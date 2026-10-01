@@ -7,7 +7,7 @@ name: Trusted Product Evaluation
 # - 한 cycle당 Improvement Candidate 최대 1개
 # - 기존 Issue와 중복이면 생성 금지
 # - Framework 자체 개선 후보는 생성 금지
-# - AI 호출은 cycle당 1회, 재시도 없음
+# - AI 호출은 cycle당 1회, 재시도 없음. Evaluator는 Private subscription executor(Claude Max, sonnet)다
 # - 생성한 Issue는 proposal이다. read-only AI PLAN은 자동으로 한 번 시작되지만 구현은 사람의 PLAN-승인 이후에만 진행된다
 # - Auto Merge를 사용하지 않고 최종 Merge는 Human-only다
 on:
@@ -112,6 +112,9 @@ jobs:
       request_artifact_name: ${{ steps.names.outputs.request_artifact_name }}
       request_artifact_id: ${{ steps.upload.outputs.artifact-id }}
       request_artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      subscription_request_artifact_name: ${{ steps.names.outputs.subscription_request_artifact_name }}
+      subscription_request_artifact_id: ${{ steps.subscription_upload.outputs.artifact-id }}
+      subscription_request_artifact_digest: ${{ steps.subscription_upload.outputs.artifact-digest }}
 
     steps:
       - name: exact Human Merge 경계 고정
@@ -284,6 +287,7 @@ jobs:
           REJECTED_CANDIDATES_JSON: ${{ runner.temp }}/product-evaluation/rejected-candidates.json
           PRODUCT_CHANGED_PATHS_JSON: ${{ runner.temp }}/product-evaluation/changed-paths.json
           PRODUCT_EVALUATION_RUNTIME_DIR: ${{ runner.temp }}/product-evaluation/request
+          PRODUCT_EVALUATION_SUBSCRIPTION_DIR: ${{ runner.temp }}/product-evaluation/subscription-request
 
       - name: 평가 요청 artifact 이름 고정
         id: names
@@ -294,6 +298,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "request_artifact_name=product-evaluation-request-issue-${ISSUE_NUMBER}-pr-${HUMAN_MERGE_PR}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "subscription_request_artifact_name=product-evaluation-subscription-issue-${ISSUE_NUMBER}-pr-${HUMAN_MERGE_PR}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: trusted 평가 요청 저장
         id: upload
@@ -303,43 +308,9 @@ jobs:
           path: ${{ runner.temp }}/product-evaluation/request
           if-no-files-found: error
 
-  evaluator:
-    name: isolated read-only AI Product Evaluator
-    needs: prepare
-    # 제품 파일을 바꾸지 않은 cycle은 직전 평가와 같은 제품이므로 AI를 호출하지 않는다.
-    if: needs.prepare.result == 'success' && needs.prepare.outputs.should_evaluate == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    env:
-      GITHUB_TOKEN: ""
-      GH_TOKEN: ""
-      NODE_AUTH_TOKEN: ""
-      NPM_TOKEN: ""
-
-    steps:
-      - name: trusted 평가 요청 다운로드
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.prepare.outputs.request_artifact_name }}
-          path: ${{ runner.temp }}/product-evaluation-request
-
-      - name: 평가 요청 구조 확인 및 neutral workspace 생성
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t files < <(find "${RUNNER_TEMP}/product-evaluation-request" -type f -print)
-          if [ "${#files[@]}" -ne 3 ]; then
-            echo "product evaluation request artifact must contain exactly three files" >&2
-            exit 1
-          fi
-          for required in product-snapshot.json product-evaluation-prompt.md product-evaluation-output.schema.json; do
-            test -f "${RUNNER_TEMP}/product-evaluation-request/${required}"
-          done
-          mkdir -p "${RUNNER_TEMP}/product-evaluation-neutral" "${RUNNER_TEMP}/evaluator-output"
-
+      # 아래 두 단계는 AI를 부를 cycle에서만 돈다. 제품 파일 변경이 없으면 요청 artifact도 만들지 않는다.
       - name: Product Evaluation AI 비용 상한 확인
+        if: steps.prepare.outputs.should_evaluate == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -348,36 +319,35 @@ jobs:
             exit 1
           fi
 
-      - name: Untrusted read-only AI Product Evaluator
-        timeout-minutes: 3
-        uses: openai/codex-action@v1
-        with:
-          openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
-          permission-profile: ":read-only"
-          allow-bot-users: "github-actions[bot]"
-          safety-strategy: drop-sudo
-          working-directory: ${{ runner.temp }}/product-evaluation-neutral
-          codex-home: ${{ runner.temp }}/product-evaluation-codex-home
-          prompt-file: ${{ runner.temp }}/product-evaluation-request/product-evaluation-prompt.md
-          output-schema-file: ${{ runner.temp }}/product-evaluation-request/product-evaluation-output.schema.json
-          output-file: ${{ runner.temp }}/evaluator-output/evaluator.json
-          model: gpt-6-luna
-          effort: medium
-          codex-args: '["-c","project_doc_max_bytes=0"]'
-
-      - name: Evaluator output 최소 구조 확인
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s "${RUNNER_TEMP}/evaluator-output/evaluator.json"
-          node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${RUNNER_TEMP}/evaluator-output/evaluator.json"
-
-      - name: untrusted Evaluator output 저장
+      - name: PRODUCT_EVALUATION_REQUEST artifact 저장
+        if: steps.prepare.outputs.should_evaluate == 'true'
+        id: subscription_upload
         uses: actions/upload-artifact@v4
         with:
-          name: evaluator-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/evaluator-output/evaluator.json
+          name: ${{ steps.names.outputs.subscription_request_artifact_name }}
+          path: ${{ runner.temp }}/product-evaluation/subscription-request
           if-no-files-found: error
+
+  evaluator:
+    name: Product Evaluation subscription 교환
+    needs: prepare
+    # 제품 파일을 바꾸지 않은 cycle은 직전 평가와 같은 제품이므로 AI를 호출하지 않는다.
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.should_evaluate == 'true'
+    permissions:
+      actions: read
+      issues: write
+    uses: ./.github/workflows/subscription-exchange.yml
+    with:
+      kind: PRODUCT_EVALUATION
+      label: PR #${{ needs.prepare.outputs.human_merge_pr }} Product Evaluation
+      issue_number: ${{ needs.prepare.outputs.issue_number }}
+      request_artifact_name: ${{ needs.prepare.outputs.subscription_request_artifact_name }}
+      request_artifact_id: ${{ needs.prepare.outputs.subscription_request_artifact_id }}
+      request_artifact_digest: ${{ needs.prepare.outputs.subscription_request_artifact_digest }}
+      result_artifact_name: evaluator-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      result_file_name: evaluator.json
+    secrets:
+      EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
 
   finalize:
     name: trusted 평가 검증과 Improvement Candidate Issue 결정
@@ -454,10 +424,11 @@ jobs:
           SNAPSHOT_ARTIFACT_NAME: ${{ needs.prepare.outputs.request_artifact_name }}
           SNAPSHOT_ARTIFACT_ID: ${{ needs.prepare.outputs.request_artifact_id }}
           SNAPSHOT_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.request_artifact_digest }}
-          EVALUATOR_PROVIDER: OpenAI
-          EVALUATOR_ACTION: openai/codex-action@v1
-          EVALUATOR_MODEL: gpt-6-luna
-          EVALUATOR_REASONING_EFFORT: medium
+          EVALUATOR_PROVIDER: claude-max-subscription
+          EVALUATOR_ACTION: erpsarang/subscription-ai-executor/product-evaluation-poller.yml
+          EVALUATOR_MODEL: sonnet
+          # Private executor는 아직 effort를 넘기지 않는다. 확인되지 않은 값을 기록하지 않는다.
+          EVALUATOR_REASONING_EFFORT: cli-default
 
       - name: 검증된 Product Evaluation report 저장
         uses: actions/upload-artifact@v4

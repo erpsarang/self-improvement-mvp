@@ -38,26 +38,35 @@ test("평가 대상은 지금 배포된 default branch이고 cycle 포함 여부
   assert.match(workflow, /path: product-target/);
 });
 
-test("Evaluator는 credential 없이 neutral workspace에서 read-only로 1회만 호출된다", () => {
-  assert.match(workflow, /uses: openai\/codex-action@v1/);
-  assert.match(workflow, /permission-profile: ":read-only"/);
-  assert.match(workflow, /safety-strategy: drop-sudo/);
-  assert.match(workflow, /working-directory: \$\{\{ runner\.temp \}\}\/product-evaluation-neutral/);
-  assert.match(workflow, /codex-args: '\["-c","project_doc_max_bytes=0"\]'/);
-  for (const token of ["GITHUB_TOKEN", "GH_TOKEN", "NODE_AUTH_TOKEN", "NPM_TOKEN"]) {
-    assert.match(workflow, new RegExp(`${token}: ""`));
-  }
-  // 비용을 아끼기 위해 재시도로 AI를 다시 호출하지 않는다.
+const prepareJob = workflow.slice(workflow.indexOf("\n  prepare:\n"), workflow.indexOf("\n  evaluator:\n"));
+const evaluatorJob = workflow.slice(workflow.indexOf("\n  evaluator:\n"), workflow.indexOf("\n  finalize:\n"));
+
+test("Evaluator는 Private subscription executor에 exact snapshot만 담은 요청을 1회만 보낸다", () => {
+  assert.doesNotMatch(workflow, /openai\/codex-action|CODEX_API_KEY|permission-profile|product-evaluation-neutral/);
+  assert.match(evaluatorJob, /permissions:\n {6}actions: read\n {6}issues: write\n {4}uses: \.\/\.github\/workflows\/subscription-exchange\.yml/);
+  assert.match(evaluatorJob, /^ {6}kind: PRODUCT_EVALUATION$/m);
+  assert.match(evaluatorJob, /request_artifact_id: \$\{\{ needs\.prepare\.outputs\.subscription_request_artifact_id \}\}/);
+  assert.match(evaluatorJob, /request_artifact_digest: \$\{\{ needs\.prepare\.outputs\.subscription_request_artifact_digest \}\}/);
+  // 결과 artifact 이름과 파일은 기존 Evaluator output 그대로라 finalize의 snapshot binding 검증은 바뀌지 않는다.
+  assert.match(evaluatorJob, /result_artifact_name: evaluator-output-issue-\$\{\{ needs\.prepare\.outputs\.issue_number \}\}-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(evaluatorJob, /result_file_name: evaluator\.json/);
+  assert.deepEqual(workflow.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
+  assert.match(prepareJob, /PRODUCT_EVALUATION_SUBSCRIPTION_DIR: \$\{\{ runner\.temp \}\}\/product-evaluation\/subscription-request/);
+  // 비용을 아끼기 위해 재시도로 AI를 다시 호출하지 않는다. 요청 artifact를 올리기 전에 막는다.
   assert.match(workflow, /AI Cost Guardrail: 동일 Product Evaluation run의 AI 호출은 최대 1 attempt만 허용합니다\./);
   assert.match(workflow, /if \[ "\$GITHUB_RUN_ATTEMPT" -gt 1 \]; then/);
-  assert.equal(workflow.split("openai/codex-action@v1").length - 1, 2);
+  assert.ok(prepareJob.indexOf("Product Evaluation AI 비용 상한 확인") < prepareJob.indexOf("PRODUCT_EVALUATION_REQUEST artifact 저장"));
+  for (const step of ["Product Evaluation AI 비용 상한 확인", "PRODUCT_EVALUATION_REQUEST artifact 저장"]) {
+    const block = prepareJob.slice(prepareJob.indexOf(`- name: ${step}`));
+    assert.match(block, /^ {8}if: steps\.prepare\.outputs\.should_evaluate == 'true'$/m, step);
+  }
+  assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
 });
 
-test("App repository와 canonical repository의 Codex key 경계를 지킨다", () => {
-  assert.match(
-    workflow,
-    /openai-api-key: \$\{\{ secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\] \}\}/,
-  );
+test("Evaluator provenance는 subscription executor와 sonnet을 기록한다", () => {
+  assert.match(workflow, /EVALUATOR_PROVIDER: claude-max-subscription\n/);
+  assert.match(workflow, /EVALUATOR_ACTION: erpsarang\/subscription-ai-executor\/product-evaluation-poller\.yml\n/);
+  assert.match(workflow, /EVALUATOR_MODEL: sonnet\n/);
 });
 
 test("Framework runtime은 App 배포본과 canonical 양쪽에서 해석된다", () => {
@@ -86,8 +95,8 @@ test("Product Evaluation은 read-only PLAN 제안에서 멈추고 Human authorit
   assert.doesNotMatch(workflow, /pulls\.merge|mergePullRequest|enablePullRequestAutoMerge|git\s+push/);
   assert.doesNotMatch(workflow, /pulls\.create/);
   assert.doesNotMatch(workflow, /contents: write/);
-  // 평가 job은 어떤 write 권한도 갖지 않는다.
-  assert.match(workflow, /\n {2}evaluator:\n[\s\S]*?permissions:\n {6}contents: read\n/);
+  // 평가 job의 write 권한은 PRODUCT_EVALUATION_REQUEST marker 댓글용 issues뿐이다.
+  assert.match(workflow, /\n {2}evaluator:\n[\s\S]*?permissions:\n {6}actions: read\n {6}issues: write\n {4}uses:/);
   // Issue를 만드는 job의 write 권한은 issues와 PLAN dispatch용 actions뿐이다.
   assert.match(workflow, /\n {2}finalize:\n[\s\S]*?permissions:\n {6}contents: read\n {6}issues: write\n {6}actions: write\n/);
 });
@@ -131,7 +140,7 @@ test("prepare는 사람이 not_planned로 닫은 후보만 읽어 평가 입력�
   assert.match(workflow, /REJECTED_CANDIDATES_JSON: \$\{\{ runner\.temp \}\}\/product-evaluation\/rejected-candidates\.json/);
   // 기각 후보 수집은 읽기 전용이고 AI 호출을 늘리지 않는다.
   assert.doesNotMatch(workflow, /issues\.update|issues\.createComment/);
-  assert.equal(workflow.split("openai/codex-action@v1").length - 1, 2);
+  assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
 });
 
 test("제품 파일을 바꾸지 않은 cycle은 AI Evaluator를 호출하지 않고 사유를 남긴다", () => {
@@ -147,5 +156,5 @@ test("제품 파일을 바꾸지 않은 cycle은 AI Evaluator를 호출하지 �
   assert.match(evaluator, /if: needs\.prepare\.result == 'success' && needs\.prepare\.outputs\.should_evaluate == 'true'/);
   // finalize는 evaluator 성공에만 묶여 있어 생략 시 Issue 생성이나 자동 PLAN도 일어나지 않는다.
   assert.match(workflow, /if: needs\.prepare\.result == 'success' && needs\.evaluator\.result == 'success'/);
-  assert.equal(workflow.split("openai/codex-action@v1").length - 1, 2);
+  assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
 });

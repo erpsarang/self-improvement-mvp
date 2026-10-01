@@ -1,9 +1,10 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import {
   changedProductSnapshotPaths,
   createProductEvaluationOutputSchema,
   createProductEvaluationPrompt,
   createProductEvaluationReport,
+  createProductEvaluationSubscriptionIdentity,
   createProductSnapshot,
   decideImprovementIssue,
   decideProductEvaluationNeed,
@@ -86,6 +87,21 @@ if (command === "prepare") {
     `${JSON.stringify(createProductEvaluationOutputSchema(snapshot), null, 2)}\n`,
     "utf8",
   );
+
+  // Private subscription executor에 보낼 PRODUCT_EVALUATION_REQUEST 입력. prompt에 snapshot 전체가 들어 있다.
+  // 위 snapshot artifact는 finalize의 exact binding용으로 그대로 둔다.
+  const subscriptionDir = requiredEnv("PRODUCT_EVALUATION_SUBSCRIPTION_DIR");
+  mkdirSync(subscriptionDir, { recursive: true });
+  const subscriptionIdentity = createProductEvaluationSubscriptionIdentity(snapshot, {
+    runId: positiveIntegerEnv("GITHUB_RUN_ID"),
+    runAttempt: positiveIntegerEnv("GITHUB_RUN_ATTEMPT"),
+  });
+  writeFileSync(`${subscriptionDir}/identity.json`, `${JSON.stringify(subscriptionIdentity, null, 2)}\n`, "utf8");
+  writeFileSync(`${subscriptionDir}/prompt.md`, `${createProductEvaluationPrompt(snapshot)}\n`, "utf8");
+  writeFileSync(`${subscriptionDir}/schema.json`, `${JSON.stringify(createProductEvaluationOutputSchema(snapshot), null, 2)}\n`, "utf8");
+  if (readdirSync(subscriptionDir).sort().join(",") !== "identity.json,prompt.md,schema.json") {
+    throw new Error("PRODUCT_EVALUATION request directory는 identity.json, prompt.md, schema.json만 가져야 합니다");
+  }
 
   writeOutput("issue_number", snapshot.deployedCycle.requirementIssueNumber);
   writeOutput("human_merge_pr", snapshot.deployedCycle.humanMergePullRequestNumber);

@@ -1,35 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
-const selector = "${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}";
-
-const directCodexWorkflows = [
-  ".github/workflows/product-evaluation.yml",
-] as const;
-
-test("PLAN public workflow는 subscription/API credential을 보유하지 않고 나머지 direct AI workflow만 repository-scoped Codex key를 사용한다", async () => {
+test("PLAN public workflow는 subscription/API credential을 보유하지 않고 App 배포 AI 경로에는 Codex key가 없다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
   assert.match(plan, /ai-dev-framework:PLAN_REQUEST v=1/);
   assert.doesNotMatch(plan, /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY/);
   assert.doesNotMatch(plan, /anthropics\/claude-code-action|openai\/codex-action/);
 
-  let total = 0;
-  for (const path of directCodexWorkflows) {
-    const workflow = await readFile(path, "utf8");
-    const matches = workflow.split(selector).length - 1;
-    assert.ok(matches >= 1, `${path}: repository-scoped Codex secret selector missing`);
-    total += matches;
-    assert.doesNotMatch(workflow, /openai-api-key:\s*\$\{\{\s*secrets\.(?:FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY)\s*\}\}/);
+  // Product Evaluation까지 subscription executor로 옮겨 App repository용 Codex key를 고르는 workflow는 더 없다.
+  for (const name of await readdir(".github/workflows")) {
+    const workflow = await readFile(`.github/workflows/${name}`, "utf8");
+    assert.doesNotMatch(workflow, /APP_CODEX_API_KEY/, name);
   }
-  assert.equal(total, 1);
 
-  // PLAN Worker의 IMPLEMENT/repair, Semantic REVIEW, bounded FIX Worker, LEARN은 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
+  // PLAN Worker의 IMPLEMENT/repair, Semantic REVIEW, bounded FIX Worker, LEARN, Product Evaluation은 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
   for (const path of [
     ".github/workflows/plan-implement-worker.yml",
     ".github/workflows/semantic-review.yml",
     ".github/workflows/fix-worker.yml",
     ".github/workflows/learn.yml",
+    ".github/workflows/product-evaluation.yml",
     ".github/workflows/subscription-exchange.yml",
   ]) {
     const workflow = await readFile(path, "utf8");
