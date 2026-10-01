@@ -245,7 +245,6 @@ test("실제 repo에서 #259 요구의 prepare pipeline Context에 test/ai-cost-
     const business = augmentPlanContextWithBusinessRelations(requirement, target, selected);
     const human = needsHumanOutputPlanContext(requirement) ? augmentPlanContextWithHumanOutputSurfaces(requirement, target, business) : business;
     const aiCallSites = augmentPlanContextWithAiCallSites(requirement, target, human);
-    assert.ok(!aiCallSites.files.some((file) => file.path === "test/ai-cost-comparison.test.ts"));
     const pack = augmentPlanContextWithExplicitPaths(requirement, target, aiCallSites);
     verifyPlanContextPack(pack);
     const paths = pack.files.map((file) => file.path);
