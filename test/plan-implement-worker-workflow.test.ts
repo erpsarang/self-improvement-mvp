@@ -7,7 +7,7 @@ import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "utf8");
 
-const exchange = readFileSync(".github/workflows/implement-subscription.yml", "utf8");
+const exchange = readFileSync(".github/workflows/subscription-exchange.yml", "utf8");
 
 type WorkerJob =
   | "prepare0" | "subscription0" | "attempt0" | "attempt0_result"
@@ -85,7 +85,7 @@ test("검증 job 권한은 read-only이고, Issue write는 checkout 없는 subsc
   }
   for (const name of ["subscription0", "subscription1", "subscription2"] as const) {
     const block = jobBlock(name);
-    assert.match(block, /permissions:\n\s+actions: read\n\s+issues: write\n\s+uses: \.\/\.github\/workflows\/implement-subscription\.yml\n/, name);
+    assert.match(block, /permissions:\n\s+actions: read\n\s+issues: write\n\s+uses: \.\/\.github\/workflows\/subscription-exchange\.yml\n/, name);
     assert.doesNotMatch(block, /steps:|runs-on:/, name);
   }
   const finalize = jobBlock("finalize");
@@ -107,9 +107,10 @@ test("최초 IMPLEMENT와 두 repair 모두 Codex 없이 같은 subscription exc
   // Codex 4분 경계 전용 timeout retry와 neutral Codex 작업공간은 subscription 경로에서 제거되었다.
   assert.doesNotMatch(workflow, /\n  timeout_retry:\n|retry_required|IMPLEMENT timeout|bounded-worker-timeout-retry-input|worker-neutral|codex-home/);
 
-  assert.equal((workflow.match(/uses: \.\/\.github\/workflows\/implement-subscription\.yml/g) ?? []).length, 3);
+  assert.equal((workflow.match(/uses: \.\/\.github\/workflows\/subscription-exchange\.yml/g) ?? []).length, 3);
   for (const [job, attempt] of [["subscription0", "0"], ["subscription1", "1"], ["subscription2", "2"]] as const) {
-    assert.match(jobBlock(job), new RegExp(`attempt: "${attempt}"`), job);
+    assert.match(jobBlock(job), /kind: IMPLEMENT\n/, job);
+    assert.ok(jobBlock(job).includes(`result_artifact_name: bounded-worker-raw-proposal-${attempt}-\${{ github.run_id }}-attempt-\${{ github.run_attempt }}\n      result_file_name: raw-proposal.json\n`), job);
     assert.match(jobBlock(job), /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/, job);
   }
   assert.match(jobBlock("subscription0"), /request_artifact_digest: \$\{\{ needs\.prepare0\.outputs\.request_artifact_digest \}\}/);
@@ -131,18 +132,19 @@ test("subscription exchange는 Private implement-poller 하나만 exact request_
   // Worker 자신은 어떤 workflow도 직접 dispatch하지 않는다.
   assert.doesNotMatch(workflow, /\/dispatches|createWorkflowDispatch|curl /);
   assert.equal((exchange.match(/\/dispatches/g) ?? []).length, 1);
-  assert.match(
-    exchange,
-    /https:\/\/api\.github\.com\/repos\/erpsarang\/subscription-ai-executor\/actions\/workflows\/implement-poller\.yml\/dispatches/,
-  );
-  assert.match(exchange, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$IMPLEMENT_REQUEST_ID\\"\}\}"/);
-  assert.match(exchange, /\[\[ ! "\$IMPLEMENT_REQUEST_ID" =~ \^\[0-9a-f\]\{64\}\$ \]\]/);
+  assert.ok(exchange.includes('"https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches"'));
+  // dispatch 대상은 kind가 고른 두 Private poller로만 제한된다.
+  assert.ok(exchange.includes("implement-poller.yml|review-poller.yml) ;;"));
+  assert.ok(exchange.includes("IMPLEMENT: { identityKind: 'trusted-implement-request', model: 'sonnet', run: 'worker', poller: 'implement-poller.yml' },"));
+  assert.ok(exchange.includes("REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },"));
+  assert.match(exchange, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$SUBSCRIPTION_REQUEST_ID\\"\}\}"/);
+  assert.match(exchange, /\[\[ ! "\$SUBSCRIPTION_REQUEST_ID" =~ \^\[0-9a-f\]\{64\}\$ \]\]/);
   assert.deepEqual(exchange.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
   const dispatchStep = exchange.slice(exchange.indexOf("name: Private subscription executor 깨우기"), exchange.indexOf("\n  wait:\n"));
   assert.match(dispatchStep, /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/);
   // Private Executor가 Framework repository만 받으므로 App에서는 marker를 남기기 전에 멈춘다.
-  assert.ok(exchange.indexOf("subscription IMPLEMENT supports only the Framework repository") < exchange.indexOf("createComment"));
-  assert.ok(exchange.indexOf("IMPLEMENT_REQUEST 고정 및 marker 기록") < exchange.indexOf("Private subscription executor 깨우기"));
+  assert.ok(exchange.indexOf("subscription executor supports only the Framework repository") < exchange.indexOf("createComment"));
+  assert.ok(exchange.indexOf("subscription request 고정 및 marker 기록") < exchange.indexOf("Private subscription executor 깨우기"));
   // Worker의 직접 secret 참조는 subscription 호출에 넘기는 wake-up token 3개뿐이다.
   assert.deepEqual(
     workflow.match(/secrets\.[A-Za-z0-9_]+/g),
@@ -158,9 +160,10 @@ test("결과는 같은 run의 wait job이 polling으로 받고 raw-proposal arti
   const wait = exchange.slice(exchange.indexOf("\n  wait:\n"));
   assert.match(wait, /for \(let poll = 0; poll < 90; poll \+= 1\)/);
   assert.match(wait, /setTimeout\(resolve, 10_000\)/);
-  assert.match(wait, /Timed out waiting for private subscription executor IMPLEMENT_RESULT/);
-  assert.match(wait, /implementRequestId\(identity, artifactId, artifactDigest\) !== requestId/);
-  assert.ok(wait.includes("name: bounded-worker-raw-proposal-${{ inputs.attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/subscription-output/raw-proposal.json"));
+  assert.ok(wait.includes("Timed out waiting for private subscription executor ${kind}_RESULT"));
+  assert.match(wait, /subscriptionRequestId\(identity, artifactId, artifactDigest\) !== requestId/);
+  assert.ok(wait.includes("name: ${{ inputs.result_artifact_name }}\n          path: ${{ runner.temp }}/subscription-output/${{ inputs.result_file_name }}"));
+  assert.ok(wait.includes("if (!/^[a-z][a-z0-9-]*\\.json$/.test(resultFileName))"));
 
   for (const [job, attempt, directory] of [
     ["attempt0", "0", "worker-output"],

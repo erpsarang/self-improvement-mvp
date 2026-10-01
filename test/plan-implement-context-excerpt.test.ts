@@ -44,11 +44,17 @@ test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인�
     assert.equal(existsSync(join(target, path)), false, `${path} must stay a fixture-only path that never exists in the repository`);
   }
   const callSites = aiCallSiteCandidates(REQUIREMENT, target).filter((file) => !/-smoke\.yml$/.test(file.path));
-  // PLAN Worker는 subscription executor로 옮겨 직접 AI 호출 지점이 아니다 (#346).
-  assert.ok(callSites.length >= 5, `expected the lifecycle call sites, got ${callSites.map((file) => file.path).join(", ")}`);
+  // PLAN Worker와 Semantic REVIEW는 subscription executor로 옮겨 직접 AI 호출 지점이 아니다 (#346).
+  assert.ok(callSites.length >= 4, `expected the lifecycle call sites, got ${callSites.map((file) => file.path).join(", ")}`);
   const packageJson = readFileSync(join(target, "package.json"), "utf8");
+  // subscription executor로 옮긴 lifecycle workflow도 read-only 문맥으로는 여전히 크다. Planner가 본 3KB 발췌로 넣는다.
+  const subscriptionWorkflows = [".github/workflows/plan-implement-worker.yml", ".github/workflows/semantic-review.yml"].map((path) => {
+    const content = readFileSync(join(target, path), "utf8").slice(0, 3_000);
+    return { path, startOffset: 0, content, contentDigest: createHash("sha256").update(content, "utf8").digest("hex") };
+  });
   const evidence = [
     ...callSites.map((file) => ({ path: file.path, startOffset: file.startOffset, content: file.content, contentDigest: file.contentDigest })),
+    ...subscriptionWorkflows,
     { path: "package.json", startOffset: 0, content: packageJson, contentDigest: createHash("sha256").update(packageJson, "utf8").digest("hex") },
   ];
   const contextPaths = evidence.map((file) => file.path).slice(0, 8);

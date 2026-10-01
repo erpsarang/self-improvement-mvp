@@ -950,9 +950,11 @@ jobs:
     name: Semantic REVIEW
     needs: verify_finalize
     if: needs.verify_finalize.result == 'success'
+    # issues: write는 Semantic REVIEW 안의 subscription request job(REVIEW_REQUEST marker)만 쓴다.
     permissions:
       contents: read
       actions: read
+      issues: write
     uses: ./.github/workflows/semantic-review.yml
     secrets: inherit
 
