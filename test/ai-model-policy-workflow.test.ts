@@ -13,10 +13,11 @@ const codexWorkflowPaths = [
   ".github/workflows/single-pass-smoke.yml",
 ] as const;
 
-test("모든 lifecycle AI 호출은 provider별 model을 명시한다", async () => {
+test("PLAN model은 subscription request에 명시하고 나머지 lifecycle AI 호출은 explicit model을 유지한다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
-  assert.equal((plan.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1);
-  assert.match(plan, /--model \$\{\{ steps\.input\.outputs\.planner_model \}\}/);
+  assert.doesNotMatch(plan, /uses:\s*(?:anthropics\/claude-code-action|openai\/codex-action)@/);
+  assert.match(plan, /PLAN_MODEL: \$\{\{ needs\.plan\.outputs\.planner_model \}\}/);
+  assert.match(plan, /model=\$\{model\} -->/);
 
   for (const path of codexWorkflowPaths) {
     const workflow = await readFile(path, "utf8");
