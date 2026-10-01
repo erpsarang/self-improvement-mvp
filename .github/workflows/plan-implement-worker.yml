@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 jobs:
-  attempt0:
+  prepare0:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == github.event.repository.default_branch
@@ -29,11 +29,12 @@ jobs:
       recovery_current_sha: ${{ steps.source.outputs.recovery_current_sha }}
       base_sha: ${{ steps.base.outputs.sha }}
       candidate_artifact_name: ${{ steps.prepare.outputs.candidate_artifact_name }}
-      ci_status: ${{ steps.ci0.outputs.status }}
-      repair_ready: ${{ steps.ci0.outputs.repair_ready }}
-      repair_blocked_reason: ${{ steps.ci0.outputs.repair_blocked_reason }}
-      retry_required: ${{ steps.timeout0.outputs.retry }}
-      worker_incomplete: ${{ steps.completion0.outputs.incomplete }}
+      issue_number: ${{ steps.request_input.outputs.issue_number }}
+      request_id: ${{ steps.request.outputs.request_id }}
+      request_marker: ${{ steps.request.outputs.marker }}
+      request_artifact_name: ${{ steps.request_input.outputs.artifact_name }}
+      request_artifact_id: ${{ steps.request_upload.outputs.artifact-id }}
+      request_artifact_digest: ${{ steps.request_upload.outputs.artifact-digest }}
 
     steps:
       - name: RECOVERY_READY artifact 다운로드
@@ -231,114 +232,519 @@ jobs:
           BASE_SHA="$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(process.env.CONTRACT_JSON,"utf8")); if(typeof x.baseSha!=="string" || !/^[0-9a-f]{40,64}$/.test(x.baseSha)) process.exit(2); process.stdout.write(x.baseSha)')"
           echo "sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Worker 실행 전 repository와 trusted source 제거
+      - name: IMPLEMENT_REQUEST 입력 고정
         if: steps.source.outputs.should_run == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf "$GITHUB_WORKSPACE/control-prep" "$RUNNER_TEMP/plan-worker-source"
-          mkdir -p "$RUNNER_TEMP/worker-neutral" "$RUNNER_TEMP/worker-output"
-          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
-          test -f "$RUNNER_TEMP/plan-worker-input/prompt.md"
-          test -f "$RUNNER_TEMP/plan-worker-input/schema.json"
-
-      - name: IMPLEMENT timeout 측정 시작
-        if: steps.source.outputs.should_run == 'true'
-        id: implement_clock
-        shell: bash
-        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - name: Untrusted bounded IMPLEMENT Worker
-        if: steps.source.outputs.should_run == 'true'
-        id: implement0
-        continue-on-error: true
-        timeout-minutes: 4
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
+        id: request_input
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ""
-          GITHUB_TOKEN: ""
+          HANDOFF_JSON: ${{ runner.temp }}/plan-worker-source/handoff.json
+          WORKER_INPUT_DIRECTORY: ${{ runner.temp }}/plan-worker-input
+          REQUEST_DIRECTORY: ${{ runner.temp }}/implement-request
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
         with:
-          openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
-          permission-profile: ":read-only"
-          safety-strategy: drop-sudo
-          working-directory: ${{ runner.temp }}/worker-neutral
-          codex-home: ${{ runner.temp }}/worker-codex-home
-          prompt-file: ${{ runner.temp }}/plan-worker-input/prompt.md
-          output-schema-file: ${{ runner.temp }}/plan-worker-input/schema.json
-          output-file: ${{ runner.temp }}/worker-output/raw-proposal.json
-          model: gpt-6-sol
-          effort: medium
-          codex-args: '["-c","project_doc_max_bytes=0"]'
+          script: |
+            // BEGIN implement-identity
+            // Private subscription-ai-executor(main 735abd2) verify-request와 같은 exact identity schema.
+            const IMPLEMENT_SUBSCRIPTION_REPOSITORY = 'erpsarang/self-improvement-mvp';
+            const IMPLEMENT_SUBSCRIPTION_MODEL = 'sonnet';
 
-      - name: IMPLEMENT timeout 재시도 분류
-        if: always() && steps.source.outputs.should_run == 'true'
-        id: timeout0
-        shell: bash
+            function assertExactKeys(value, keys, name) {
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} must be an object`);
+              const actual = Object.keys(value).sort().join(',');
+              if (actual !== [...keys].sort().join(',')) throw new Error(`${name} fields mismatch: ${actual}`);
+            }
+
+            function assertPositiveInteger(value, name) {
+              if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+            }
+
+            function assertDigest(value, name) {
+              if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) throw new Error(`${name} must be a lowercase SHA-256 digest`);
+            }
+
+            function assertArtifact(value, name) {
+              assertExactKeys(value, ['name', 'id', 'digest'], name);
+              if (typeof value.name !== 'string' || !value.name.trim()) throw new Error(`${name}.name must be non-empty`);
+              assertPositiveInteger(value.id, `${name}.id`);
+              assertDigest(value.digest, `${name}.digest`);
+            }
+
+            function assertImplementIdentity(identity) {
+              assertExactKeys(identity, [
+                'schemaVersion', 'kind', 'repository', 'issueNumber', 'baseSha', 'approvedPlan',
+                'approvalCommentId', 'planAuthorize', 'handoff', 'worker', 'model',
+              ], 'IMPLEMENT identity');
+              if (identity.schemaVersion !== 1 || identity.kind !== 'trusted-implement-request') throw new Error('Unsupported IMPLEMENT identity schema');
+              if (identity.repository !== IMPLEMENT_SUBSCRIPTION_REPOSITORY) throw new Error('subscription IMPLEMENT supports only the Framework repository');
+              if (identity.model !== IMPLEMENT_SUBSCRIPTION_MODEL) throw new Error('IMPLEMENT model must be sonnet');
+              assertPositiveInteger(identity.issueNumber, 'issueNumber');
+              if (typeof identity.baseSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(identity.baseSha)) throw new Error('baseSha is invalid');
+              assertPositiveInteger(identity.approvalCommentId, 'approvalCommentId');
+              assertExactKeys(identity.approvedPlan, ['runId', 'runAttempt', 'artifactName'], 'approvedPlan');
+              assertPositiveInteger(identity.approvedPlan.runId, 'approvedPlan.runId');
+              assertPositiveInteger(identity.approvedPlan.runAttempt, 'approvedPlan.runAttempt');
+              if (typeof identity.approvedPlan.artifactName !== 'string' || !identity.approvedPlan.artifactName.trim()) throw new Error('approvedPlan.artifactName must be non-empty');
+              assertExactKeys(identity.planAuthorize, ['runId', 'runAttempt', 'artifact'], 'planAuthorize');
+              assertPositiveInteger(identity.planAuthorize.runId, 'planAuthorize.runId');
+              assertPositiveInteger(identity.planAuthorize.runAttempt, 'planAuthorize.runAttempt');
+              assertArtifact(identity.planAuthorize.artifact, 'planAuthorize.artifact');
+              assertExactKeys(identity.handoff, ['runId', 'runAttempt', 'artifact', 'handoffDigest'], 'handoff');
+              assertPositiveInteger(identity.handoff.runId, 'handoff.runId');
+              assertPositiveInteger(identity.handoff.runAttempt, 'handoff.runAttempt');
+              assertArtifact(identity.handoff.artifact, 'handoff.artifact');
+              assertDigest(identity.handoff.handoffDigest, 'handoff.handoffDigest');
+              assertExactKeys(identity.worker, ['runId', 'runAttempt'], 'worker');
+              assertPositiveInteger(identity.worker.runId, 'worker.runId');
+              assertPositiveInteger(identity.worker.runAttempt, 'worker.runAttempt');
+              return identity;
+            }
+
+            // trusted Handoff manifest와 source step 값만으로 identity를 만든다. credential은 들어가지 않는다.
+            function buildImplementIdentity({ handoff, repository, baseSha, source, worker }) {
+              const digest = /^sha256:([0-9a-f]{64})$/.exec(source.digest || '');
+              if (!digest) throw new Error('Handoff artifact digest must be sha256:<64hex>');
+              if (!handoff || handoff.kind !== 'trusted-plan-implement-handoff' || handoff.repository !== repository || handoff.baseSha !== baseSha) {
+                throw new Error('Handoff manifest identity mismatch');
+              }
+              const authorize = handoff.sourcePlanAuthorize || {};
+              // shorthand로 둔다: 줄 시작 'model:'은 workflow AI 호출 수 검사에서 YAML model key로 읽힌다.
+              const model = IMPLEMENT_SUBSCRIPTION_MODEL;
+              return assertImplementIdentity({
+                schemaVersion: 1,
+                kind: 'trusted-implement-request',
+                repository,
+                issueNumber: handoff.issueNumber,
+                baseSha,
+                approvedPlan: {
+                  runId: handoff.approvedPlan?.runId,
+                  runAttempt: handoff.approvedPlan?.runAttempt,
+                  artifactName: handoff.approvedPlan?.artifactName,
+                },
+                approvalCommentId: handoff.approvalCommentId,
+                planAuthorize: {
+                  runId: authorize.runId,
+                  runAttempt: authorize.runAttempt,
+                  artifact: { name: authorize.artifact?.name, id: authorize.artifact?.id, digest: authorize.artifact?.digest },
+                },
+                handoff: {
+                  runId: Number(source.runId),
+                  runAttempt: Number(source.runAttempt),
+                  artifact: { name: source.name, id: Number(source.id), digest: digest[1] },
+                  handoffDigest: handoff.handoffDigest,
+                },
+                worker: { runId: Number(worker.runId), runAttempt: Number(worker.runAttempt) },
+                model,
+              });
+            }
+            // END implement-identity
+            const fs = require('fs');
+            const path = require('path');
+            const identity = buildImplementIdentity({
+              handoff: JSON.parse(fs.readFileSync(process.env.HANDOFF_JSON, 'utf8')),
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+              baseSha: process.env.BASE_SHA,
+              source: {
+                runId: process.env.SOURCE_RUN_ID,
+                runAttempt: process.env.SOURCE_RUN_ATTEMPT,
+                name: process.env.SOURCE_ARTIFACT_NAME,
+                id: process.env.SOURCE_ARTIFACT_ID,
+                digest: process.env.SOURCE_ARTIFACT_DIGEST,
+              },
+              worker: { runId: context.runId, runAttempt: process.env.GITHUB_RUN_ATTEMPT },
+            });
+            // Private Executor는 artifact root의 정확히 이 3개 파일만 받는다. prompt/schema는 prepare 출력 그대로다.
+            const directory = process.env.REQUEST_DIRECTORY;
+            fs.mkdirSync(directory, { recursive: true });
+            fs.writeFileSync(path.join(directory, 'identity.json'), `${JSON.stringify(identity, null, 2)}\n`);
+            for (const name of ['prompt.md', 'schema.json']) {
+              fs.copyFileSync(path.join(process.env.WORKER_INPUT_DIRECTORY, name), path.join(directory, name));
+            }
+            if (fs.readdirSync(directory).sort().join(',') !== 'identity.json,prompt.md,schema.json') {
+              throw new Error('IMPLEMENT request directory must contain exactly identity.json, prompt.md and schema.json');
+            }
+            core.setOutput('issue_number', String(identity.issueNumber));
+            core.setOutput('artifact_name', `implement-request-issue-${identity.issueNumber}-worker-${identity.worker.runId}-attempt-${identity.worker.runAttempt}`);
+
+      - name: IMPLEMENT_REQUEST artifact 저장
+        if: steps.source.outputs.should_run == 'true'
+        id: request_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.request_input.outputs.artifact_name }}
+          path: ${{ runner.temp }}/implement-request
+          if-no-files-found: error
+
+      - name: IMPLEMENT request_id 고정
+        if: steps.source.outputs.should_run == 'true'
+        id: request
+        uses: actions/github-script@v7
         env:
-          IMPLEMENT_OUTCOME: ${{ steps.implement0.outcome }}
-          STARTED_AT: ${{ steps.implement_clock.outputs.started_at }}
-          RAW_PROPOSAL: ${{ runner.temp }}/worker-output/raw-proposal.json
+          REQUEST_DIRECTORY: ${{ runner.temp }}/implement-request
+          REQUEST_ARTIFACT_ID: ${{ steps.request_upload.outputs.artifact-id }}
+          REQUEST_ARTIFACT_DIGEST: ${{ steps.request_upload.outputs.artifact-digest }}
+        with:
+          script: |
+            // BEGIN implement-subscription
+            // Private subscription-ai-executor IMPLEMENT 계약(main 735abd2)과 byte 단위로 맞춘다. request_id 고정과 결과 검증이 같은 사본을 쓴다.
+            const IMPLEMENT_REQUEST_FILES = ['identity.json', 'prompt.md', 'schema.json'];
+
+            // Python json.dumps(sort_keys=True, separators=(",", ":"))와 같은 canonical JSON.
+            function canonicalJson(value) {
+              if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+              if (value !== null && typeof value === 'object') {
+                return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+              }
+              return JSON.stringify(value);
+            }
+
+            function implementRequestId(identity, artifactId, artifactDigest) {
+              return require('crypto')
+                .createHash('sha256')
+                .update(canonicalJson([identity, artifactId, artifactDigest]), 'utf8')
+                .digest('hex');
+            }
+
+            function implementMarkerFields(identity, requestId, artifactId, artifactDigest) {
+              if (!/^[0-9a-f]{64}$/.test(requestId)) throw new Error('IMPLEMENT request ID is invalid');
+              if (!Number.isSafeInteger(artifactId) || artifactId < 1) throw new Error('request artifact id is invalid');
+              if (!/^[0-9a-f]{64}$/.test(artifactDigest)) throw new Error('request artifact digest is invalid');
+              return [
+                `request=${requestId}`,
+                `issue=${identity.issueNumber}`,
+                `repository=${identity.repository}`,
+                `base=${identity.baseSha}`,
+                `worker-run=${identity.worker.runId}`,
+                `worker-attempt=${identity.worker.runAttempt}`,
+                `artifact=${artifactId}`,
+                `digest=${artifactDigest}`,
+                `model=${identity.model}`,
+              ].join(' ');
+            }
+
+            function implementRequestMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_REQUEST v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} -->`;
+            }
+
+            function implementResultMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} encoding=gzip-base64 -->`;
+            }
+
+            // owner가 남긴 exact IMPLEMENT_RESULT 1개만 받는다. 없으면 null, 중복·불일치·손상이면 throw.
+            function selectImplementResult(comments, { requestId, requestCommentId, owner, expectedMarker }) {
+              const prefix = `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 request=${requestId} `;
+              const results = comments
+                .filter((comment) => Number(comment.id) > requestCommentId)
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === owner
+                )
+                .filter((comment) => typeof comment.body === 'string' && comment.body.includes(prefix));
+              if (results.length === 0) return null;
+              if (results.length > 1) throw new Error('Duplicate IMPLEMENT_RESULT comments');
+              const [marker, ...rest] = results[0].body.split(/\r?\n/);
+              if (marker !== expectedMarker) throw new Error('IMPLEMENT_RESULT identity mismatch');
+              const payload = /^IMPLEMENT_RESULT_GZIP_BASE64:\s*([A-Za-z0-9+/=]+)\s*$/.exec(rest.join('\n'))?.[1];
+              if (!payload) throw new Error('Missing IMPLEMENT_RESULT payload');
+              const raw = require('zlib').gunzipSync(Buffer.from(payload, 'base64')).toString('utf8');
+              const value = JSON.parse(raw);
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('IMPLEMENT_RESULT payload must be a JSON object');
+              return { commentId: Number(results[0].id), raw };
+            }
+            // END implement-subscription
+            const fs = require('fs');
+            const path = require('path');
+            // identity.json은 바로 앞 step이 exact schema로 검증해 쓴 파일이다.
+            const identity = JSON.parse(fs.readFileSync(path.join(process.env.REQUEST_DIRECTORY, 'identity.json'), 'utf8'));
+            const artifactId = Number(process.env.REQUEST_ARTIFACT_ID);
+            const artifactDigest = process.env.REQUEST_ARTIFACT_DIGEST || '';
+            const requestId = implementRequestId(identity, artifactId, artifactDigest);
+            core.setOutput('request_id', requestId);
+            core.setOutput('marker', implementRequestMarker(identity, requestId, artifactId, artifactDigest));
+
+  request0:
+    needs: prepare0
+    if: needs.prepare0.outputs.should_run == 'true'
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      request_comment_id: ${{ steps.marker.outputs.request_comment_id }}
+
+    steps:
+      - name: IMPLEMENT_REQUEST marker 기록
+        id: marker
+        uses: actions/github-script@v7
+        env:
+          IMPLEMENT_REQUEST_ID: ${{ needs.prepare0.outputs.request_id }}
+          IMPLEMENT_REQUEST_MARKER: ${{ needs.prepare0.outputs.request_marker }}
+          IMPLEMENT_ISSUE_NUMBER: ${{ needs.prepare0.outputs.issue_number }}
+        with:
+          script: |
+            // Private Executor가 Framework repository만 받으므로 App에서는 요청을 남기기 전에 멈춘다.
+            if (`${context.repo.owner}/${context.repo.repo}` !== 'erpsarang/self-improvement-mvp') {
+              core.setFailed('subscription IMPLEMENT supports only the Framework repository');
+              return;
+            }
+            const requestId = process.env.IMPLEMENT_REQUEST_ID || '';
+            const marker = process.env.IMPLEMENT_REQUEST_MARKER || '';
+            const issueNumber = Number(process.env.IMPLEMENT_ISSUE_NUMBER);
+            const match = /^<!-- ai-dev-framework:IMPLEMENT_REQUEST v=1 request=([0-9a-f]{64}) issue=([1-9]\d*) repository=erpsarang\/self-improvement-mvp base=[0-9a-f]{40,64} worker-run=([1-9]\d*) worker-attempt=([1-9]\d*) artifact=[1-9]\d* digest=[0-9a-f]{64} model=sonnet -->$/.exec(marker);
+            if (
+              !match ||
+              match[1] !== requestId ||
+              Number(match[2]) !== issueNumber ||
+              Number(match[3]) !== context.runId ||
+              Number(match[4]) !== Number(process.env.GITHUB_RUN_ATTEMPT)
+            ) {
+              core.setFailed('invalid IMPLEMENT_REQUEST identity');
+              return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) =>
+              comment.user?.login === 'github-actions[bot]' &&
+              (comment.body || '').startsWith(marker)
+            );
+            const comment = existing ?? (await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                marker,
+                '## IMPLEMENT 실행 요청 대기',
+                `Request: \`${requestId}\``,
+                'Private subscription executor가 이 bounded prompt/schema만 사용해 IMPLEMENT candidate를 1회 생성합니다. 결과는 Public trusted 검증과 deterministic CI를 다시 거칩니다.',
+              ].join('\n\n'),
+            })).data;
+            core.setOutput('request_comment_id', String(comment.id));
+
+      - name: Private subscription executor 깨우기
+        env:
+          EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
+          IMPLEMENT_REQUEST_ID: ${{ needs.prepare0.outputs.request_id }}
+        shell: bash
         run: |
           set -euo pipefail
-          now="$(date +%s)"
-          elapsed="$((now - STARTED_AT))"
-          has_output=false
-          complete_output=false
-          if [ -s "$RAW_PROPOSAL" ]; then
-            has_output=true
-            # Codex가 timeout 직전에 끝냈다면 output은 완성된 JSON이다. 잘린 파일은 완성본으로 보지 않는다.
-            if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$RAW_PROPOSAL" 2>/dev/null; then
-              complete_output=true
-            fi
+          if [ -z "${EXECUTOR_DISPATCH_TOKEN:-}" ]; then
+            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: subscription-ai-executor / Actions: write)." >&2
+            exit 1
           fi
-
-          {
-            echo "elapsed_seconds=${elapsed}"
-            echo "has_output=${has_output}"
-            echo "complete_output=${complete_output}"
-          } >> "$GITHUB_OUTPUT"
-
-          accept_output=false
-          if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$complete_output" = "false" ]; then
-            echo "retry=true" >> "$GITHUB_OUTPUT"
-            echo "첫 IMPLEMENT가 timeout 경계에서 완성된 output 없이 실패해 bounded retry 1회를 허용합니다."
-          else
-            echo "retry=false" >> "$GITHUB_OUTPUT"
-            # timeout 경계에서 완성된 output을 버리지 않는다. 이 output도 untrusted이며 아래 trusted 검증과
-            # deterministic CI를 그대로 거친다 (sales-order-exception-analyzer #228: 237초에 완성 후 폐기됨).
-            if [ "$IMPLEMENT_OUTCOME" = "failure" ] && [ "$elapsed" -ge 230 ] && [ "$complete_output" = "true" ]; then
-              accept_output=true
-              echo "첫 IMPLEMENT가 timeout 경계에서 완성된 output을 남겨 trusted 검증으로 넘깁니다."
-            fi
+          if [[ ! "$IMPLEMENT_REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid IMPLEMENT_REQUEST_ID; refusing executor dispatch." >&2
+            exit 1
           fi
-          echo "accept_output=${accept_output}" >> "$GITHUB_OUTPUT"
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/implement-poller.yml/dispatches \
+            -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$IMPLEMENT_REQUEST_ID\"}}"
 
-      - name: bounded IMPLEMENT 실행 결과 확인
-        if: always() && steps.source.outputs.should_run == 'true'
-        id: implement_gate
+  attempt0:
+    needs: [prepare0, request0]
+    # prepare0/request0 실패도 attempt0 실패로 모아 기존 INFRA_FAILURE 경로로 보낸다. 취소된 run은 polling하지 않는다.
+    if: "!cancelled() && needs.prepare0.outputs.should_run == 'true'"
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      should_run: ${{ needs.prepare0.outputs.should_run }}
+      source_name: ${{ needs.prepare0.outputs.source_name }}
+      source_id: ${{ needs.prepare0.outputs.source_id }}
+      source_digest: ${{ needs.prepare0.outputs.source_digest }}
+      source_run_id: ${{ needs.prepare0.outputs.source_run_id }}
+      source_run_attempt: ${{ needs.prepare0.outputs.source_run_attempt }}
+      recovery_guard_kind: ${{ needs.prepare0.outputs.recovery_guard_kind }}
+      recovery_base_sha: ${{ needs.prepare0.outputs.recovery_base_sha }}
+      recovery_current_sha: ${{ needs.prepare0.outputs.recovery_current_sha }}
+      base_sha: ${{ needs.prepare0.outputs.base_sha }}
+      candidate_artifact_name: ${{ needs.prepare0.outputs.candidate_artifact_name }}
+      ci_status: ${{ steps.ci0.outputs.status }}
+      repair_ready: ${{ steps.ci0.outputs.repair_ready }}
+      repair_blocked_reason: ${{ steps.ci0.outputs.repair_blocked_reason }}
+      worker_incomplete: ${{ steps.completion0.outputs.incomplete }}
+
+    steps:
+      - name: IMPLEMENT request 단계 성공 확인
         shell: bash
         env:
-          INITIAL_OUTCOME: ${{ steps.implement0.outcome }}
-          RETRY_REQUIRED: ${{ steps.timeout0.outputs.retry }}
-          ACCEPT_OUTPUT: ${{ steps.timeout0.outputs.accept_output }}
+          PREPARE_RESULT: ${{ needs.prepare0.result }}
+          REQUEST_RESULT: ${{ needs.request0.result }}
         run: |
           set -euo pipefail
-          if [ "$INITIAL_OUTCOME" = "success" ]; then
-            exit 0
+          if [ "$PREPARE_RESULT" != "success" ] || [ "$REQUEST_RESULT" != "success" ]; then
+            echo "IMPLEMENT request failed before a subscription result could exist: prepare0=${PREPARE_RESULT}, request0=${REQUEST_RESULT}" >&2
+            exit 1
           fi
-          if [ "$ACCEPT_OUTPUT" = "true" ]; then
-            echo "timeout 경계에서 완성된 output을 받아 trusted 검증으로 넘깁니다."
-            exit 0
-          fi
-          if [ "$RETRY_REQUIRED" = "true" ]; then
-            echo "timeout retry는 fresh runner Job으로 위임합니다."
-            exit 0
-          fi
-          echo "bounded IMPLEMENT failed before retry eligibility" >&2
-          exit 1
+
+      - name: IMPLEMENT_RESULT 대기 및 exact 검증
+        id: result0
+        timeout-minutes: 17
+        uses: actions/github-script@v7
+        env:
+          IMPLEMENT_REQUEST_ID: ${{ needs.prepare0.outputs.request_id }}
+          IMPLEMENT_REQUEST_COMMENT_ID: ${{ needs.request0.outputs.request_comment_id }}
+          IMPLEMENT_ISSUE_NUMBER: ${{ needs.prepare0.outputs.issue_number }}
+          REQUEST_ARTIFACT_NAME: ${{ needs.prepare0.outputs.request_artifact_name }}
+          REQUEST_ARTIFACT_ID: ${{ needs.prepare0.outputs.request_artifact_id }}
+          REQUEST_ARTIFACT_DIGEST: ${{ needs.prepare0.outputs.request_artifact_digest }}
+          APPROVED_BASE_SHA: ${{ needs.prepare0.outputs.base_sha }}
+        with:
+          script: |
+            // BEGIN implement-subscription
+            // Private subscription-ai-executor IMPLEMENT 계약(main 735abd2)과 byte 단위로 맞춘다. request_id 고정과 결과 검증이 같은 사본을 쓴다.
+            const IMPLEMENT_REQUEST_FILES = ['identity.json', 'prompt.md', 'schema.json'];
+
+            // Python json.dumps(sort_keys=True, separators=(",", ":"))와 같은 canonical JSON.
+            function canonicalJson(value) {
+              if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+              if (value !== null && typeof value === 'object') {
+                return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+              }
+              return JSON.stringify(value);
+            }
+
+            function implementRequestId(identity, artifactId, artifactDigest) {
+              return require('crypto')
+                .createHash('sha256')
+                .update(canonicalJson([identity, artifactId, artifactDigest]), 'utf8')
+                .digest('hex');
+            }
+
+            function implementMarkerFields(identity, requestId, artifactId, artifactDigest) {
+              if (!/^[0-9a-f]{64}$/.test(requestId)) throw new Error('IMPLEMENT request ID is invalid');
+              if (!Number.isSafeInteger(artifactId) || artifactId < 1) throw new Error('request artifact id is invalid');
+              if (!/^[0-9a-f]{64}$/.test(artifactDigest)) throw new Error('request artifact digest is invalid');
+              return [
+                `request=${requestId}`,
+                `issue=${identity.issueNumber}`,
+                `repository=${identity.repository}`,
+                `base=${identity.baseSha}`,
+                `worker-run=${identity.worker.runId}`,
+                `worker-attempt=${identity.worker.runAttempt}`,
+                `artifact=${artifactId}`,
+                `digest=${artifactDigest}`,
+                `model=${identity.model}`,
+              ].join(' ');
+            }
+
+            function implementRequestMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_REQUEST v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} -->`;
+            }
+
+            function implementResultMarker(identity, requestId, artifactId, artifactDigest) {
+              return `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 ${implementMarkerFields(identity, requestId, artifactId, artifactDigest)} encoding=gzip-base64 -->`;
+            }
+
+            // owner가 남긴 exact IMPLEMENT_RESULT 1개만 받는다. 없으면 null, 중복·불일치·손상이면 throw.
+            function selectImplementResult(comments, { requestId, requestCommentId, owner, expectedMarker }) {
+              const prefix = `<!-- ai-dev-framework:IMPLEMENT_RESULT v=1 request=${requestId} `;
+              const results = comments
+                .filter((comment) => Number(comment.id) > requestCommentId)
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === owner
+                )
+                .filter((comment) => typeof comment.body === 'string' && comment.body.includes(prefix));
+              if (results.length === 0) return null;
+              if (results.length > 1) throw new Error('Duplicate IMPLEMENT_RESULT comments');
+              const [marker, ...rest] = results[0].body.split(/\r?\n/);
+              if (marker !== expectedMarker) throw new Error('IMPLEMENT_RESULT identity mismatch');
+              const payload = /^IMPLEMENT_RESULT_GZIP_BASE64:\s*([A-Za-z0-9+/=]+)\s*$/.exec(rest.join('\n'))?.[1];
+              if (!payload) throw new Error('Missing IMPLEMENT_RESULT payload');
+              const raw = require('zlib').gunzipSync(Buffer.from(payload, 'base64')).toString('utf8');
+              const value = JSON.parse(raw);
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('IMPLEMENT_RESULT payload must be a JSON object');
+              return { commentId: Number(results[0].id), raw };
+            }
+            // END implement-subscription
+            const fs = require('fs');
+            const path = require('path');
+            const { execFileSync } = require('child_process');
+            const requestId = process.env.IMPLEMENT_REQUEST_ID || '';
+            const requestCommentId = Number(process.env.IMPLEMENT_REQUEST_COMMENT_ID);
+            const issueNumber = Number(process.env.IMPLEMENT_ISSUE_NUMBER);
+            const artifactId = Number(process.env.REQUEST_ARTIFACT_ID);
+            const artifactDigest = process.env.REQUEST_ARTIFACT_DIGEST || '';
+            if (![requestCommentId, issueNumber].every((value) => Number.isSafeInteger(value) && value > 0)) {
+              throw new Error('invalid IMPLEMENT request comment identity');
+            }
+
+            // request artifact를 id로 다시 받아 zip digest, 파일 집합, identity, request_id를 이 run에 다시 묶는다.
+            const { data: metadata } = await github.rest.actions.getArtifact({ ...context.repo, artifact_id: artifactId });
+            if (
+              metadata.name !== process.env.REQUEST_ARTIFACT_NAME ||
+              metadata.expired ||
+              Number(metadata.workflow_run?.id) !== context.runId ||
+              (metadata.digest != null && metadata.digest !== `sha256:${artifactDigest}`)
+            ) {
+              throw new Error('IMPLEMENT request artifact metadata mismatch');
+            }
+            const download = await github.rest.actions.downloadArtifact({ ...context.repo, artifact_id: artifactId, archive_format: 'zip' });
+            const archive = Buffer.from(download.data);
+            if (require('crypto').createHash('sha256').update(archive).digest('hex') !== artifactDigest) {
+              throw new Error('IMPLEMENT request artifact digest mismatch');
+            }
+            const requestDirectory = path.join(process.env.RUNNER_TEMP, 'implement-request-verify');
+            const archivePath = path.join(process.env.RUNNER_TEMP, 'implement-request-verify.zip');
+            fs.writeFileSync(archivePath, archive);
+            execFileSync('unzip', ['-q', archivePath, '-d', requestDirectory]);
+            const entries = fs.readdirSync(requestDirectory, { withFileTypes: true });
+            if (entries.some((entry) => !entry.isFile()) || entries.map((entry) => entry.name).sort().join(',') !== IMPLEMENT_REQUEST_FILES.join(',')) {
+              throw new Error('IMPLEMENT request artifact file set mismatch');
+            }
+            // request_id가 identity 전체를 덮으므로, prepare0가 고정한 request_id와 같으면 같은 identity다.
+            const identity = JSON.parse(fs.readFileSync(path.join(requestDirectory, 'identity.json'), 'utf8'));
+            if (
+              identity.repository !== `${context.repo.owner}/${context.repo.repo}` ||
+              identity.issueNumber !== issueNumber ||
+              identity.baseSha !== process.env.APPROVED_BASE_SHA ||
+              identity.worker?.runId !== context.runId ||
+              identity.worker?.runAttempt !== Number(process.env.GITHUB_RUN_ATTEMPT) ||
+              identity.model !== 'sonnet' ||
+              implementRequestId(identity, artifactId, artifactDigest) !== requestId
+            ) {
+              throw new Error('IMPLEMENT request identity mismatch');
+            }
+            const expectedMarker = implementResultMarker(identity, requestId, artifactId, artifactDigest);
+
+            for (let poll = 0; poll < 90; poll += 1) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+              const result = selectImplementResult(comments, {
+                requestId,
+                requestCommentId,
+                owner: context.repo.owner,
+                expectedMarker,
+              });
+              if (result) {
+                const output = path.join(process.env.RUNNER_TEMP, 'worker-output');
+                fs.mkdirSync(output, { recursive: true });
+                fs.writeFileSync(path.join(output, 'raw-proposal.json'), result.raw);
+                core.info(`Received IMPLEMENT_RESULT comment ${result.commentId}`);
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 10_000));
+            }
+            throw new Error('Timed out waiting for private subscription executor IMPLEMENT_RESULT');
 
       - name: PLAN Worker complete 상태 분류 0
-        if: steps.source.outputs.should_run == 'true' && steps.implement_gate.outcome == 'success' && steps.timeout0.outputs.retry != 'true'
         id: completion0
         shell: bash
         env:
@@ -351,23 +757,7 @@ jobs:
             echo "PLAN Worker가 complete=false를 반환했습니다. infrastructure failure와 구분해 fail-closed 합니다."
           fi
 
-      - name: timeout retry input artifact 저장
-        if: steps.timeout0.outputs.retry == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bounded-worker-timeout-retry-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/plan-worker-input/prompt.md
-            ${{ runner.temp }}/plan-worker-input/schema.json
-          if-no-files-found: error
-
-      - name: Worker input 제거
-        if: steps.source.outputs.should_run == 'true' && steps.implement_gate.outcome == 'success' && steps.timeout0.outputs.retry != 'true'
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home" "$RUNNER_TEMP/worker-codex-home-timeout-retry"
-
       - name: Trusted validation checkout 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -375,7 +765,6 @@ jobs:
           path: control-validate-0
 
       - name: Framework runtime layout 준비
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
         run: |
           if grep -q '"name": "self-improvement-mvp"' package.json; then
@@ -384,37 +773,34 @@ jobs:
           fi
 
       - name: Trusted validation dependencies 설치 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
         run: |
           npm ci --ignore-scripts --prefix .framework-runtime
           ln -sT .framework-runtime/node_modules node_modules
 
       - name: Trusted handoff artifact 재다운로드 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.source.outputs.name }}
+          name: ${{ needs.prepare0.outputs.source_name }}
           path: ${{ runner.temp }}/plan-worker-source-validate-0
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ steps.source.outputs.run_id }}
+          run-id: ${{ needs.prepare0.outputs.source_run_id }}
 
       - name: Trusted candidate 검증 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: control-validate-0
         run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts validate
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
-          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
-          SOURCE_ARTIFACT_NAME: ${{ steps.source.outputs.name }}
-          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.id }}
-          SOURCE_ARTIFACT_DIGEST: ${{ steps.source.outputs.digest }}
-          RECOVERY_GUARD_KIND: ${{ steps.source.outputs.recovery_kind }}
-          RECOVERY_BASE_SHA: ${{ steps.source.outputs.recovery_base_sha }}
-          RECOVERY_CURRENT_SHA: ${{ steps.source.outputs.recovery_current_sha }}
+          SOURCE_RUN_ID: ${{ needs.prepare0.outputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.prepare0.outputs.source_run_attempt }}
+          SOURCE_ARTIFACT_NAME: ${{ needs.prepare0.outputs.source_name }}
+          SOURCE_ARTIFACT_ID: ${{ needs.prepare0.outputs.source_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.prepare0.outputs.source_digest }}
+          RECOVERY_GUARD_KIND: ${{ needs.prepare0.outputs.recovery_guard_kind }}
+          RECOVERY_BASE_SHA: ${{ needs.prepare0.outputs.recovery_base_sha }}
+          RECOVERY_CURRENT_SHA: ${{ needs.prepare0.outputs.recovery_current_sha }}
           WORKER_RUN_ID: ${{ github.run_id }}
           WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-0
@@ -422,23 +808,20 @@ jobs:
           CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-0
 
       - name: exact base candidate CI checkout 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.base.outputs.sha }}
+          ref: ${{ needs.prepare0.outputs.base_sha }}
           persist-credentials: false
           fetch-depth: 1
           path: validation-target-0
 
       - name: exact base SHA 확인 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         shell: bash
         env:
-          EXPECTED_SHA: ${{ steps.base.outputs.sha }}
+          EXPECTED_SHA: ${{ needs.prepare0.outputs.base_sha }}
         run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-0" rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: candidate CI dependencies 설치 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         working-directory: validation-target-0
         env:
           GH_TOKEN: ""
@@ -448,14 +831,13 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: deterministic CI 및 repair 입력 준비 0
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true'
         id: ci0
         working-directory: control-validate-0
         env:
           SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-0
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-0
           TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-0
-          OBSERVED_BASE_SHA: ${{ steps.base.outputs.sha }}
+          OBSERVED_BASE_SHA: ${{ needs.prepare0.outputs.base_sha }}
           STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-0
           NEXT_REPAIR_ATTEMPT: "1"
           REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-1
@@ -466,7 +848,7 @@ jobs:
         run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
 
       - name: attempt 0 state 정리
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true' && steps.ci0.outcome == 'success'
+        if: steps.ci0.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -486,197 +868,7 @@ jobs:
           fi
 
       - name: attempt 0 state artifact 저장
-        if: steps.source.outputs.should_run == 'true' && steps.timeout0.outputs.retry != 'true' && steps.ci0.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/worker-state-0
-          if-no-files-found: error
-
-  timeout_retry:
-    needs: attempt0
-    if: needs.attempt0.outputs.retry_required == 'true'
-    permissions:
-      contents: read
-      actions: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    outputs:
-      ci_status: ${{ steps.ci0_retry.outputs.status }}
-      repair_ready: ${{ steps.ci0_retry.outputs.repair_ready }}
-      repair_blocked_reason: ${{ steps.ci0_retry.outputs.repair_blocked_reason }}
-      worker_incomplete: ${{ steps.completion_retry.outputs.incomplete }}
-
-    steps:
-      - name: timeout retry input artifact 다운로드
-        uses: actions/download-artifact@v4
-        with:
-          name: bounded-worker-timeout-retry-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/plan-worker-input
-
-      - name: fresh retry 작업공간 준비
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/worker-neutral" "$RUNNER_TEMP/worker-output"
-          test -f "$RUNNER_TEMP/plan-worker-input/prompt.md"
-          test -f "$RUNNER_TEMP/plan-worker-input/schema.json"
-
-      - name: Untrusted bounded IMPLEMENT timeout retry
-        timeout-minutes: 6
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11; exact pin
-        env:
-          GH_TOKEN: ""
-          GITHUB_TOKEN: ""
-        with:
-          openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
-          permission-profile: ":read-only"
-          safety-strategy: drop-sudo
-          working-directory: ${{ runner.temp }}/worker-neutral
-          codex-home: ${{ runner.temp }}/worker-codex-home-timeout-retry
-          prompt-file: ${{ runner.temp }}/plan-worker-input/prompt.md
-          output-schema-file: ${{ runner.temp }}/plan-worker-input/schema.json
-          output-file: ${{ runner.temp }}/worker-output/raw-proposal.json
-          model: gpt-6-sol
-          effort: medium
-          codex-args: '["-c","project_doc_max_bytes=0"]'
-
-      - name: PLAN Worker complete 상태 분류 retry
-        id: completion_retry
-        shell: bash
-        env:
-          RAW_PROPOSAL: ${{ runner.temp }}/worker-output/raw-proposal.json
-        run: |
-          set -euo pipefail
-          incomplete="$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(x.complete === false ? "true" : "false")' "$RAW_PROPOSAL")"
-          echo "incomplete=$incomplete" >> "$GITHUB_OUTPUT"
-          if [ "$incomplete" = "true" ]; then
-            echo "timeout retry PLAN Worker가 complete=false를 반환했습니다. infrastructure failure와 구분합니다."
-          fi
-
-      - name: timeout retry input 제거
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/plan-worker-input" "$RUNNER_TEMP/worker-codex-home-timeout-retry"
-
-      - name: Trusted validation checkout retry
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-          path: control-validate-retry
-
-      - name: Framework runtime layout 준비
-        working-directory: control-validate-retry
-        run: |
-          if grep -q '"name": "self-improvement-mvp"' package.json; then
-            mkdir -p .framework-runtime
-            cp package.json package-lock.json .framework-runtime/
-          fi
-
-      - name: Node 설정 retry
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: control-validate-retry/.framework-runtime/package-lock.json
-
-      - name: Trusted validation dependencies 설치 retry
-        working-directory: control-validate-retry
-        run: |
-          npm ci --ignore-scripts --prefix .framework-runtime
-          ln -sT .framework-runtime/node_modules node_modules
-
-      - name: Trusted handoff artifact 재다운로드 retry
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.attempt0.outputs.source_name }}
-          path: ${{ runner.temp }}/plan-worker-source-validate-retry
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.attempt0.outputs.source_run_id }}
-
-      - name: Trusted candidate 검증 retry
-        working-directory: control-validate-retry
-        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-implement-worker-handler.ts validate
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ needs.attempt0.outputs.source_run_id }}
-          SOURCE_RUN_ATTEMPT: ${{ needs.attempt0.outputs.source_run_attempt }}
-          SOURCE_ARTIFACT_NAME: ${{ needs.attempt0.outputs.source_name }}
-          SOURCE_ARTIFACT_ID: ${{ needs.attempt0.outputs.source_id }}
-          SOURCE_ARTIFACT_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
-          RECOVERY_GUARD_KIND: ${{ needs.attempt0.outputs.recovery_guard_kind }}
-          RECOVERY_BASE_SHA: ${{ needs.attempt0.outputs.recovery_base_sha }}
-          RECOVERY_CURRENT_SHA: ${{ needs.attempt0.outputs.recovery_current_sha }}
-          WORKER_RUN_ID: ${{ github.run_id }}
-          WORKER_RUN_ATTEMPT: ${{ github.run_attempt }}
-          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-retry
-          RAW_PROPOSAL_PATH: ${{ runner.temp }}/worker-output/raw-proposal.json
-          CANDIDATE_OUTPUT_DIRECTORY: ${{ runner.temp }}/validated-candidate-retry
-
-      - name: exact base candidate CI checkout retry
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.attempt0.outputs.base_sha }}
-          persist-credentials: false
-          fetch-depth: 1
-          path: validation-target-retry
-
-      - name: exact base SHA 확인 retry
-        shell: bash
-        env:
-          EXPECTED_SHA: ${{ needs.attempt0.outputs.base_sha }}
-        run: test "$(git -C "$GITHUB_WORKSPACE/validation-target-retry" rev-parse HEAD)" = "$EXPECTED_SHA"
-
-      - name: candidate CI dependencies 설치 retry
-        working-directory: validation-target-retry
-        env:
-          GH_TOKEN: ""
-          GITHUB_TOKEN: ""
-          NODE_AUTH_TOKEN: ""
-          NPM_TOKEN: ""
-        run: npm ci --ignore-scripts
-
-      - name: deterministic CI 및 repair 입력 준비 retry
-        id: ci0_retry
-        working-directory: control-validate-retry
-        env:
-          SOURCE_DIRECTORY: ${{ runner.temp }}/plan-worker-source-validate-retry
-          CANDIDATE_DIRECTORY: ${{ runner.temp }}/validated-candidate-retry
-          TARGET_DIRECTORY: ${{ github.workspace }}/validation-target-retry
-          OBSERVED_BASE_SHA: ${{ needs.attempt0.outputs.base_sha }}
-          STATE_DIRECTORY: ${{ runner.temp }}/worker-ci-0
-          NEXT_REPAIR_ATTEMPT: "1"
-          REPAIR_INPUT_DIRECTORY: ${{ runner.temp }}/repair-input-1
-          GH_TOKEN: ""
-          GITHUB_TOKEN: ""
-          NODE_AUTH_TOKEN: ""
-          NPM_TOKEN: ""
-        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-worker-ci-repair-handler.ts check
-
-      - name: timeout retry state 정리
-        if: steps.ci0_retry.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/worker-state-0/candidate" "$RUNNER_TEMP/worker-state-0/evidence"
-          if [ -f "$RUNNER_TEMP/validated-candidate-retry/candidate.json" ]; then
-            cp "$RUNNER_TEMP/validated-candidate-retry/candidate.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate.json"
-            cp "$RUNNER_TEMP/validated-candidate-retry/candidate-provenance.json" "$RUNNER_TEMP/worker-state-0/candidate/candidate-provenance.json"
-            cp "$RUNNER_TEMP/worker-ci-0/validation.json" "$RUNNER_TEMP/worker-state-0/evidence/validation-0.json"
-          else
-            # candidate 전에 edit 적용에 실패한 attempt: candidate 없이 trusted 실패 기록만 evidence로 남긴다.
-            cp "$RUNNER_TEMP/worker-ci-0/edit-failure.json" "$RUNNER_TEMP/worker-state-0/evidence/edit-failure-0.json"
-          fi
-          if [ "${{ steps.ci0_retry.outputs.status }}" = "FAIL" ] && [ "${{ steps.ci0_retry.outputs.repair_ready }}" = "true" ]; then
-            mkdir -p "$RUNNER_TEMP/worker-state-0/repair-input"
-            cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$RUNNER_TEMP/worker-state-0/repair-input/prompt.md"
-            cp "$RUNNER_TEMP/repair-input-1/schema.json" "$RUNNER_TEMP/worker-state-0/repair-input/schema.json"
-          fi
-
-      - name: timeout retry state artifact 저장
-        if: steps.ci0_retry.outcome == 'success'
+        if: steps.ci0.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: bounded-worker-state-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
@@ -684,7 +876,7 @@ jobs:
           if-no-files-found: error
 
   attempt0_result:
-    needs: [attempt0, timeout_retry]
+    needs: attempt0
     if: always() && needs.attempt0.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -707,22 +899,16 @@ jobs:
       candidate_artifact_name: ${{ steps.effective.outputs.candidate_artifact_name }}
 
     steps:
-      - name: initial/retry effective 결과 고정
+      - name: attempt 0 effective 결과 고정
         id: effective
         shell: bash
         env:
           SHOULD_RUN: ${{ needs.attempt0.outputs.should_run }}
           ATTEMPT0_RESULT: ${{ needs.attempt0.result }}
-          RETRY_REQUIRED: ${{ needs.attempt0.outputs.retry_required }}
-          RETRY_RESULT: ${{ needs.timeout_retry.result }}
           DIRECT_STATUS: ${{ needs.attempt0.outputs.ci_status }}
           DIRECT_REPAIR_READY: ${{ needs.attempt0.outputs.repair_ready }}
           DIRECT_BLOCKED_REASON: ${{ needs.attempt0.outputs.repair_blocked_reason }}
-          RETRY_STATUS: ${{ needs.timeout_retry.outputs.ci_status }}
-          RETRY_REPAIR_READY: ${{ needs.timeout_retry.outputs.repair_ready }}
-          RETRY_BLOCKED_REASON: ${{ needs.timeout_retry.outputs.repair_blocked_reason }}
           DIRECT_INCOMPLETE: ${{ needs.attempt0.outputs.worker_incomplete }}
-          RETRY_INCOMPLETE: ${{ needs.timeout_retry.outputs.worker_incomplete }}
           SOURCE_NAME: ${{ needs.attempt0.outputs.source_name }}
           SOURCE_ID: ${{ needs.attempt0.outputs.source_id }}
           SOURCE_DIGEST: ${{ needs.attempt0.outputs.source_digest }}
@@ -741,23 +927,8 @@ jobs:
           repair_ready="$DIRECT_REPAIR_READY"
           repair_blocked_reason="$DIRECT_BLOCKED_REASON"
 
-          if [ "$RETRY_REQUIRED" = "true" ]; then
-            if [ "$RETRY_INCOMPLETE" = "true" ]; then
-              worker_incomplete=true
-              ci_status=""
-              repair_ready=""
-              repair_blocked_reason=""
-            elif [ "$RETRY_RESULT" != "success" ]; then
-              infrastructure_failed=true
-              ci_status=""
-              repair_ready=""
-              repair_blocked_reason=""
-            else
-              ci_status="$RETRY_STATUS"
-              repair_ready="$RETRY_REPAIR_READY"
-              repair_blocked_reason="$RETRY_BLOCKED_REASON"
-            fi
-          elif [ "$DIRECT_INCOMPLETE" = "true" ]; then
+          # subscription 결과를 받지 못한 실패(request, dispatch, timeout, identity mismatch)는 모두 attempt0 실패다.
+          if [ "$DIRECT_INCOMPLETE" = "true" ]; then
             worker_incomplete=true
             ci_status=""
             repair_ready=""
@@ -787,7 +958,6 @@ jobs:
             echo "base_sha=$BASE_SHA"
             echo "candidate_artifact_name=$CANDIDATE_ARTIFACT_NAME"
           } >> "$GITHUB_OUTPUT"
-
 
   repair1:
     needs: attempt0_result
