@@ -586,7 +586,7 @@ jobs:
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/implement-request-repair-1"
-          test "$(ls -A "$dir" | sort | tr '\n' ' ')" = "identity.json prompt.md schema.json "
+          test "$(find "$dir" -mindepth 1 -maxdepth 1 -printf '%y:%f\n' | sort | tr '\n' ' ')" = "f:identity.json f:prompt.md f:schema.json "
           cp "$RUNNER_TEMP/repair-input-1/prompt.md" "$dir/prompt.md"
           cp "$RUNNER_TEMP/repair-input-1/schema.json" "$dir/schema.json"
           echo "artifact_name=${BASE_REQUEST_ARTIFACT_NAME}-repair-1" >> "$GITHUB_OUTPUT"
@@ -879,7 +879,7 @@ jobs:
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/implement-request-repair-2"
-          test "$(ls -A "$dir" | sort | tr '\n' ' ')" = "identity.json prompt.md schema.json "
+          test "$(find "$dir" -mindepth 1 -maxdepth 1 -printf '%y:%f\n' | sort | tr '\n' ' ')" = "f:identity.json f:prompt.md f:schema.json "
           cp "$RUNNER_TEMP/repair-input-2/prompt.md" "$dir/prompt.md"
           cp "$RUNNER_TEMP/repair-input-2/schema.json" "$dir/schema.json"
           echo "artifact_name=${BASE_REQUEST_ARTIFACT_NAME}-repair-2" >> "$GITHUB_OUTPUT"

@@ -187,7 +187,7 @@ test("repair 요청은 같은 Worker identity에 trusted repair prompt/schema만
     assert.ok(block.includes(`name: \${{ ${base} }}\n          path: \${{ runner.temp }}/implement-request-repair-${attempt}`), job);
     assert.ok(block.includes(`cp "$RUNNER_TEMP/repair-input-${attempt}/prompt.md" "$dir/prompt.md"`), job);
     assert.ok(block.includes(`cp "$RUNNER_TEMP/repair-input-${attempt}/schema.json" "$dir/schema.json"`), job);
-    assert.ok(block.includes(`test "$(ls -A "$dir" | sort | tr '\\n' ' ')" = "identity.json prompt.md schema.json "`), job);
+    assert.ok(block.includes(`test "$(find "$dir" -mindepth 1 -maxdepth 1 -printf '%y:%f\\n' | sort | tr '\\n' ' ')" = "f:identity.json f:prompt.md f:schema.json "`), job);
     assert.ok(block.includes(`-repair-${attempt}" >> "$GITHUB_OUTPUT"`), job);
     assert.match(block, /repair_request_artifact_digest: \$\{\{ steps\.repair_request_upload\.outputs\.artifact-digest \}\}/, job);
   }
