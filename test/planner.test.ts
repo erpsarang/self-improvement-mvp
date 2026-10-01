@@ -11,6 +11,7 @@ import {
   PLAN_CONTEXT_MAX_FILES,
   PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
   PLAN_IMPLEMENT_MAX_FILES,
+  PLAN_MAX_BLOCKING_QUESTIONS,
   PLAN_ALLOWED_PATH_PATTERN,
   PLAN_SCHEMA,
   selectPlanContext,
@@ -152,6 +153,14 @@ test("implementation scope is fail-closed and cannot authorize unseen existing p
     };
     const normalizedPaused = validatePlan(paused, f.target, context);
     assert.equal((normalizedPaused.implementationScope as { ready: boolean }).ready, false);
+    assert.doesNotThrow(() => validatePlan({
+      ...paused,
+      questions: ["blocker A", "blocker B", "blocker C"],
+    }, f.target, context));
+    assert.throws(() => validatePlan({
+      ...paused,
+      questions: ["blocker A", "blocker B", "blocker C", "blocker D"],
+    }, f.target, context), /PLAN blocking questions exceed budget/);
     assert.throws(() => validatePlan({
       ...paused,
       implementationScope: { ...paused.implementationScope, allowedPaths: ["new.ts"] },
@@ -479,6 +488,12 @@ test("feasible explicit completion is proposed in full within existing bounded l
     assert.match(policy, /전체 완료선을 현재 Context Pack, allowedPaths 최대 8개 및 기존 안전 한계, 확정 가능한 검증 방법 안에서 담을 수 있으면 전체 완료선을 포함한 implementationScope\(ready=true\)를 제안하세요/);
     assert.match(policy, /requiredChanges와 acceptanceCriteria에 모든 필수 완료조건을 반영하고 testStrategy에 실제 검증 방법을 명시하세요/);
     assert.match(policy, /Human Requirement에 없는 작업을 추가하지 말고 완료선을 충족하는 가장 작은 범위를 선택하세요/);
+    assert.match(policy, /현재 Context에서 확인 가능한 서로 독립적인 실제 blocker를 questions에 한 번에 모두 반환하세요/);
+    assert.match(policy, /Blocking Question은 최대 3개/);
+    assert.match(policy, /다음 재PLAN에서 새 blocker를 하나씩 드러내는 방식으로 질문을 미루지 마세요/);
+    assert.doesNotMatch(policy, /Blocking Question 1개만 반환하세요/);
+    assert.equal(PLAN_SCHEMA.properties.questions.maxItems, PLAN_MAX_BLOCKING_QUESTIONS);
+    assert.equal(PLAN_MAX_BLOCKING_QUESTIONS, 3);
     assert.match(policy, /기존 파일을 allowedPaths에 넣으려면 반드시 Context Pack에서 본 파일이어야/);
     assert.match(policy, /implementationScope\.ready=true이면 questions는 반드시 빈 배열 \[\]이어야 합니다/);
     assert.equal(PLAN_SCHEMA.properties.implementationScope.properties.allowedPaths.maxItems, 8);

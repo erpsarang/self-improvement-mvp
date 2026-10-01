@@ -13,6 +13,9 @@ export const PLAN_IMPLEMENT_MAX_FILES = 8;
 // PLAN은 80KB bounded evidence를 유지한다. IMPLEMENT는 수정 대상 기존 파일의 전체 내용이 필요하므로
 // 별도 full-file 경계를 둔다. #250 실증에서 올바른 4-file write scope가 80,719B였다.
 export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = 96_000;
+// ready=false PLAN이 blocker를 한 번에 수렴시키도록 질문 수를 작게 제한한다.
+// 하나씩 새 질문을 드러내는 재PLAN 반복을 막되, 복잡한 요구의 독립 blocker는 함께 제시할 수 있다.
+export const PLAN_MAX_BLOCKING_QUESTIONS = 3;
 
 export interface PlanContextFile {
   readonly evidenceId: string;
@@ -575,7 +578,7 @@ export const PLAN_SCHEMA = {
       },
     } },
     approach: strings, changeCandidates: strings, acceptanceCriteria: strings, testStrategy: strings,
-    questions: { type: "array", maxItems: 6, items: { type: "string", maxLength: 1200 } },
+    questions: { type: "array", maxItems: PLAN_MAX_BLOCKING_QUESTIONS, items: { type: "string", maxLength: 1200 } },
     implementationScope: {
       type: "object", additionalProperties: false,
       required: ["ready", "allowedPaths", "contextPaths", "requiredChanges", "forbiddenChanges", "validationCommands"],
@@ -734,7 +737,7 @@ analysis에는 Context Pack이 발급한 evidenceId만 사용하세요. path나 
 - Human Requirement에서 같은 Issue 안에 반드시 완료해야 한다고 명시한 단계, 연결, 실제 E2E 검증 등 완료조건 또는 종료선을 먼저 식별하세요. 우선순위는 'Human Requirement의 명시적 Issue 완료선 > bounded slice 최소화'입니다.
 - 명시적 Issue 완료선이 있으면 필수 단계나 실제 E2E 조건을 제외한 partial slice를 implementationScope(ready=true)로 제안하지 마세요. 예를 들어 A → B → C와 실제 E2E가 필수이면 A만 또는 A+B만 구현하고 C나 실제 E2E를 후속 범위/후속 Issue로 미루거나 mock-only로 대체하는 ready=true는 금지입니다.
 - 전체 완료선을 현재 Context Pack, allowedPaths 최대 8개 및 기존 안전 한계, 확정 가능한 검증 방법 안에서 담을 수 있으면 전체 완료선을 포함한 implementationScope(ready=true)를 제안하세요. requiredChanges와 acceptanceCriteria에 모든 필수 완료조건을 반영하고 testStrategy에 실제 검증 방법을 명시하세요. Human Requirement에 없는 작업을 추가하지 말고 완료선을 충족하는 가장 작은 범위를 선택하세요.
-- 현재 Context, 파일 budget 또는 검증 방법 때문에 전체 완료선을 확정할 수 없으면 억지로 범위를 키우거나 partial ready=true를 만들지 마세요. implementationScope.ready=false로 하고 결정을 막는 구체적인 실제 blocker 1개를 골라 questions에 Blocking Question 1개만 반환하세요. 질문에는 확정할 수 없는 필수 완료조건과 그 해결에 필요한 정보나 결정을 구체적으로 적으세요. allowedPaths/contextPaths/requiredChanges/forbiddenChanges/validationCommands는 모두 빈 배열로 반환하세요.
+- 현재 Context, 파일 budget 또는 검증 방법 때문에 전체 완료선을 확정할 수 없으면 억지로 범위를 키우거나 partial ready=true를 만들지 마세요. implementationScope.ready=false로 하고, 현재 Context에서 확인 가능한 서로 독립적인 실제 blocker를 questions에 한 번에 모두 반환하세요. Blocking Question은 최대 3개이며, 같은 상위 결정에서 파생된 세부 질문은 하나로 묶으세요. 3개를 넘는 blocker가 있다면 구현 범위를 결정하는 상위 의사결정 단위로 묶어 최대 3개로 수렴시키세요. 다음 재PLAN에서 새 blocker를 하나씩 드러내는 방식으로 질문을 미루지 마세요. 각 질문에는 확정할 수 없는 필수 완료조건과 그 해결에 필요한 정보나 결정을 구체적으로 적으세요. allowedPaths/contextPaths/requiredChanges/forbiddenChanges/validationCommands는 모두 빈 배열로 반환하세요.
 Context Pack에 없는 외부 사실(모델 식별자, 가격, 사용량 필드, 외부 서비스 동작 등)은 추측하거나 가정하지 마세요. 명시적 Issue 완료선에 필수인 외부 사실이나 검증 근거가 없으면 위 완료선 정책에 따라 구체적인 blocker로 다루세요. 명시적 Issue 완료선이 없는 일반 요구에서는 그런 사실이 필요한 부분은 이번 slice에 넣지 말고 후속 범위로 남기세요. 이 일반 요구에서는 외부 사실이 없어 요구 전체를 한 번에 구현할 수 없다는 것만으로는 blocking question을 만들지 마세요.
 approach: 구현 접근, changeCandidates: 변경 후보 경로와 이유, acceptanceCriteria: 관찰 가능한 완료조건,
 testStrategy: 기존 문맥에서 확인 가능한 테스트와 추가할 테스트 및 실행 방법, questions: IMPLEMENT 범위 또는 검증 방법을 확정하지 못하게 하는 blocking question만 작성하세요. 비차단 확인/참고 사항은 questions에 넣지 말고 approach 또는 testStrategy에 검증 방법으로 반영하세요.
@@ -776,6 +779,7 @@ export function validatePlan(value: unknown, target: string, context: PlanContex
     if (!Array.isArray(plan[key]) || plan[key].length === 0 || !plan[key].every(nonempty)) throw new Error(`Missing ${key}`);
   }
   if (!Array.isArray(plan.questions) || !plan.questions.every(v => typeof v === "string")) throw new Error("Invalid questions");
+  if (plan.questions.length > PLAN_MAX_BLOCKING_QUESTIONS) throw new Error("PLAN blocking questions exceed budget");
   if (!Array.isArray(plan.analysis) || plan.analysis.length === 0) throw new Error("Missing repository analysis");
 
   const contextByEvidenceId = new Map(context.files.map((file) => [file.evidenceId, file]));

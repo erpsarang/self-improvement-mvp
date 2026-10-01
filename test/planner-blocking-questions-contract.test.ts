@@ -56,7 +56,7 @@ test("PLAN prompt keeps questions blocking-only and preserves fail-closed ready 
   }
 });
 
-test("unresolved explicit Issue completion requires one concrete blocker and an empty fail-closed scope", () => {
+test("unresolved explicit Issue completion returns bounded blocker set and an empty fail-closed scope", () => {
   const root = mkdtempSync(join(tmpdir(), "planner-completion-blocker-"));
   const target = join(root, "target");
   mkdirSync(target);
@@ -68,7 +68,10 @@ test("unresolved explicit Issue completion requires one concrete blocker and an 
     // Assert policy only: echoed requirement/context must not satisfy these checks.
     const policy = createPlanPrompt(requirement, context).split("\n사용자 요구(JSON 문자열):")[0]!;
     assert.match(policy, /현재 Context, 파일 budget 또는 검증 방법 때문에 전체 완료선을 확정할 수 없으면/);
-    assert.match(policy, /implementationScope\.ready=false로 하고 결정을 막는 구체적인 실제 blocker 1개를 골라 questions에 Blocking Question 1개만 반환하세요/);
+    assert.match(policy, /implementationScope\.ready=false로 하고, 현재 Context에서 확인 가능한 서로 독립적인 실제 blocker를 questions에 한 번에 모두 반환하세요/);
+    assert.match(policy, /Blocking Question은 최대 3개/);
+    assert.match(policy, /다음 재PLAN에서 새 blocker를 하나씩 드러내는 방식으로 질문을 미루지 마세요/);
+    assert.doesNotMatch(policy, /Blocking Question 1개만 반환하세요/);
     assert.match(policy, /확정할 수 없는 필수 완료조건과 그 해결에 필요한 정보나 결정을 구체적으로 적으세요/);
     assert.match(policy, /allowedPaths\/contextPaths\/requiredChanges\/forbiddenChanges\/validationCommands는 모두 빈 배열로 반환하세요/);
     assert.match(policy, /명시적 Issue 완료선에 필수인 외부 사실이나 검증 근거가 없으면 위 완료선 정책에 따라 구체적인 blocker로 다루세요/);
