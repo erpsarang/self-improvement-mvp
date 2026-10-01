@@ -351,17 +351,25 @@ test("rejects free-form quote/path evidence, missing strategies, empty requireme
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("PLAN workflow removes repositories before bounded read-only AI execution", () => {
+test("PLAN workflow removes repositories before bounded Claude Max OAuth execution", () => {
   const workflow = readFileSync(".github/workflows/plan.yml", "utf8");
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /timeout-minutes: 5/);
   assert.match(workflow, /Remove repository checkouts before AI/);
   assert.match(workflow, /rm -rf planner-control plan-target/);
   assert.match(workflow, /Read-only bounded AI Planner[\s\S]*timeout-minutes: 3/);
-  assert.match(workflow, /permission-profile: ":read-only"/);
-  assert.match(workflow, /safety-strategy: drop-sudo/);
-  assert.match(workflow, /effort: medium/);
-  assert.doesNotMatch(workflow, /effort: high/);
+  assert.match(workflow, /anthropics\/claude-code-action\/base-action@12dd8d74c712f5f3669365b2369b558c495b1104/);
+  assert.match(workflow, /claude_code_oauth_token:.*CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.match(workflow, /ANTHROPIC_API_KEY: ""/);
+  assert.match(workflow, /--permission-mode plan/);
+  assert.match(workflow, /--max-turns 1/);
+  assert.match(workflow, /--disallowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"/);
+  assert.match(workflow, /--json-schema/);
+  assert.match(workflow, /steps\.plan_ai\.outputs\.structured_output/);
+  assert.match(workflow, /raw-plan\.json/);
+  assert.match(workflow, /productImprovementCandidate \? 'sonnet' : 'opus'/);
+  assert.doesNotMatch(workflow, /openai\/codex-action/);
+  assert.doesNotMatch(workflow, /FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/);
   assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 4);
   assert.match(workflow, /Fresh Target checkout at frozen SHA for validation/);
   assert.doesNotMatch(workflow.split("  provenance:")[0]!, /(?:contents|issues|pull-requests): write|workflow_run:|workflow_call:|git (?:commit|push|checkout -b)|trusted-rail/);
