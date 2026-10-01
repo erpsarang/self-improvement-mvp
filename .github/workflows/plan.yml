@@ -172,52 +172,58 @@ jobs:
             exit 1
           fi
 
-      - name: Claude structured output schema 준비
-        id: claude_schema
+      - name: Install Claude Code exact version
         shell: bash
         run: |
           set -euo pipefail
-          test -s "${RUNNER_TEMP}/ai-plan/schema.json"
-          delimiter="plan_schema_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-          {
-            echo "json<<${delimiter}"
-            cat "${RUNNER_TEMP}/ai-plan/schema.json"
-            echo
-            echo "${delimiter}"
-          } >> "$GITHUB_OUTPUT"
+          npm install -g @anthropic-ai/claude-code@2.1.286
+          version="$(claude --version | awk '{print $1}')"
+          test "$version" = "2.1.286"
 
       - name: Read-only bounded AI Planner
         id: plan_ai
         timeout-minutes: 3
-        uses: anthropics/claude-code-action/base-action@12dd8d74c712f5f3669365b2369b558c495b1104
+        shell: bash
+        working-directory: ${{ runner.temp }}/plan-neutral
         env:
-          CLAUDE_WORKING_DIR: ${{ runner.temp }}/plan-neutral
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ""
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt_file: ${{ runner.temp }}/ai-plan/prompt.md
-          claude_args: >-
-            --model ${{ steps.input.outputs.planner_model }}
-            --max-turns 1
-            --permission-mode plan
-            --disallowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
-            --json-schema '${{ steps.claude_schema.outputs.json }}'
+          ANTHROPIC_AUTH_TOKEN: ""
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/plan-claude-config
+        run: |
+          set -euo pipefail
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          schema="$(cat "$RUNNER_TEMP/ai-plan/schema.json")"
+          claude -p "Follow the complete PLAN instructions provided on stdin. Return only the requested structured PLAN." \
+            --model "${{ steps.input.outputs.planner_model }}" \
+            --output-format json \
+            --json-schema "$schema" \
+            --max-turns 1 \
+            --permission-mode plan \
+            --permission-prompts none \
+            --restricted \
+            --tools "" \
+            --disallowedTools "*" \
+            --no-session-persistence \
+            < "$RUNNER_TEMP/ai-plan/prompt.md" \
+            > "$RUNNER_TEMP/ai-plan/claude-response.json"
 
       - name: Claude structured PLAN을 기존 raw-plan 계약으로 저장
         shell: bash
-        env:
-          CLAUDE_STRUCTURED_PLAN: ${{ steps.plan_ai.outputs.structured_output }}
         run: |
           set -euo pipefail
           node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
-          const raw = process.env.CLAUDE_STRUCTURED_PLAN || '';
-          if (!raw.trim()) throw new Error('Claude structured PLAN output is empty');
-          const parsed = JSON.parse(raw);
+          const responsePath = path.join(process.env.RUNNER_TEMP, 'ai-plan', 'claude-response.json');
+          const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'));
+          const plan = response?.structured_output;
+          if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+            throw new Error('Claude CLI structured_output is missing');
+          }
           fs.writeFileSync(
             path.join(process.env.RUNNER_TEMP, 'ai-plan', 'raw-plan.json'),
-            JSON.stringify(parsed),
+            JSON.stringify(plan),
           );
           NODE
 
