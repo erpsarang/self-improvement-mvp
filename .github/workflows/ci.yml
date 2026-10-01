@@ -22,10 +22,7 @@ jobs:
       - name: actionlint 설치
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: GitHub Actions workflow 정적 검증
-        run: >-
-          "$(go env GOPATH)/bin/actionlint"
-          -ignore 'input "permission-profile" is not defined in action "openai/codex-action@v1"'
-          -ignore 'input "allow-bot-users" is not defined in action "openai/codex-action@v1"'
+        run: '"$(go env GOPATH)/bin/actionlint"'
       - uses: actions/setup-node@v4
         with:
           node-version: 22
