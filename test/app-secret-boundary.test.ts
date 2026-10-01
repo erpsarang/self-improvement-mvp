@@ -11,11 +11,11 @@ const directCodexWorkflows = [
   ".github/workflows/semantic-review.yml",
 ] as const;
 
-test("PLAN은 Claude Max OAuth만, 나머지 direct AI workflow는 repository-scoped Codex key를 사용한다", async () => {
+test("PLAN public workflow는 subscription/API credential을 보유하지 않고 나머지 direct AI workflow만 repository-scoped Codex key를 사용한다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
-  assert.match(plan, /claude_code_oauth_token:\s*\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
-  assert.match(plan, /ANTHROPIC_API_KEY:\s*""/);
-  assert.doesNotMatch(plan, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY/);
+  assert.match(plan, /ai-dev-framework:PLAN_REQUEST v=1/);
+  assert.doesNotMatch(plan, /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY/);
+  assert.doesNotMatch(plan, /anthropics\/claude-code-action|openai\/codex-action/);
 
   let total = 0;
   for (const path of directCodexWorkflows) {
