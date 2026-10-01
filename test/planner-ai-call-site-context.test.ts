@@ -42,6 +42,18 @@ function callStep(name: string, effort: string, extra = ""): string {
   ].filter((line) => line !== "").join("\n");
 }
 
+function claudeCallStep(name: string): string {
+  return [
+    `      - name: ${name}`,
+    "        id: ai",
+    "        uses: anthropics/claude-code-action/base-action@12dd8d74c712f5f3669365b2369b558c495b1104",
+    "        with:",
+    "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}",
+    "          prompt_file: prompt.md",
+    "          claude_args: '--model opus --max-turns 1'",
+  ].join("\n");
+}
+
 function workflow(name: string, steps: readonly string[], trailer = ""): string {
   return [
     `name: ${name}`,
@@ -163,6 +175,11 @@ test("aiCallStepWindow는 첫 AI 호출 step 블록만 잘라내고 startOffset�
   assert.match(window.content, /uses: openai\/codex-action@v1/);
   assert.match(window.content, /effort: low/);
   assert.doesNotMatch(window.content, /IMPLEMENT Worker retry|name: record|actions\/checkout/);
+
+  const claudeWindow = aiCallStepWindow(workflow("PLAN", [claudeCallStep("Claude Planner")]), AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES);
+  assert.ok(claudeWindow);
+  assert.match(claudeWindow.content, /uses: anthropics\/claude-code-action\/base-action@/);
+  assert.doesNotMatch(claudeWindow.content, /openai\/codex-action/);
 
   assert.equal(aiCallStepWindow(workflow("CI", ["      - run: npm test"]), AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES), null);
 
@@ -356,7 +373,7 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
   // 이 repo 자신을 target으로 쓴다. AI 호출 step을 가진 lifecycle workflow(smoke 제외)는 모두 들어가야 한다.
   const target = process.cwd();
   const workflows = readFileSync(join(target, ".github", "workflows", "plan.yml"), "utf8");
-  assert.match(workflows, /uses: openai\/codex-action/);
+  assert.match(workflows, /uses: anthropics\/claude-code-action\/base-action@/);
 
   const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
   const paths = candidates.map((file) => file.path);
@@ -366,7 +383,7 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
   const lifecycleOnly = paths.filter((path) => !/-smoke\.yml$/.test(path));
   assert.ok(lifecycleOnly.length <= PLAN_CONTEXT_MAX_FILES - 1, "all lifecycle call sites fit beside one primary slot");
   for (const file of candidates) {
-    assert.match(file.content, /uses: openai\/codex-action/, file.path);
+    assert.match(file.content, /uses: (?:openai\/codex-action|anthropics\/claude-code-action\/base-action)@/, file.path);
     assert.ok(file.byteLength <= AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES, file.path);
     // trusted validatePlan의 frozen repository 검사 (#244 run 35971708433 회귀: byte 오프셋이 문자 인덱스로 쓰였다).
     const frozenText = readFileSync(join(target, file.path), "utf8");
