@@ -30,7 +30,7 @@ import {
 export const AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES = 3_000;
 const CANONICAL_FRAMEWORK_PACKAGE_NAME = "self-improvement-mvp";
 const WORKFLOW_DIRECTORY = ".github/workflows";
-const AI_CALL_STEP_USES = /^(\s*)uses:\s*(?:openai\/codex-action|anthropics\/claude-code-action\/base-action)@/;
+const AI_CALL_STEP_MARKER = /^(\s*)(?:uses:\s*(?:openai\/codex-action|anthropics\/claude-code-action\/base-action)@|claude\s+(?:-p|--print)\b)/;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 interface AiCallSiteContextBudget {
@@ -128,35 +128,35 @@ function leadingSpaces(line: string): number {
 }
 
 /**
- * 첫 지원 AI provider 호출 step(Codex 또는 Claude Code Base Action)이 속한 step 블록을 돌려준다.
- * 블록은 그 step의 `- ` 줄에서 시작해 같은 들여쓰기의 다음 step 또는 상위 key 직전에서 끝난다.
+ * 첫 지원 AI provider 호출 step(Codex/Claude Action 또는 direct Claude CLI)이 속한 step 블록을 돌려준다.
+ * 블록은 marker 앞의 가장 가까운 상위 `- ` step 줄에서 시작해 같은 들여쓰기의 다음 step 또는 상위 key 직전에서 끝난다.
  * 반환하는 startOffset은 `text.slice(startOffset, startOffset + content.length) === content`를 만족한다.
  * 한 workflow에 호출 step이 여러 개면(예: bounded IMPLEMENT Worker의 retry step) 첫 번째만 쓴다.
  */
 export function aiCallStepWindow(text: string, maxBytes: number): { content: string; startOffset: number } | null {
   const lines = text.split("\n");
-  const usesIndex = lines.findIndex((line) => AI_CALL_STEP_USES.test(line));
-  if (usesIndex < 0) return null;
-  const usesIndent = leadingSpaces(lines[usesIndex]!);
-  const stepIndent = usesIndent - 2;
-  if (stepIndent < 0) return null;
+  const markerIndex = lines.findIndex((line) => AI_CALL_STEP_MARKER.test(line));
+  if (markerIndex < 0) return null;
+  const markerIndent = leadingSpaces(lines[markerIndex]!);
 
-  let start = usesIndex;
-  while (start > 0) {
+  let start = markerIndex;
+  while (start >= 0) {
     const line = lines[start]!;
-    if (leadingSpaces(line) === stepIndent && line.trimStart().startsWith("- ")) break;
+    if (line.trim() !== "" && leadingSpaces(line) < markerIndent && line.trimStart().startsWith("- ")) break;
     start -= 1;
   }
+  if (start < 0) return null;
   const startLine = lines[start]!;
-  if (!(leadingSpaces(startLine) === stepIndent && startLine.trimStart().startsWith("- "))) return null;
+  const stepIndent = leadingSpaces(startLine);
+  if (!startLine.trimStart().startsWith("- ")) return null;
 
-  let end = usesIndex + 1;
+  let end = markerIndex + 1;
   while (end < lines.length) {
     const line = lines[end]!;
     if (line.trim() !== "" && leadingSpaces(line) <= stepIndent) break;
     end += 1;
   }
-  while (end > usesIndex + 1 && lines[end - 1]!.trim() === "") end -= 1;
+  while (end > markerIndex + 1 && lines[end - 1]!.trim() === "") end -= 1;
 
   // startOffset은 다른 Context 모듈과 validatePlan이 쓰는 것과 같은 문자(UTF-16 code unit) 인덱스다.
   // byte 오프셋을 넣으면 한글 step 이름이 앞에 있는 workflow에서 trusted 검증이 fail-closed 된다.
