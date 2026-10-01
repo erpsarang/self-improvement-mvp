@@ -44,7 +44,7 @@ test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인�
     assert.equal(existsSync(join(target, path)), false, `${path} must stay a fixture-only path that never exists in the repository`);
   }
   const callSites = aiCallSiteCandidates(REQUIREMENT, target).filter((file) => !/-smoke\.yml$/.test(file.path));
-  assert.ok(callSites.length >= 7, `expected the lifecycle call sites, got ${callSites.map((file) => file.path).join(", ")}`);
+  assert.ok(callSites.length >= 6, `expected the lifecycle call sites, got ${callSites.map((file) => file.path).join(", ")}`);
   const packageJson = readFileSync(join(target, "package.json"), "utf8");
   const evidence = [
     ...callSites.map((file) => ({ path: file.path, startOffset: file.startOffset, content: file.content, contentDigest: file.contentDigest })),

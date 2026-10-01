@@ -373,11 +373,11 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
   // 이 repo 자신을 target으로 쓴다. AI 호출 step을 가진 lifecycle workflow(smoke 제외)는 모두 들어가야 한다.
   const target = process.cwd();
   const workflows = readFileSync(join(target, ".github", "workflows", "plan.yml"), "utf8");
-  assert.match(workflows, /uses: anthropics\/claude-code-action\/base-action@/);
+  assert.doesNotMatch(workflows, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/);
 
   const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
   const paths = candidates.map((file) => file.path);
-  for (const lifecycle of ["plan", "plan-implement-worker", "implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
+  for (const lifecycle of ["plan-implement-worker", "implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
     assert.ok(paths.includes(`.github/workflows/${lifecycle}.yml`), `${lifecycle} must be an AI call-site candidate: ${paths.join(", ")}`);
   }
   const lifecycleOnly = paths.filter((path) => !/-smoke\.yml$/.test(path));

@@ -13,6 +13,10 @@ function position(source: string, fragment: string): number {
   return index;
 }
 
+function finalPlanPointer(): string {
+  return plan.slice(position(plan, '- name: Leave human-readable PLAN pointer on requirement Issue'));
+}
+
 test('PLAN appends its summary after existing provenance fields', () => {
   const fields = [
     'PLAN: [${identity.artifactName}]',
@@ -24,14 +28,15 @@ test('PLAN appends its summary after existing provenance fields', () => {
     'PLAN artifact SHA-256:',
     '### HumanStatus: PLAN',
   ];
-  const positions = fields.map((field) => position(plan, field));
+  const pointer = finalPlanPointer();
+  const positions = fields.map((field) => position(pointer, field));
   for (let index = 1; index < positions.length; index += 1) {
     const previous = positions[index - 1];
     const current = positions[index];
     assert.ok(previous !== undefined && current !== undefined && previous < current);
   }
-  assert.match(plan, /\*\*현재 상황:\*\*/);
-  assert.match(plan, /\*\*다음 행동:\*\*/);
+  assert.match(pointer, /\*\*현재 상황:\*\*/);
+  assert.match(pointer, /\*\*다음 행동:\*\*/);
 });
 
 test('PLAN_AUTHORIZE appends its summary after exact artifact identity', () => {
@@ -81,13 +86,14 @@ test('STOPPED is published only by the PLAN_AUTHORIZE and Handoff fail-closed pa
 });
 
 test('PLAN pointer carries the Decision Packet between provenance fields and HumanStatus, and fails closed without it', () => {
-  const packetGuard = position(plan, "startsWith('### PLAN Decision Packet')");
-  const failClosed = position(plan, 'Missing PLAN Decision Packet');
-  const digest = position(plan, 'PLAN artifact SHA-256:');
-  const packet = position(plan, '              decisionPacket,');
-  const status = position(plan, '### HumanStatus: PLAN');
+  const pointer = finalPlanPointer();
+  const packetGuard = position(pointer, "startsWith('### PLAN Decision Packet')");
+  const failClosed = position(pointer, 'Missing PLAN Decision Packet');
+  const digest = position(pointer, 'PLAN artifact SHA-256:');
+  const packet = position(pointer, '              decisionPacket,');
+  const status = position(pointer, '### HumanStatus: PLAN');
   assert.ok(packetGuard < failClosed && failClosed < digest && digest < packet && packet < status);
-  assert.match(plan, /\*\*다음 행동:\*\* \$\{nextAction\}/);
+  assert.match(pointer, /\*\*다음 행동:\*\* \$\{nextAction\}/);
   assert.match(plan, /decision_packet: \$\{\{ steps\.validate\.outputs\.decision_packet \}\}/);
   assert.match(plan, /plan_ready: \$\{\{ steps\.validate\.outputs\.plan_ready \}\}/);
 });
