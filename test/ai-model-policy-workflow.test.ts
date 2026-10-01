@@ -4,7 +4,6 @@ import test from "node:test";
 
 const codexWorkflowPaths = [
   ".github/workflows/implement.yml",
-  ".github/workflows/learn.yml",
   ".github/workflows/product-evaluation.yml",
   ".github/workflows/bounded-fix-smoke.yml",
   ".github/workflows/single-pass-smoke.yml",
@@ -47,10 +46,15 @@ test("고레버리지 PLAN은 Opus, 구 IMPLEMENT는 Sol, PLAN Worker·REVIEW·F
   assert.match(review, /kind: REVIEW\n/);
 });
 
-test("반복 read-only 평가와 smoke는 Luna를 명시하고 provenance도 일치한다", async () => {
+test("LEARN은 subscription executor(sonnet)를 쓰고 provenance도 일치한다", async () => {
   const learn = await readFile(".github/workflows/learn.yml", "utf8");
-  assert.match(learn, /model: gpt-6-luna/);
-  assert.match(learn, /LEARNER_MODEL: gpt-6-luna/);
+  assert.doesNotMatch(learn, /uses:\s*openai\/codex-action@|model: gpt-/);
+  assert.match(learn, /kind: LEARN\n/);
+  assert.match(learn, /LEARNER_PROVIDER: claude-max-subscription\n/);
+  assert.match(learn, /LEARNER_MODEL: sonnet\n/);
+});
+
+test("반복 read-only 평가와 smoke는 Luna를 명시하고 provenance도 일치한다", async () => {
 
   const product = await readFile(".github/workflows/product-evaluation.yml", "utf8");
   assert.match(product, /model: gpt-6-luna/);

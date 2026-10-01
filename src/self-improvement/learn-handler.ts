@@ -1,10 +1,11 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { verifyCompletedCycleRecord, type CompletedCycleRecord } from "./completed-cycle.js";
 import { verifyLearnInputPack, type LearnInputPack } from "./learn-input-pack.js";
 import {
   createLearnReport,
   createLearnReportOutputSchema,
   createLearnReportPrompt,
+  createLearnSubscriptionIdentity,
   learnReportArtifactName,
 } from "./learn-report.js";
 
@@ -39,15 +40,22 @@ verifyCompletedCycleRecord(completedCycle);
 verifyLearnInputPack(pack, completedCycle);
 
 if (command === "prepare") {
+  // Private subscription executor에 보낼 LEARN_REQUEST 입력. prompt에 Input Pack 전체가 들어 있다.
   const runtimeDir = requiredEnv("LEARN_RUNTIME_DIR");
   mkdirSync(runtimeDir, { recursive: true });
-  writeFileSync(`${runtimeDir}/learn-input-pack.json`, `${JSON.stringify(pack, null, 2)}\n`, "utf8");
-  writeFileSync(`${runtimeDir}/learn-prompt.md`, `${createLearnReportPrompt(pack)}\n`, "utf8");
-  writeFileSync(
-    `${runtimeDir}/learn-output.schema.json`,
-    `${JSON.stringify(createLearnReportOutputSchema(pack), null, 2)}\n`,
-    "utf8",
-  );
+  const identity = createLearnSubscriptionIdentity(pack, {
+    sourceRun: {
+      runId: positiveIntegerEnv("LEARN_SOURCE_RUN_ID"),
+      runAttempt: positiveIntegerEnv("LEARN_SOURCE_RUN_ATTEMPT"),
+    },
+    worker: { runId: positiveIntegerEnv("GITHUB_RUN_ID"), runAttempt: positiveIntegerEnv("GITHUB_RUN_ATTEMPT") },
+  });
+  writeFileSync(`${runtimeDir}/identity.json`, `${JSON.stringify(identity, null, 2)}\n`, "utf8");
+  writeFileSync(`${runtimeDir}/prompt.md`, `${createLearnReportPrompt(pack)}\n`, "utf8");
+  writeFileSync(`${runtimeDir}/schema.json`, `${JSON.stringify(createLearnReportOutputSchema(pack), null, 2)}\n`, "utf8");
+  if (readdirSync(runtimeDir).sort().join(",") !== "identity.json,prompt.md,schema.json") {
+    throw new Error("LEARN request directory는 identity.json, prompt.md, schema.json만 가져야 합니다");
+  }
   writeOutput("issue_number", pack.completedCycle.requirementIssueNumber);
   writeOutput("human_merge_pr", pack.completedCycle.humanMergePullRequestNumber);
   writeOutput("pack_digest", pack.packDigest);

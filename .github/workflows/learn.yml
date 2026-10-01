@@ -1,5 +1,7 @@
 name: Read-only AI LEARN
 
+# Learner는 Private subscription executor(Claude Max, sonnet)가 LEARN_REQUEST 1회로 수행한다.
+# prompt에 Trusted LEARN Input Pack 전체가 들어 있고, 결과는 trusted finalize가 evidence grounding을 다시 검증한다.
 on:
   workflow_dispatch:
     inputs:
@@ -36,6 +38,8 @@ jobs:
       human_merge_pr: ${{ steps.prepare.outputs.human_merge_pr }}
       pack_digest: ${{ steps.prepare.outputs.pack_digest }}
       request_artifact_name: ${{ steps.names.outputs.request_artifact_name }}
+      request_artifact_id: ${{ steps.request_upload.outputs.artifact-id }}
+      request_artifact_digest: ${{ steps.request_upload.outputs.artifact-digest }}
       source_run_id: ${{ steps.source.outputs.source_run_id }}
       source_run_attempt: ${{ steps.source.outputs.source_run_attempt }}
       input_artifact_name: ${{ steps.source.outputs.input_artifact_name }}
@@ -166,6 +170,8 @@ jobs:
           COMPLETED_CYCLE_JSON: ${{ runner.temp }}/learn-source/completed-cycle.json
           LEARN_INPUT_PACK_JSON: ${{ runner.temp }}/learn-source/learn-input-pack.json
           LEARN_RUNTIME_DIR: ${{ runner.temp }}/learn-request
+          LEARN_SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+          LEARN_SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.source_run_attempt }}
 
       - name: request artifact 이름 고정
         id: names
@@ -175,81 +181,37 @@ jobs:
         run: echo "request_artifact_name=learn-request-issue-${ISSUE_NUMBER}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: trusted LEARN request 저장
+        id: request_upload
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.names.outputs.request_artifact_name }}
           path: ${{ runner.temp }}/learn-request/
           if-no-files-found: error
 
-  learner:
-    name: isolated read-only AI Learner
+  exchange:
+    name: LEARN subscription 교환
     needs: prepare
     if: needs.prepare.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
     permissions:
-      contents: read
-    env:
-      GITHUB_TOKEN: ""
-      GH_TOKEN: ""
-      NODE_AUTH_TOKEN: ""
-      NPM_TOKEN: ""
-    steps:
-      - name: trusted LEARN request 다운로드
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.prepare.outputs.request_artifact_name }}
-          path: ${{ runner.temp }}/learn-request
-
-      - name: LEARN request 구조 확인 및 neutral workspace 생성
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t files < <(find "${RUNNER_TEMP}/learn-request" -type f -print)
-          if [ "${#files[@]}" -ne 3 ]; then
-            echo "LEARN request artifact must contain exactly three files" >&2
-            exit 1
-          fi
-          for required in learn-input-pack.json learn-prompt.md learn-output.schema.json; do
-            test -f "${RUNNER_TEMP}/learn-request/${required}"
-          done
-          mkdir -p "${RUNNER_TEMP}/learn-neutral" "${RUNNER_TEMP}/learner-output"
-
-      - name: Untrusted read-only AI Learner
-        timeout-minutes: 3
-        uses: openai/codex-action@v1
-        with:
-          openai-api-key: ${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}
-          permission-profile: ":read-only"
-          allow-bot-users: "github-actions[bot]"
-          safety-strategy: drop-sudo
-          working-directory: ${{ runner.temp }}/learn-neutral
-          codex-home: ${{ runner.temp }}/learn-codex-home
-          prompt-file: ${{ runner.temp }}/learn-request/learn-prompt.md
-          output-schema-file: ${{ runner.temp }}/learn-request/learn-output.schema.json
-          output-file: ${{ runner.temp }}/learner-output/learner.json
-          model: gpt-6-luna
-          effort: medium
-          codex-args: '["-c","project_doc_max_bytes=0"]'
-
-      - name: Learner output 최소 구조 확인
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s "${RUNNER_TEMP}/learner-output/learner.json"
-          node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${RUNNER_TEMP}/learner-output/learner.json"
-
-      - name: untrusted Learner output 저장
-        uses: actions/upload-artifact@v4
-        with:
-          name: learner-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/learner-output/learner.json
-          if-no-files-found: error
+      actions: read
+      issues: write
+    uses: ./.github/workflows/subscription-exchange.yml
+    with:
+      kind: LEARN
+      label: PR #${{ needs.prepare.outputs.human_merge_pr }} LEARN
+      issue_number: ${{ needs.prepare.outputs.issue_number }}
+      request_artifact_name: ${{ needs.prepare.outputs.request_artifact_name }}
+      request_artifact_id: ${{ needs.prepare.outputs.request_artifact_id }}
+      request_artifact_digest: ${{ needs.prepare.outputs.request_artifact_digest }}
+      result_artifact_name: learner-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      result_file_name: learner.json
+    secrets:
+      EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
 
   finalize:
     name: trusted LEARN report 검증
-    needs: [prepare, learner]
-    if: needs.prepare.result == 'success' && needs.learner.result == 'success'
+    needs: [prepare, exchange]
+    if: needs.prepare.result == 'success' && needs.exchange.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -368,10 +330,11 @@ jobs:
           LEARN_INPUT_ARTIFACT_NAME: ${{ needs.prepare.outputs.input_artifact_name }}
           LEARN_INPUT_ARTIFACT_ID: ${{ steps.source.outputs.input_artifact_id }}
           LEARN_INPUT_ARTIFACT_DIGEST: ${{ steps.source.outputs.input_artifact_digest }}
-          LEARNER_PROVIDER: OpenAI
-          LEARNER_ACTION: openai/codex-action@v1
-          LEARNER_MODEL: gpt-6-luna
-          LEARNER_REASONING_EFFORT: medium
+          LEARNER_PROVIDER: claude-max-subscription
+          LEARNER_ACTION: erpsarang/subscription-ai-executor/learn-poller.yml
+          LEARNER_MODEL: sonnet
+          # Private executor는 아직 effort를 넘기지 않는다. 확인되지 않은 값을 기록하지 않는다.
+          LEARNER_REASONING_EFFORT: cli-default
 
       - name: validated untrusted LEARN report 저장
         uses: actions/upload-artifact@v4
