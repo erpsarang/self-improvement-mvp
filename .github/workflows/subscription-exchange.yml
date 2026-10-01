@@ -194,9 +194,10 @@ jobs:
               return identity;
             }
             // END subscription-exchange
-            // Private Executor가 Framework repository만 받으므로 App에서는 요청을 남기기 전에 멈춘다.
-            if (`${context.repo.owner}/${context.repo.repo}` !== 'erpsarang/self-improvement-mvp') {
-              core.setFailed('subscription executor supports only the Framework repository');
+            // Private Executor의 repository allowlist(plan_bridge.ALLOWED_REPOSITORIES)와 같다. 밖이면 요청을 남기기 전에 멈춘다.
+            const SUBSCRIPTION_REPOSITORIES = ['erpsarang/self-improvement-mvp', 'erpsarang/sales-order-exception-analyzer'];
+            if (!SUBSCRIPTION_REPOSITORIES.includes(`${context.repo.owner}/${context.repo.repo}`)) {
+              core.setFailed('subscription executor does not accept this repository');
               return;
             }
             const kind = process.env.SUBSCRIPTION_KIND;
@@ -244,6 +245,7 @@ jobs:
           EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
           SUBSCRIPTION_REQUEST_ID: ${{ steps.marker.outputs.request_id }}
           SUBSCRIPTION_POLLER: ${{ steps.marker.outputs.poller }}
+          SUBSCRIPTION_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -255,6 +257,10 @@ jobs:
             echo "Invalid SUBSCRIPTION_REQUEST_ID; refusing executor dispatch." >&2
             exit 1
           fi
+          if [[ ! "$SUBSCRIPTION_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Invalid SUBSCRIPTION_REPOSITORY; refusing executor dispatch." >&2
+            exit 1
+          fi
           case "$SUBSCRIPTION_POLLER" in
             implement-poller.yml|review-poller.yml|fix-poller.yml|learn-poller.yml) ;;
             *) echo "Unsupported subscription poller: $SUBSCRIPTION_POLLER" >&2; exit 1 ;;
@@ -264,7 +270,7 @@ jobs:
             -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches" \
-            -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$SUBSCRIPTION_REQUEST_ID\"}}"
+            -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$SUBSCRIPTION_REQUEST_ID\",\"repository\":\"$SUBSCRIPTION_REPOSITORY\"}}"
 
   wait:
     needs: request
