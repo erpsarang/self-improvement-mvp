@@ -992,3 +992,42 @@ export function decideImprovementIssue(
     body: renderImprovementIssueBody(report),
   };
 }
+
+// ---- Product Evaluation subscription: Private subscription executor(Claude Max, sonnet)에 1회 요청한다. ----
+
+export const PRODUCT_EVALUATION_SUBSCRIPTION_MODEL = "sonnet" as const;
+
+export interface ProductEvaluationSubscriptionIdentity {
+  readonly schemaVersion: 1;
+  readonly kind: "trusted-product-evaluation-request";
+  readonly repository: string;
+  readonly issueNumber: number;
+  /** 평가한 배포 SHA(현재 default branch). */
+  readonly baseSha: string;
+  readonly humanMergePullRequest: number;
+  readonly snapshotDigest: string;
+  /** 결과를 기다리는 이 Product Evaluation run. Private Executor가 live run인지 확인한다. */
+  readonly worker: { readonly runId: number; readonly runAttempt: number };
+  readonly model: typeof PRODUCT_EVALUATION_SUBSCRIPTION_MODEL;
+}
+
+export function createProductEvaluationSubscriptionIdentity(
+  snapshot: ProductSnapshot,
+  worker: { readonly runId: number; readonly runAttempt: number },
+): ProductEvaluationSubscriptionIdentity {
+  verifyProductSnapshot(snapshot);
+  for (const [name, value] of [["worker.runId", worker.runId], ["worker.runAttempt", worker.runAttempt]] as const) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: "trusted-product-evaluation-request",
+    repository: snapshot.repository,
+    issueNumber: snapshot.deployedCycle.requirementIssueNumber,
+    baseSha: snapshot.deployedCycle.deployedSha,
+    humanMergePullRequest: snapshot.deployedCycle.humanMergePullRequestNumber,
+    snapshotDigest: snapshot.snapshotDigest,
+    worker: { runId: worker.runId, runAttempt: worker.runAttempt },
+    model: PRODUCT_EVALUATION_SUBSCRIPTION_MODEL,
+  });
+}

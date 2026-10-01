@@ -8,6 +8,7 @@ import {
   createProductEvaluationOutputSchema,
   createProductEvaluationPrompt,
   createProductEvaluationReport,
+  createProductEvaluationSubscriptionIdentity,
   createProductSnapshot,
   decideImprovementIssue,
   decideProductEvaluationNeed,
@@ -542,4 +543,22 @@ test("#319: 전체 한도도 넘는 변경 파일과 확정되지 않은 변경 
   for (const incomplete of [null, { complete: false, paths: ["src/web.js"] }, { complete: true, paths: ["../src/web.js"] }]) {
     assert.deepEqual(changedProductSnapshotPaths(incomplete), [], JSON.stringify(incomplete));
   }
+});
+
+test("PRODUCT_EVALUATION subscription identity는 exact snapshot, 배포 SHA, 이 run과 sonnet에 묶인다", () => {
+  const snapshot = createProductSnapshot(cycle, appFixture());
+  assert.deepEqual(createProductEvaluationSubscriptionIdentity(snapshot, { runId: 901, runAttempt: 1 }), {
+    schemaVersion: 1,
+    kind: "trusted-product-evaluation-request",
+    repository: "erpsarang/classic-paragraph-wit",
+    issueNumber: 6,
+    baseSha: "90eaf07d1b0e4a2c2f3f6a5b8c7d9e0f1a2b3c4d",
+    humanMergePullRequest: 7,
+    snapshotDigest: snapshot.snapshotDigest,
+    worker: { runId: 901, runAttempt: 1 },
+    model: "sonnet",
+  });
+  assert.throws(() => createProductEvaluationSubscriptionIdentity(snapshot, { runId: 0, runAttempt: 1 }), /worker\.runId/);
+  // 위변조된 snapshot으로는 요청을 만들지 않는다.
+  assert.throws(() => createProductEvaluationSubscriptionIdentity({ ...snapshot, fileCount: snapshot.fileCount + 1 }, { runId: 901, runAttempt: 1 }));
 });

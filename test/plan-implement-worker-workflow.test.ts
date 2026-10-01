@@ -133,12 +133,13 @@ test("subscription exchange는 Private implement-poller 하나만 exact request_
   assert.doesNotMatch(workflow, /\/dispatches|createWorkflowDispatch|curl /);
   assert.equal((exchange.match(/\/dispatches/g) ?? []).length, 1);
   assert.ok(exchange.includes('"https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches"'));
-  // dispatch 대상은 kind가 고른 네 Private poller로만 제한된다.
-  assert.ok(exchange.includes("implement-poller.yml|review-poller.yml|fix-poller.yml|learn-poller.yml) ;;"));
+  // dispatch 대상은 kind가 고른 다섯 Private poller로만 제한된다.
+  assert.ok(exchange.includes("implement-poller.yml|review-poller.yml|fix-poller.yml|learn-poller.yml|product-evaluation-poller.yml) ;;"));
   assert.ok(exchange.includes("IMPLEMENT: { identityKind: 'trusted-implement-request', model: 'sonnet', run: 'worker', poller: 'implement-poller.yml' },"));
   assert.ok(exchange.includes("REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },"));
   assert.ok(exchange.includes("FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },"));
   assert.ok(exchange.includes("LEARN: { identityKind: 'trusted-learn-request', model: 'sonnet', run: 'worker', poller: 'learn-poller.yml' },"));
+  assert.ok(exchange.includes("PRODUCT_EVALUATION: { identityKind: 'trusted-product-evaluation-request', model: 'sonnet', run: 'worker', poller: 'product-evaluation-poller.yml' },"));
   // Private poller는 이 repository에서만 request를 찾는다. 값은 Actions가 정한 github.repository다.
   assert.match(exchange, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$SUBSCRIPTION_REQUEST_ID\\",\\"repository\\":\\"\$SUBSCRIPTION_REPOSITORY\\"\}\}"/);
   assert.match(exchange, /SUBSCRIPTION_REPOSITORY: \$\{\{ github\.repository \}\}/);

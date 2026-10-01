@@ -299,6 +299,8 @@ LEARN은 "개발 cycle이 어떻게 흘렀는가"를 봅니다. Product Evaluati
 
 Human Merge PR이 닫히면 `Trusted Product Evaluation`이 자동으로 시작합니다. MERGE_READY marker가 없는 PR은 조용히 건너뜁니다.
 
+Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, sonnet)가 실행합니다. 요청·결과 댓글은 닫힌 요구사항 Issue에 남고, App repository는 Private executor allowlist에 있어야 합니다.
+
 ```text
 Human Merge (MERGE_READY PR)
 → 현재 배포된 merge commit 확인
