@@ -35,8 +35,6 @@ jobs:
       GH_TOKEN: ""
       GITHUB_TOKEN: ""
       GIT_OPTIONAL_LOCKS: "0"
-      # Claude Max OAuth만 사용한다. API key 기반 과금으로 자동 전환하지 않는다.
-      ANTHROPIC_API_KEY: ""
     steps:
       - name: Framework checkout
         uses: actions/checkout@v4
@@ -208,6 +206,10 @@ jobs:
               identity.targetSha,
               identity.requirement.digest,
               model,
+              Number(identity.workflow.runId),
+              Number(identity.workflow.runAttempt),
+              Number(artifactId),
+              artifactDigest,
             ]), 'utf8').digest('hex');
             core.setOutput('request_id', requestId);
             const prefix = `<!-- ai-dev-framework:PLAN_REQUEST v=1 request=${requestId} `;
@@ -282,6 +284,8 @@ jobs:
           PLAN_MODEL: ${{ needs.plan.outputs.planner_model }}
           REQUEST_ID: ${{ needs.request.outputs.request_id }}
           REQUEST_COMMENT_ID: ${{ needs.request.outputs.request_comment_id }}
+          REQUEST_ARTIFACT_ID: ${{ needs.plan.outputs.request_artifact_id }}
+          REQUEST_ARTIFACT_DIGEST: ${{ needs.plan.outputs.request_artifact_digest }}
         with:
           script: |
             const fs = require('node:fs');
@@ -311,7 +315,11 @@ jobs:
               });
               const result = comments
                 .filter((comment) => Number(comment.id) > requestCommentId)
-                .filter((comment) => comment.author_association === 'OWNER')
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === context.repo.owner
+                )
                 .find((comment) => typeof comment.body === 'string' && comment.body.includes(markerPrefix));
               if (result) {
                 const match = resultPattern.exec(result.body);
@@ -321,6 +329,10 @@ jobs:
                     match[3] !== identity.repository ||
                     match[4] !== identity.targetSha ||
                     match[5] !== identity.requirement.digest ||
+                    Number(match[6]) !== Number(identity.workflow.runId) ||
+                    Number(match[7]) !== Number(identity.workflow.runAttempt) ||
+                    Number(match[8]) !== Number(process.env.REQUEST_ARTIFACT_ID) ||
+                    match[9] !== process.env.REQUEST_ARTIFACT_DIGEST ||
                     match[10] !== model) {
                   throw new Error('PLAN_RESULT identity mismatch');
                 }
@@ -351,6 +363,8 @@ jobs:
           PLAN_IDENTITY_JSON: ${{ needs.plan.outputs.identity }}
           PLAN_MODEL: ${{ needs.plan.outputs.planner_model }}
           REQUEST_ID: ${{ needs.request.outputs.request_id }}
+          REQUEST_ARTIFACT_ID: ${{ needs.plan.outputs.request_artifact_id }}
+          REQUEST_ARTIFACT_DIGEST: ${{ needs.plan.outputs.request_artifact_digest }}
         run: |
           set -euo pipefail
           cp "$RUNNER_TEMP/plan-result/raw-plan.json" "$RUNNER_TEMP/ai-plan/raw-plan.json"
@@ -372,6 +386,10 @@ jobs:
             actual.targetSha,
             actual.requirement.digest,
             process.env.PLAN_MODEL,
+            Number(actual.workflow.runId),
+            Number(actual.workflow.runAttempt),
+            Number(process.env.REQUEST_ARTIFACT_ID),
+            process.env.REQUEST_ARTIFACT_DIGEST,
           ]), 'utf8').digest('hex');
           if (requestId !== process.env.REQUEST_ID) throw new Error('PLAN request digest mismatch');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${actual.targetSha}\ncontrol_sha=${actual.workflow.sha}\nidentity=${JSON.stringify(actual)}\n`);
