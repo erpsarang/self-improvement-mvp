@@ -346,7 +346,7 @@ test("Context 표현과 어긋나는 handoff manifest는 Worker 실행 전에 fa
 });
 
 test("PLAN Worker는 exact edit만 반환하고 trusted 단계가 full candidate로 materialize한다", () => {
-  // PLAN Worker만 complete + edit 출력을 사용한다. smoke/bounded-fix의 공용 full-content schema는 그대로다.
+  // PLAN Worker만 complete + edit 출력을 사용한다. 단일 pass 공용 full-content schema(WORKER_OUTPUT_SCHEMA)는 그대로다.
   assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.required, ["summary", "changes", "complete"]);
   assert.deepEqual(PLAN_WORKER_OUTPUT_SCHEMA.properties.complete, { type: "boolean" });
   assert.deepEqual(
