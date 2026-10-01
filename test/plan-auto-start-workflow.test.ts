@@ -57,5 +57,6 @@ test("private PLAN executor wake-up은 exact request_id를 전달한다", () => 
   assert.match(wake, /PLAN_REQUEST_ID: \$\{\{ steps\.request\.outputs\.request_id \}\}/);
   assert.match(wake, /\^\[0-9a-f\]\{64\}\$/);
   assert.match(wake, /plan-poller\.yml\/dispatches/);
-  assert.match(wake, /\\\"inputs\\\":\{\\\"request_id\\\":\\\"\$PLAN_REQUEST_ID\\\"\}/);
+  assert.match(wake, /\\\"inputs\\\":\{\\\"request_id\\\":\\\"\$PLAN_REQUEST_ID\\\",\\\"repository\\\":\\\"\$PLAN_REPOSITORY\\\"\}/);
+  assert.match(wake, /PLAN_REPOSITORY: \$\{\{ github\.repository \}\}/);
 });

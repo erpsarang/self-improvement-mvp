@@ -248,7 +248,7 @@ jobs:
           script: |
             // BEGIN implement-identity
             // Private subscription-ai-executor(main 735abd2) verify-request와 같은 exact identity schema.
-            const IMPLEMENT_SUBSCRIPTION_REPOSITORY = 'erpsarang/self-improvement-mvp';
+            const IMPLEMENT_SUBSCRIPTION_REPOSITORIES = ['erpsarang/self-improvement-mvp', 'erpsarang/sales-order-exception-analyzer'];
             const IMPLEMENT_SUBSCRIPTION_MODEL = 'sonnet';
 
             function assertExactKeys(value, keys, name) {
@@ -278,7 +278,7 @@ jobs:
                 'approvalCommentId', 'planAuthorize', 'handoff', 'worker', 'model',
               ], 'IMPLEMENT identity');
               if (identity.schemaVersion !== 1 || identity.kind !== 'trusted-implement-request') throw new Error('Unsupported IMPLEMENT identity schema');
-              if (identity.repository !== IMPLEMENT_SUBSCRIPTION_REPOSITORY) throw new Error('subscription IMPLEMENT supports only the Framework repository');
+              if (!IMPLEMENT_SUBSCRIPTION_REPOSITORIES.includes(identity.repository)) throw new Error('subscription IMPLEMENT does not accept this repository');
               if (identity.model !== IMPLEMENT_SUBSCRIPTION_MODEL) throw new Error('IMPLEMENT model must be sonnet');
               assertPositiveInteger(identity.issueNumber, 'issueNumber');
               if (typeof identity.baseSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(identity.baseSha)) throw new Error('baseSha is invalid');
