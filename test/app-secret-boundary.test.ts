@@ -5,7 +5,6 @@ import { readFile } from "node:fs/promises";
 const selector = "${{ secrets[github.repository == 'erpsarang/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' || 'APP_CODEX_API_KEY'] }}";
 
 const directCodexWorkflows = [
-  ".github/workflows/plan-implement-worker.yml",
   ".github/workflows/fix-worker.yml",
   ".github/workflows/learn.yml",
   ".github/workflows/semantic-review.yml",
@@ -25,8 +24,13 @@ test("PLAN public workflow는 subscription/API credential을 보유하지 않고
     total += matches;
     assert.doesNotMatch(workflow, /openai-api-key:\s*\$\{\{\s*secrets\.(?:FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY)\s*\}\}/);
   }
-  // Worker 최초 IMPLEMENT는 Private subscription executor로 옮겨 repair 2개만 Codex key를 쓴다.
-  assert.equal(total, 5);
+  assert.equal(total, 3);
+
+  // PLAN Worker의 최초 IMPLEMENT와 repair는 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
+  for (const path of [".github/workflows/plan-implement-worker.yml", ".github/workflows/implement-subscription.yml"]) {
+    const workflow = await readFile(path, "utf8");
+    assert.doesNotMatch(workflow, /openai\/codex-action|openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY/, path);
+  }
 });
 
 test("Semantic REVIEW reusable workflow는 두 secret을 optional contract로 받는다", async () => {

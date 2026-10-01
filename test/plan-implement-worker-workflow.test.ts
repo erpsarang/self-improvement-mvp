@@ -7,13 +7,17 @@ import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "utf8");
 
-const KNOWN_GOOD_CODEX_ACTION =
-  "openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56";
+const exchange = readFileSync(".github/workflows/implement-subscription.yml", "utf8");
 
-type WorkerJob = "prepare0" | "request0" | "attempt0" | "attempt0_result" | "repair1" | "repair2" | "finalize";
+type WorkerJob =
+  | "prepare0" | "subscription0" | "attempt0" | "attempt0_result"
+  | "subscription1" | "repair1" | "subscription2" | "repair2" | "finalize";
 
 function jobBlock(name: WorkerJob): string {
-  const markers = ["prepare0", "request0", "attempt0", "attempt0_result", "repair1", "repair2", "finalize"] as const;
+  const markers = [
+    "prepare0", "subscription0", "attempt0", "attempt0_result",
+    "subscription1", "repair1", "subscription2", "repair2", "finalize",
+  ] as const;
   const index = markers.indexOf(name);
   const start = workflow.indexOf(`\n  ${name}:\n`);
   assert.ok(start >= 0, `${name} job not found`);
@@ -67,88 +71,128 @@ test("RECOVERY_READY는 exact provenance 검증 후 기존 승인 Handoff source
   assert.doesNotMatch(workflow, /createWorkflowDispatch|workflow_id: 'plan-implement-worker\.yml'/);
 });
 
-test("AI/검증 job 권한은 read-only이고, Issue write는 checkout 없는 request0와 finalize에만 있다", () => {
+test("검증 job 권한은 read-only이고, Issue write는 checkout 없는 subscription 호출과 finalize에만 있다", () => {
   assert.match(workflow, /permissions: \{\}/);
   assert.ok((workflow.match(/contents: read/g) ?? []).length >= 4);
-  assert.ok((workflow.match(/actions: read/g) ?? []).length >= 5);
+  assert.ok((workflow.match(/actions: read/g) ?? []).length >= 7);
   assert.doesNotMatch(workflow, /contents: write|actions: write|pull-requests: write/);
   assert.doesNotMatch(workflow, /git push|gh pr|createPullRequest|enable_auto_merge/i);
 
-  // issues: write는 IMPLEMENT_REQUEST marker를 남기는 request0와 STALLED marker를 남기는 finalize 둘뿐이다.
-  assert.equal((workflow.match(/issues: write/g) ?? []).length, 2);
+  // issues: write는 IMPLEMENT_REQUEST marker를 남기는 subscription 호출 3개와 STALLED marker를 남기는 finalize뿐이다.
+  assert.equal((workflow.match(/issues: write/g) ?? []).length, 4);
   for (const name of ["prepare0", "attempt0", "attempt0_result", "repair1", "repair2"] as const) {
-    assert.doesNotMatch(jobBlock(name), /issues: write/, name);
+    assert.doesNotMatch(jobBlock(name), /issues: (?:write|read)/, name);
   }
-  const request0 = jobBlock("request0");
-  assert.match(request0, /permissions:\n\s+issues: write\n\s+runs-on:/);
-  assert.doesNotMatch(request0, /actions\/checkout@|openai\/codex-action@|npm |tsx |node -e/);
-  // candidate 코드를 실행하는 attempt0는 issue를 읽기만 한다.
-  assert.match(jobBlock("attempt0"), /permissions:\n\s+contents: read\n\s+actions: read\n\s+issues: read\n/);
+  for (const name of ["subscription0", "subscription1", "subscription2"] as const) {
+    const block = jobBlock(name);
+    assert.match(block, /permissions:\n\s+actions: read\n\s+issues: write\n\s+uses: \.\/\.github\/workflows\/implement-subscription\.yml\n/, name);
+    assert.doesNotMatch(block, /steps:|runs-on:/, name);
+  }
   const finalize = jobBlock("finalize");
   assert.match(finalize, /permissions:\n\s+actions: read\n\s+issues: write\n/);
   assert.doesNotMatch(finalize, /actions\/checkout@|openai\/codex-action@|npm |node --import/);
+
+  // exchange workflow에서 write는 checkout도 대상 코드도 없는 request job 하나뿐이다.
+  assert.match(exchange, /permissions: \{\}/);
+  assert.equal((exchange.match(/issues: write/g) ?? []).length, 1);
+  assert.match(exchange, /\n  request:\n\s+permissions:\n\s+actions: read\n\s+issues: write\n/);
+  assert.match(exchange, /\n  wait:\n\s+needs: request\n\s+permissions:\n\s+actions: read\n\s+issues: read\n/);
+  assert.doesNotMatch(exchange, /actions\/checkout@|npm |tsx |node -e|contents: /);
 });
 
-test("최초 IMPLEMENT는 Codex 없이 subscription request로 가고, 두 repair만 fresh Job에서 Codex를 한 번씩 실행한다", () => {
-  for (const name of ["prepare0", "request0", "attempt0", "attempt0_result", "finalize"] as const) {
-    const block = jobBlock(name);
-    assert.equal(block.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 0, name);
-    assert.doesNotMatch(block, /FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/, name);
+test("최초 IMPLEMENT와 두 repair 모두 Codex 없이 같은 subscription exchange를 한 번씩 쓴다", () => {
+  for (const source of [workflow, exchange]) {
+    assert.doesNotMatch(source, /openai\/codex-action|openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|model: gpt-/);
   }
-  assert.equal(jobBlock("repair1").split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
-  assert.equal(jobBlock("repair2").split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
-  assert.equal(workflow.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 2);
-  assert.equal((workflow.match(/uses: openai\/codex-action@/g) ?? []).length, 2);
+  // Codex 4분 경계 전용 timeout retry와 neutral Codex 작업공간은 subscription 경로에서 제거되었다.
+  assert.doesNotMatch(workflow, /\n  timeout_retry:\n|retry_required|IMPLEMENT timeout|bounded-worker-timeout-retry-input|worker-neutral|codex-home/);
 
-  // Codex 4분 경계 전용 timeout retry는 subscription 경로에서 제거되었다.
-  assert.doesNotMatch(workflow, /\n  timeout_retry:\n|retry_required|IMPLEMENT timeout|bounded-worker-timeout-retry-input/);
+  assert.equal((workflow.match(/uses: \.\/\.github\/workflows\/implement-subscription\.yml/g) ?? []).length, 3);
+  for (const [job, attempt] of [["subscription0", "0"], ["subscription1", "1"], ["subscription2", "2"]] as const) {
+    assert.match(jobBlock(job), new RegExp(`attempt: "${attempt}"`), job);
+    assert.match(jobBlock(job), /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/, job);
+  }
+  assert.match(jobBlock("subscription0"), /request_artifact_digest: \$\{\{ needs\.prepare0\.outputs\.request_artifact_digest \}\}/);
+  assert.match(jobBlock("subscription1"), /request_artifact_digest: \$\{\{ needs\.attempt0_result\.outputs\.repair_request_artifact_digest \}\}/);
+  assert.match(jobBlock("subscription2"), /request_artifact_digest: \$\{\{ needs\.repair1\.outputs\.repair_request_artifact_digest \}\}/);
 
   assert.match(workflow, /\n  prepare0:\n/);
-  assert.match(workflow, /\n  request0:\n\s+needs: prepare0\n/);
-  assert.match(workflow, /\n  attempt0:\n\s+needs: \[prepare0, request0\]\n\s+# [^\n]+\n\s+if: "!cancelled\(\) && needs\.prepare0\.outputs\.should_run == 'true'"\n/);
+  assert.match(workflow, /\n  subscription0:\n\s+needs: prepare0\n/);
+  assert.match(workflow, /\n  attempt0:\n\s+needs: \[prepare0, subscription0\]\n\s+# [^\n]+\n\s+if: "!cancelled\(\) && needs\.prepare0\.outputs\.should_run == 'true'"\n/);
   assert.match(workflow, /\n  attempt0_result:\n\s+needs: attempt0\n/);
-  assert.match(workflow, /\n  repair1:\n\s+needs: attempt0_result\n/);
-  assert.match(workflow, /\n  repair2:\n\s+needs: \[attempt0_result, repair1\]/);
+  assert.match(workflow, /\n  subscription1:\n\s+needs: attempt0_result\n/);
+  assert.match(workflow, /\n  repair1:\n\s+needs: \[attempt0_result, subscription1\]\n/);
+  assert.match(workflow, /\n  subscription2:\n\s+needs: \[attempt0_result, repair1\]\n/);
+  assert.match(workflow, /\n  repair2:\n\s+needs: \[attempt0_result, repair1, subscription2\]\n/);
   assert.match(workflow, /\n  finalize:\n\s+needs: \[attempt0_result, repair1, repair2\]/);
-  assert.match(workflow, /needs\.attempt0_result\.outputs\.ci_status == 'FAIL'/);
-  assert.match(workflow, /needs\.repair1\.outputs\.ci_status == 'FAIL'/);
-  assert.doesNotMatch(workflow, /openai\/codex-action@v1(?:\s|$)/);
 });
 
-test("subscription request는 Private implement-poller 하나만 exact request_id로 깨우고 dispatch token은 그 step에만 있다", () => {
-  const request0 = jobBlock("request0");
-  assert.equal((workflow.match(/\/dispatches/g) ?? []).length, 1);
+test("subscription exchange는 Private implement-poller 하나만 exact request_id로 깨우고 dispatch token은 그 step에만 있다", () => {
+  // Worker 자신은 어떤 workflow도 직접 dispatch하지 않는다.
+  assert.doesNotMatch(workflow, /\/dispatches|createWorkflowDispatch|curl /);
+  assert.equal((exchange.match(/\/dispatches/g) ?? []).length, 1);
   assert.match(
-    request0,
+    exchange,
     /https:\/\/api\.github\.com\/repos\/erpsarang\/subscription-ai-executor\/actions\/workflows\/implement-poller\.yml\/dispatches/,
   );
-  assert.match(request0, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$IMPLEMENT_REQUEST_ID\\"\}\}"/);
-  assert.match(request0, /\[\[ ! "\$IMPLEMENT_REQUEST_ID" =~ \^\[0-9a-f\]\{64\}\$ \]\]/);
-  assert.equal((workflow.match(/EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/g) ?? []).length, 1);
-  const dispatchStep = request0.slice(request0.indexOf("name: Private subscription executor 깨우기"));
+  assert.match(exchange, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$IMPLEMENT_REQUEST_ID\\"\}\}"/);
+  assert.match(exchange, /\[\[ ! "\$IMPLEMENT_REQUEST_ID" =~ \^\[0-9a-f\]\{64\}\$ \]\]/);
+  assert.deepEqual(exchange.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
+  const dispatchStep = exchange.slice(exchange.indexOf("name: Private subscription executor 깨우기"), exchange.indexOf("\n  wait:\n"));
   assert.match(dispatchStep, /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/);
   // Private Executor가 Framework repository만 받으므로 App에서는 marker를 남기기 전에 멈춘다.
-  assert.ok(request0.indexOf("subscription IMPLEMENT supports only the Framework repository") < request0.indexOf("createComment"));
-  // request는 marker 댓글 다음에 깨운다. Private discover는 bot marker를 찾는다.
-  assert.ok(request0.indexOf("IMPLEMENT_REQUEST marker 기록") < request0.indexOf("Private subscription executor 깨우기"));
+  assert.ok(exchange.indexOf("subscription IMPLEMENT supports only the Framework repository") < exchange.indexOf("createComment"));
+  assert.ok(exchange.indexOf("IMPLEMENT_REQUEST 고정 및 marker 기록") < exchange.indexOf("Private subscription executor 깨우기"));
+  // Worker의 직접 secret 참조는 subscription 호출에 넘기는 wake-up token 3개뿐이다.
+  assert.deepEqual(
+    workflow.match(/secrets\.[A-Za-z0-9_]+/g),
+    ["secrets.EXECUTOR_DISPATCH_TOKEN", "secrets.EXECUTOR_DISPATCH_TOKEN", "secrets.EXECUTOR_DISPATCH_TOKEN"],
+  );
 });
 
-test("결과는 같은 run의 attempt0가 polling으로 받고 raw-proposal.json으로 기존 trusted 검증에 넘긴다", () => {
+test("결과는 같은 run의 wait job이 polling으로 받고 raw-proposal artifact로 기존 trusted 검증에 넘긴다", () => {
   const prepare0 = jobBlock("prepare0");
-  const attempt0 = jobBlock("attempt0");
   assert.match(prepare0, /name: IMPLEMENT_REQUEST artifact 저장\n[\s\S]*?path: \$\{\{ runner\.temp \}\}\/implement-request\n/);
   assert.match(prepare0, /request_artifact_digest: \$\{\{ steps\.request_upload\.outputs\.artifact-digest \}\}/);
-  assert.match(attempt0, /PREPARE_RESULT: \$\{\{ needs\.prepare0\.result \}\}/);
-  assert.match(attempt0, /REQUEST_RESULT: \$\{\{ needs\.request0\.result \}\}/);
-  assert.match(attempt0, /for \(let poll = 0; poll < 90; poll \+= 1\)/);
-  assert.match(attempt0, /setTimeout\(resolve, 10_000\)/);
-  assert.match(attempt0, /Timed out waiting for private subscription executor IMPLEMENT_RESULT/);
-  assert.match(attempt0, /IMPLEMENT request artifact digest mismatch/);
-  assert.match(attempt0, /IMPLEMENT request identity mismatch/);
-  assert.ok(attempt0.indexOf("IMPLEMENT_RESULT 대기 및 exact 검증") < attempt0.indexOf("Trusted candidate 검증 0"));
-  assert.ok(attempt0.indexOf("IMPLEMENT_RESULT 대기 및 exact 검증") < attempt0.indexOf("actions/checkout@"));
-  assert.match(attempt0, /path\.join\(process\.env\.RUNNER_TEMP, 'worker-output'\)/);
-  assert.match(attempt0, /RAW_PROPOSAL_PATH: \$\{\{ runner\.temp \}\}\/worker-output\/raw-proposal\.json/);
+
+  const wait = exchange.slice(exchange.indexOf("\n  wait:\n"));
+  assert.match(wait, /for \(let poll = 0; poll < 90; poll \+= 1\)/);
+  assert.match(wait, /setTimeout\(resolve, 10_000\)/);
+  assert.match(wait, /Timed out waiting for private subscription executor IMPLEMENT_RESULT/);
+  assert.match(wait, /implementRequestId\(identity, artifactId, artifactDigest\) !== requestId/);
+  assert.ok(wait.includes("name: bounded-worker-raw-proposal-${{ inputs.attempt }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/subscription-output/raw-proposal.json"));
+
+  for (const [job, attempt, directory] of [
+    ["attempt0", "0", "worker-output"],
+    ["repair1", "1", "worker-output-repair-1"],
+    ["repair2", "2", "worker-output-repair-2"],
+  ] as const) {
+    const block = jobBlock(job);
+    assert.ok(block.includes(`name: bounded-worker-raw-proposal-${attempt}-\${{ github.run_id }}-attempt-\${{ github.run_attempt }}\n          path: \${{ runner.temp }}/${directory}\n`), job);
+    assert.ok(block.includes(`RAW_PROPOSAL_PATH: \${{ runner.temp }}/${directory}/raw-proposal.json`), job);
+    // subscription 실패는 candidate 검증 전에 이 attempt job 실패로 모인다 (finalize의 기존 INFRA 경로).
+    assert.ok(block.indexOf("subscription 단계 성공 확인") < block.indexOf("actions/checkout@"), job);
+    assert.match(block, /SUBSCRIPTION_RESULT: \$\{\{ needs\.subscription[012]\.result \}\}/, job);
+  }
+});
+
+test("repair 요청은 같은 Worker identity에 trusted repair prompt/schema만 바꾼 새 request artifact다", () => {
+  for (const [job, ci, attempt, base] of [
+    ["attempt0", "ci0", "1", "needs.prepare0.outputs.request_artifact_name"],
+    ["repair1", "ci1", "2", "needs.attempt0_result.outputs.request_artifact_name"],
+  ] as const) {
+    const block = jobBlock(job);
+    const condition = `if: steps.${ci}.outputs.status == 'FAIL' && steps.${ci}.outputs.repair_ready == 'true'`;
+    assert.equal(block.split(condition).length - 1, 3, job);
+    assert.ok(block.includes(`name: \${{ ${base} }}\n          path: \${{ runner.temp }}/implement-request-repair-${attempt}`), job);
+    assert.ok(block.includes(`cp "$RUNNER_TEMP/repair-input-${attempt}/prompt.md" "$dir/prompt.md"`), job);
+    assert.ok(block.includes(`cp "$RUNNER_TEMP/repair-input-${attempt}/schema.json" "$dir/schema.json"`), job);
+    assert.ok(block.includes(`test "$(ls -A "$dir" | sort | tr '\\n' ' ')" = "identity.json prompt.md schema.json "`), job);
+    assert.ok(block.includes(`-repair-${attempt}" >> "$GITHUB_OUTPUT"`), job);
+    assert.match(block, /repair_request_artifact_digest: \$\{\{ steps\.repair_request_upload\.outputs\.artifact-digest \}\}/, job);
+  }
+  // repair 입력은 state artifact가 아니라 request artifact로만 넘어간다.
+  assert.doesNotMatch(workflow, /worker-state-[01]\/repair-input/);
 });
 
 test("out-of-scope 경계 실패는 AI repair를 시작하지 않고 fail-closed 한다", () => {
@@ -160,34 +204,20 @@ test("out-of-scope 경계 실패는 AI repair를 시작하지 않고 fail-closed
   assert.match(workflow, /AI repair blocked by deterministic repair policy/);
 });
 
-test("repair는 implicit skip되지 않고 FAIL + repair_ready일 때만 실행한다", () => {
+test("repair와 그 subscription은 implicit skip되지 않고 FAIL + repair_ready일 때만 실행한다", () => {
   const repair1 = jobBlock("repair1");
   const repair2 = jobBlock("repair2");
   assert.match(
     repair1,
-    /if: >-\n\s+always\(\) &&\n\s+needs\.attempt0_result\.outputs\.ci_status == 'FAIL' &&\n\s+needs\.attempt0_result\.outputs\.repair_ready == 'true'\n/,
+    /if: >-\n\s+!cancelled\(\) &&\n\s+needs\.attempt0_result\.outputs\.ci_status == 'FAIL' &&\n\s+needs\.attempt0_result\.outputs\.repair_ready == 'true'\n/,
   );
   assert.match(
     repair2,
-    /if: >-\n\s+always\(\) &&\n\s+needs\.repair1\.outputs\.ci_status == 'FAIL' &&\n\s+needs\.repair1\.outputs\.repair_ready == 'true'\n/,
+    /if: >-\n\s+!cancelled\(\) &&\n\s+needs\.repair1\.outputs\.ci_status == 'FAIL' &&\n\s+needs\.repair1\.outputs\.repair_ready == 'true'\n/,
   );
-});
-
-test("각 untrusted repair Job은 repository 없이 neutral input만 보고 drop-sudo read-only로 실행한다", () => {
-  assert.match(workflow, /repair 1 untrusted input 격리/);
-  assert.match(workflow, /repair 2 untrusted input 격리/);
-  assert.match(workflow, /worker-neutral-repair-1/);
-  assert.match(workflow, /worker-neutral-repair-2/);
-  assert.equal((workflow.match(/permission-profile: ":read-only"/g) ?? []).length, 2);
-  assert.equal((workflow.match(/safety-strategy: drop-sudo/g) ?? []).length, 2);
-  assert.equal((workflow.match(/model: gpt-6-sol\n\s+effort: medium/g) ?? []).length, 0);
-  assert.equal((workflow.match(/model: gpt-6-luna\n\s+effort: medium/g) ?? []).length, 2);
-  assert.ok((workflow.match(/GH_TOKEN: ""/g) ?? []).length >= 4);
-  assert.ok((workflow.match(/GITHUB_TOKEN: ""/g) ?? []).length >= 4);
-  assert.equal((workflow.match(/secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\]/g) ?? []).length, 2);
-  // direct secret 참조는 Private wake-up token 하나뿐이다.
-  assert.deepEqual(workflow.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
-  assert.ok((workflow.match(/test -z "\$\(find "\$GITHUB_WORKSPACE"/g) ?? []).length >= 2);
+  // subscription 호출도 같은 조건에서만 열리고, repair job은 subscription 실패를 fail-closed로 받기 위해 함께 열린다.
+  assert.match(jobBlock("subscription1"), /if: "!cancelled\(\) && needs\.attempt0_result\.outputs\.ci_status == 'FAIL' && needs\.attempt0_result\.outputs\.repair_ready == 'true'"/);
+  assert.match(jobBlock("subscription2"), /if: "!cancelled\(\) && needs\.repair1\.outputs\.ci_status == 'FAIL' && needs\.repair1\.outputs\.repair_ready == 'true'"/);
 });
 
 test("attempt 간 상태는 GitHub artifact로만 전달한다", () => {
