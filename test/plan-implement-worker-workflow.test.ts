@@ -133,10 +133,11 @@ test("subscription exchange는 Private implement-poller 하나만 exact request_
   assert.doesNotMatch(workflow, /\/dispatches|createWorkflowDispatch|curl /);
   assert.equal((exchange.match(/\/dispatches/g) ?? []).length, 1);
   assert.ok(exchange.includes('"https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches"'));
-  // dispatch 대상은 kind가 고른 두 Private poller로만 제한된다.
-  assert.ok(exchange.includes("implement-poller.yml|review-poller.yml) ;;"));
+  // dispatch 대상은 kind가 고른 세 Private poller로만 제한된다.
+  assert.ok(exchange.includes("implement-poller.yml|review-poller.yml|fix-poller.yml) ;;"));
   assert.ok(exchange.includes("IMPLEMENT: { identityKind: 'trusted-implement-request', model: 'sonnet', run: 'worker', poller: 'implement-poller.yml' },"));
   assert.ok(exchange.includes("REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },"));
+  assert.ok(exchange.includes("FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },"));
   assert.match(exchange, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$SUBSCRIPTION_REQUEST_ID\\"\}\}"/);
   assert.match(exchange, /\[\[ ! "\$SUBSCRIPTION_REQUEST_ID" =~ \^\[0-9a-f\]\{64\}\$ \]\]/);
   assert.deepEqual(exchange.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);

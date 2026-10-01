@@ -1,12 +1,12 @@
 name: Subscription exchange
 
-# PLAN Bounded IMPLEMENT Worker(최초 IMPLEMENT, repair 1/2)와 Semantic REVIEW가 같은 exact request/result 교환을 쓴다.
+# PLAN Bounded IMPLEMENT Worker(최초 IMPLEMENT, repair 1/2), Semantic REVIEW, bounded FIX Worker가 같은 exact request/result 교환을 쓴다.
 # reusable workflow job도 호출한 run 안에서 돌기 때문에 Private Executor가 보는 run id/name/path는 호출한 Worker나 Trusted Rail 그대로다.
 on:
   workflow_call:
     inputs:
       kind:
-        description: "IMPLEMENT 또는 REVIEW"
+        description: "IMPLEMENT, REVIEW 또는 FIX"
         type: string
         required: true
       label:
@@ -63,12 +63,13 @@ jobs:
         with:
           script: |
             // BEGIN subscription-exchange
-            // Private subscription-ai-executor IMPLEMENT/REVIEW 계약과 byte 단위로 맞춘다. request job과 wait job이 같은 사본을 쓴다.
+            // Private subscription-ai-executor IMPLEMENT/REVIEW/FIX 계약과 byte 단위로 맞춘다. request job과 wait job이 같은 사본을 쓴다.
             const SUBSCRIPTION_REQUEST_FILES = ['identity.json', 'prompt.md', 'schema.json'];
             // kind별로 identity 종류, 고정 model, 결과를 기다리는 Public run, Private poller가 다르다.
             const SUBSCRIPTION_KINDS = {
               IMPLEMENT: { identityKind: 'trusted-implement-request', model: 'sonnet', run: 'worker', poller: 'implement-poller.yml' },
               REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },
+              FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },
             };
 
             function subscriptionKind(kind) {
@@ -254,7 +255,7 @@ jobs:
             exit 1
           fi
           case "$SUBSCRIPTION_POLLER" in
-            implement-poller.yml|review-poller.yml) ;;
+            implement-poller.yml|review-poller.yml|fix-poller.yml) ;;
             *) echo "Unsupported subscription poller: $SUBSCRIPTION_POLLER" >&2; exit 1 ;;
           esac
           curl -fsS -X POST \
@@ -288,12 +289,13 @@ jobs:
         with:
           script: |
             // BEGIN subscription-exchange
-            // Private subscription-ai-executor IMPLEMENT/REVIEW 계약과 byte 단위로 맞춘다. request job과 wait job이 같은 사본을 쓴다.
+            // Private subscription-ai-executor IMPLEMENT/REVIEW/FIX 계약과 byte 단위로 맞춘다. request job과 wait job이 같은 사본을 쓴다.
             const SUBSCRIPTION_REQUEST_FILES = ['identity.json', 'prompt.md', 'schema.json'];
             // kind별로 identity 종류, 고정 model, 결과를 기다리는 Public run, Private poller가 다르다.
             const SUBSCRIPTION_KINDS = {
               IMPLEMENT: { identityKind: 'trusted-implement-request', model: 'sonnet', run: 'worker', poller: 'implement-poller.yml' },
               REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },
+              FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },
             };
 
             function subscriptionKind(kind) {

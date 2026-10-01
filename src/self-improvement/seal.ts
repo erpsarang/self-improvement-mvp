@@ -118,6 +118,16 @@ function validAiExecution(value: unknown): value is ImplementProvenance["aiExecu
   );
 }
 
+function validFixAiExecution(value: unknown): value is FixProvenance["aiExecution"] {
+  return (
+    record(value) &&
+    // 새 FIX는 Private subscription executor(Claude Max) 결과다. 기존 Codex FIX provenance도 계속 읽는다.
+    (value.provider === "openai-codex-action" || value.provider === "claude-max-subscription") &&
+    typeof value.resultId === "string" &&
+    value.resultId.trim().length > 0
+  );
+}
+
 function validReviewBinding(value: unknown, issueNumber: number): boolean {
   if (!record(value)) return false;
   return (
@@ -190,7 +200,7 @@ function validFixProvenance(value: unknown): value is FixProvenance {
     sourceRequest.artifactName ===
       `fix-request-${sourceReview.runId}-fix-${value.fixAttempt}-${sourceRequest.runId}-attempt-${sourceRequest.runAttempt}` &&
     validDigest(value.candidatePatchDigest) &&
-    validAiExecution(value.aiExecution)
+    validFixAiExecution(value.aiExecution)
   );
 }
 
@@ -587,7 +597,7 @@ export function validateSealProvenance(value: unknown): SealProvenance {
       !(source.fixAttempt === 1 || source.fixAttempt === 2) ||
       !validReviewBinding(source.sourceReview, value.issueNumber as number) ||
       !validRequestBinding(source.sourceRequest) ||
-      !validAiExecution(source.aiExecution) ||
+      !validFixAiExecution(source.aiExecution) ||
       source.candidatePatchDigest !== value.sealedPatchDigest
     ) {
       throw new Error("SEAL FIX source가 올바르지 않습니다");

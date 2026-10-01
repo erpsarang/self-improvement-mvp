@@ -237,6 +237,8 @@ REVIEW = LOCAL_FIX
 
 FIX Worker 역시 write credential을 받지 않고 candidate만 만듭니다. 수정 후 전체 Trusted Rail을 다시 통과해야 합니다.
 
+FIX Worker는 승인된 PLAN의 `allowedPaths` 원문(exact reviewed SHA)과 LOCAL BLOCKER만 Private subscription executor(Claude Max, sonnet)에 1회 보내고, 돌아온 edit JSON을 trusted 단계가 검증·적용합니다. 승인된 PLAN scope가 없는 legacy 계보 REVIEW는 AI 호출 전에 멈춥니다.
+
 반복 횟수와 실행 예산은 Framework가 제한하며 한도를 넘으면 사람이 판단하도록 중단합니다.
 
 ## 9. PASS와 Human Merge
