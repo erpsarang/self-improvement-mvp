@@ -30,7 +30,7 @@ import {
 export const AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES = 3_000;
 const CANONICAL_FRAMEWORK_PACKAGE_NAME = "self-improvement-mvp";
 const WORKFLOW_DIRECTORY = ".github/workflows";
-const AI_CALL_STEP_USES = /^(\s*)uses:\s*openai\/codex-action\b/;
+const AI_CALL_STEP_USES = /^(\s*)uses:\s*(?:openai\/codex-action|anthropics\/claude-code-action\/base-action)@/;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 interface AiCallSiteContextBudget {
@@ -128,7 +128,7 @@ function leadingSpaces(line: string): number {
 }
 
 /**
- * 첫 AI 호출 step(`uses: openai/codex-action`)이 속한 step 블록을 돌려준다.
+ * 첫 지원 AI provider 호출 step(Codex 또는 Claude Code Base Action)이 속한 step 블록을 돌려준다.
  * 블록은 그 step의 `- ` 줄에서 시작해 같은 들여쓰기의 다음 step 또는 상위 key 직전에서 끝난다.
  * 반환하는 startOffset은 `text.slice(startOffset, startOffset + content.length) === content`를 만족한다.
  * 한 workflow에 호출 step이 여러 개면(예: bounded IMPLEMENT Worker의 retry step) 첫 번째만 쓴다.

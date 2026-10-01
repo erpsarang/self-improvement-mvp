@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const workflowPaths = [
-  ".github/workflows/plan.yml",
+const codexWorkflowPaths = [
   ".github/workflows/plan-implement-worker.yml",
   ".github/workflows/implement.yml",
   ".github/workflows/fix-worker.yml",
@@ -14,8 +13,12 @@ const workflowPaths = [
   ".github/workflows/single-pass-smoke.yml",
 ] as const;
 
-test("모든 OpenAI Codex AI 호출은 model 입력을 명시한다", async () => {
-  for (const path of workflowPaths) {
+test("모든 lifecycle AI 호출은 provider별 model을 명시한다", async () => {
+  const plan = await readFile(".github/workflows/plan.yml", "utf8");
+  assert.equal((plan.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1);
+  assert.match(plan, /--model \$\{\{ steps\.input\.outputs\.planner_model \}\}/);
+
+  for (const path of codexWorkflowPaths) {
     const workflow = await readFile(path, "utf8");
     const calls = workflow.match(/uses:\s*openai\/codex-action@/g) ?? [];
     const models = workflow.match(/^\s+model:\s*\S+/gm) ?? [];
@@ -24,9 +27,9 @@ test("모든 OpenAI Codex AI 호출은 model 입력을 명시한다", async () =
   }
 });
 
-test("고레버리지 PLAN·IMPLEMENT·REVIEW·FIX는 Sol을 명시한다", async () => {
+test("고레버리지 PLAN은 Opus, IMPLEMENT·REVIEW·FIX는 Sol을 명시한다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
-  assert.match(plan, /productImprovementCandidate \? 'gpt-6-luna' : 'gpt-6-sol'/);
+  assert.match(plan, /productImprovementCandidate \? 'sonnet' : 'opus'/);
 
   const worker = await readFile(".github/workflows/plan-implement-worker.yml", "utf8");
   assert.equal((worker.match(/model: gpt-6-sol\n\s+effort: medium/g) ?? []).length, 2);

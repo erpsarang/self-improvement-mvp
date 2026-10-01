@@ -40,11 +40,13 @@ test("자동 PLAN은 repository OWNER/MEMBER/COLLABORATOR가 연 Issue에서만 
   assert.equal((condition.match(/github\.event_name == 'issues'/g) ?? []).length, 1);
 });
 
-test("동일 PLAN run의 AI 호출은 최대 2 attempts로 제한하고 Framework 전용 key만 사용한다", () => {
+test("동일 PLAN run의 AI 호출은 최대 2 attempts로 제한하고 Claude Max OAuth만 사용한다", () => {
   const guardIndex = workflow.indexOf("PLAN AI rerun 비용 상한 확인");
   const plannerIndex = workflow.indexOf("Read-only bounded AI Planner");
   assert.ok(guardIndex >= 0 && plannerIndex > guardIndex);
   assert.match(workflow, /\[ "\$GITHUB_RUN_ATTEMPT" -gt 2 \]/);
-  assert.match(workflow, /openai-api-key: \$\{\{ secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\] \}\}/);
-  assert.doesNotMatch(workflow, /secrets\.[A-Za-z0-9_]+/);
+  assert.equal((workflow.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1);
+  assert.match(workflow, /claude_code_oauth_token:\s*\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
+  assert.match(workflow, /ANTHROPIC_API_KEY:\s*""/);
+  assert.doesNotMatch(workflow, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY/);
 });
