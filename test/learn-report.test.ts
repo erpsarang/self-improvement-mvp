@@ -6,6 +6,7 @@ import {
   createLearnReport,
   createLearnReportOutputSchema,
   createLearnReportPrompt,
+  createLearnSubscriptionIdentity,
   learnReportArtifactName,
   verifyLearnReport,
   type LearnReport,
@@ -227,4 +228,25 @@ test("prompt와 output schema는 exact pack에 결합되고 read-only/evidence g
   assert.match(prompt, /evidenceId/);
   assert.ok(prompt.includes(pack.packDigest));
   assert.equal(schema.properties.sourcePackDigest.const, pack.packDigest);
+});
+
+test("LEARN subscription identity는 exact pack, Human Merge commit, source/LEARN run과 sonnet에 묶인다", () => {
+  const runs = { sourceRun: { runId: 601, runAttempt: 1 }, worker: { runId: 702, runAttempt: 2 } };
+  assert.deepEqual(createLearnSubscriptionIdentity(pack, runs), {
+    schemaVersion: 1,
+    kind: "trusted-learn-request",
+    repository: "erpsarang/sales-order-exception-analyzer",
+    issueNumber: 8,
+    baseSha: "ab2c1e7a85e76ea69e393b81dcada11d54cd9801",
+    humanMergePullRequest: 24,
+    packDigest: pack.packDigest,
+    sourceRun: { runId: 601, runAttempt: 1 },
+    worker: { runId: 702, runAttempt: 2 },
+    model: "sonnet",
+  });
+  assert.throws(() => createLearnSubscriptionIdentity(pack, { ...runs, worker: { runId: 0, runAttempt: 1 } }), /worker\.runId/);
+  assert.throws(
+    () => createLearnSubscriptionIdentity({ ...pack, packDigest: `sha256:${pack.packDigest}` }, runs),
+    /packDigest/,
+  );
 });

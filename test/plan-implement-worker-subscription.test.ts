@@ -299,7 +299,7 @@ test("REVIEW marker는 head와 Trusted Rail run을 담고 IMPLEMENT 결과와 �
   assert.deepEqual(accepted && JSON.parse(accepted.raw), review);
   // IMPLEMENT 교환은 같은 request_id의 REVIEW 결과를 결과로 보지 않는다.
   assert.equal(api.selectSubscriptionResult("IMPLEMENT", [resultComment(body)], { ...expected, expectedMarker: "x" }), null);
-  assert.throws(() => api.subscriptionRequestMarker("LEARN", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST), /unsupported subscription kind/);
+  assert.throws(() => api.subscriptionRequestMarker("SMOKE", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST), /unsupported subscription kind/);
 });
 
 /** bounded FIX Worker가 만드는 trusted-fix-request identity (Private fix_bridge 계약). */
@@ -390,6 +390,70 @@ test("REVIEW request artifact는 Trusted Rail run과 opus에 묶인 identity만 
     await assert.rejects(load(reviewIdentity({ kind: "trusted-implement-request" })), /identity mismatch/);
     await assert.rejects(load(reviewIdentity({ rail: { runId: 902, runAttempt: 1 } })), /identity mismatch/);
     await assert.rejects(load(reviewIdentity(), "IMPLEMENT"), /identity mismatch/);
+  } finally {
+    if (previousAttempt === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
+    else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** LEARN run이 만드는 trusted-learn-request identity (Private learn_bridge 계약). */
+function learnIdentity(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    kind: "trusted-learn-request",
+    repository: "erpsarang/self-improvement-mvp",
+    issueNumber: 349,
+    baseSha: "a".repeat(40),
+    humanMergePullRequest: 350,
+    packDigest: "c".repeat(64),
+    sourceRun: { runId: 600, runAttempt: 1 },
+    worker: { runId: 707, runAttempt: 1 },
+    model: "sonnet",
+    ...overrides,
+  };
+}
+
+test("LEARN marker는 LEARN run과 sonnet을 담고 FIX·IMPLEMENT 결과와 섞이지 않는다", async () => {
+  const value = learnIdentity();
+  const requestId = api.implementRequestId(value, ARTIFACT_ID, ARTIFACT_DIGEST);
+  assert.equal(
+    api.subscriptionRequestMarker("LEARN", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST),
+    `<!-- ai-dev-framework:LEARN_REQUEST v=1 request=${requestId} issue=349 repository=erpsarang/self-improvement-mvp base=${"a".repeat(40)} worker-run=707 worker-attempt=1 artifact=808 digest=${ARTIFACT_DIGEST} model=sonnet -->`,
+  );
+  const expectedMarker = api.subscriptionResultMarker("LEARN", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
+  const report = { schemaVersion: 1, kind: "untrusted-learn-report" };
+  const body = `${expectedMarker}\nLEARN_RESULT_GZIP_BASE64:\n${gzipSync(Buffer.from(JSON.stringify(report), "utf8")).toString("base64")}`;
+  const expected = { requestId, requestCommentId: 10, owner: "erpsarang", expectedMarker };
+  const accepted = api.selectSubscriptionResult("LEARN", [resultComment(body)], expected);
+  assert.deepEqual(accepted && JSON.parse(accepted.raw), report);
+  for (const kind of ["IMPLEMENT", "FIX"]) {
+    assert.equal(api.selectSubscriptionResult(kind, [resultComment(body)], { ...expected, expectedMarker: "x" }), null);
+  }
+
+  const files = (identity: unknown) => ({ "identity.json": JSON.stringify(identity), "prompt.md": "prompt", "schema.json": "{}" });
+  const root = mkdtempSync(join(tmpdir(), "learn-request-load-"));
+  const previousAttempt = process.env.GITHUB_RUN_ATTEMPT;
+  process.env.GITHUB_RUN_ATTEMPT = "1";
+  const load = (identity: unknown, kind = "LEARN") => {
+    const { data, digest } = requestArchive(files(identity));
+    return api.loadSubscriptionRequest({
+      kind,
+      github: fakeGithub(data, digest, { workflow_run: { id: 707 } }),
+      context: { repo: { owner: "erpsarang", repo: "self-improvement-mvp" }, runId: 707 },
+      artifactName: "implement-request-a",
+      artifactId: 808,
+      artifactDigest: digest,
+      issueNumber: 349,
+      directory: join(root, "request"),
+    });
+  };
+  try {
+    assert.deepEqual(await load(learnIdentity()), learnIdentity());
+    await assert.rejects(load(learnIdentity({ model: "opus" })), /identity mismatch/);
+    await assert.rejects(load(learnIdentity({ kind: "trusted-fix-request" })), /identity mismatch/);
+    await assert.rejects(load(learnIdentity({ worker: { runId: 708, runAttempt: 1 } })), /identity mismatch/);
+    await assert.rejects(load(learnIdentity(), "FIX"), /identity mismatch/);
   } finally {
     if (previousAttempt === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
     else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;

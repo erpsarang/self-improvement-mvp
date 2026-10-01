@@ -372,3 +372,56 @@ export function createLearnReportOutputSchema(pack: LearnInputPack): Record<stri
     },
   };
 }
+
+// ---- LEARN subscription: Private subscription executor(Claude Max, sonnet)에 LEARN_REQUEST 1회를 보낸다. ----
+
+export const LEARN_SUBSCRIPTION_MODEL = "sonnet" as const;
+export const LEARN_SUBSCRIPTION_PROVIDER = "claude-max-subscription" as const;
+
+export interface LearnSubscriptionIdentity {
+  readonly schemaVersion: 1;
+  readonly kind: "trusted-learn-request";
+  readonly repository: string;
+  readonly issueNumber: number;
+  /** Human Merge commit. LEARN이 분석하는 완료 cycle의 기준점이다. */
+  readonly baseSha: string;
+  readonly humanMergePullRequest: number;
+  readonly packDigest: string;
+  readonly sourceRun: { readonly runId: number; readonly runAttempt: number };
+  /** 결과를 기다리는 이 LEARN run. Private Executor가 live run인지 확인한다. */
+  readonly worker: { readonly runId: number; readonly runAttempt: number };
+  readonly model: typeof LEARN_SUBSCRIPTION_MODEL;
+}
+
+export function createLearnSubscriptionIdentity(
+  pack: LearnInputPack,
+  runs: {
+    readonly sourceRun: { readonly runId: number; readonly runAttempt: number };
+    readonly worker: { readonly runId: number; readonly runAttempt: number };
+  },
+): LearnSubscriptionIdentity {
+  for (const [name, value] of [
+    ["sourceRun.runId", runs.sourceRun.runId],
+    ["sourceRun.runAttempt", runs.sourceRun.runAttempt],
+    ["worker.runId", runs.worker.runId],
+    ["worker.runAttempt", runs.worker.runAttempt],
+  ] as const) {
+    assertPositiveInteger(name, value);
+  }
+  if (!/^[0-9a-f]{40,64}$/.test(pack.completedCycle.mergeCommitSha)) {
+    throw new Error("completedCycle.mergeCommitSha must be a git SHA");
+  }
+  if (!SHA256.test(pack.packDigest)) throw new Error("packDigest must be a lowercase SHA-256 digest");
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: "trusted-learn-request",
+    repository: pack.completedCycle.repository,
+    issueNumber: pack.completedCycle.requirementIssueNumber,
+    baseSha: pack.completedCycle.mergeCommitSha,
+    humanMergePullRequest: pack.completedCycle.humanMergePullRequestNumber,
+    packDigest: pack.packDigest,
+    sourceRun: { runId: runs.sourceRun.runId, runAttempt: runs.sourceRun.runAttempt },
+    worker: { runId: runs.worker.runId, runAttempt: runs.worker.runAttempt },
+    model: LEARN_SUBSCRIPTION_MODEL,
+  });
+}

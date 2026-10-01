@@ -273,6 +273,8 @@ Trusted LEARN Source가 다음을 exact provenance로 고정합니다.
 
 Learner는 GitHub 최신 상태나 repository 전체를 다시 탐색하지 않습니다.
 
+Learner는 Input Pack 전체를 담은 LEARN_REQUEST 1회로 Private subscription executor(Claude Max, sonnet)가 실행합니다. 요청·결과 댓글은 이미 닫힌 요구사항 Issue에 남고, 결과는 trusted finalize가 evidence grounding을 다시 검증합니다.
+
 ## 11. Improvement Candidate와 Human-selected LOOP
 
 LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candidate Pack`으로 구조화됩니다.
