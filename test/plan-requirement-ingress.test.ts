@@ -99,18 +99,20 @@ test("후보 판별 조건이 하나라도 어긋나면 sonnet 대신 opus를 �
   assert.equal(await plannerModel("[Self-Improvement] 후보", body, { ...productEvaluationDispatch, user: { login: "other-app[bot]", id: 1, type: "Bot" } }), "opus", "author");
 });
 
-test("planner model은 Claude AI Planner step에만 연결되고 호출 수·downstream은 그대로다", () => {
+test("planner model은 Claude CLI Planner step에만 연결되고 호출 수·downstream은 그대로다", () => {
   const plannerStep = workflow.slice(workflow.indexOf("- name: Read-only bounded AI Planner"), workflow.indexOf("- name: Fresh Framework checkout for trusted validation"));
-  assert.match(plannerStep, /--model \$\{\{ steps\.input\.outputs\.planner_model \}\}/);
-  assert.equal((workflow.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1, "exactly one AI call");
+  assert.match(plannerStep, /--model "\$\{\{ steps\.input\.outputs\.planner_model \}\}"/);
+  assert.equal((workflow.match(/\bclaude -p\b/g) ?? []).length, 1, "exactly one AI call");
   assert.equal((workflow.match(/uses:\s*openai\/codex-action@/g) ?? []).length, 0, "PLAN must not call OpenAI Codex");
+  assert.equal((workflow.match(/anthropics\/claude-code-action/g) ?? []).length, 0, "PLAN must bypass Claude Action wrapper");
+  assert.match(plannerStep, /--output-format json/);
+  assert.match(plannerStep, /--json-schema "\$schema"/);
   assert.match(plannerStep, /--max-turns 1/);
   assert.match(workflow, /core\.setOutput\('planner_model', productImprovementCandidate \? 'sonnet' : 'opus'\);/);
 });
 
-test("AI Planner는 Claude Code Action을 exact commit SHA로 pin한다", () => {
-  const plannerStep = workflow.slice(workflow.indexOf("- name: Read-only bounded AI Planner"), workflow.indexOf("- name: Fresh Framework checkout for trusted validation"));
-  const pins = [...plannerStep.matchAll(/uses:\s*anthropics\/claude-code-action\/base-action@([0-9a-f]{40})/g)].map((match) => match[1]);
-  assert.deepEqual(pins, ["12dd8d74c712f5f3669365b2369b558c495b1104"]);
-  assert.equal((workflow.match(/anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1, "AI 호출 step 하나에만 적용");
+test("AI Planner는 Claude CLI를 exact version으로 설치한다", () => {
+  assert.match(workflow, /npm install -g @anthropic-ai\/claude-code@2\.1\.286/);
+  assert.match(workflow, /test "\$version" = "2\.1\.286"/);
+  assert.equal((workflow.match(/@anthropic-ai\/claude-code@2\.1\.286/g) ?? []).length, 1);
 });
