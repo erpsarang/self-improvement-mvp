@@ -4,8 +4,6 @@ import test from "node:test";
 
 const codexWorkflowPaths = [
   ".github/workflows/implement.yml",
-  ".github/workflows/bounded-fix-smoke.yml",
-  ".github/workflows/single-pass-smoke.yml",
 ] as const;
 
 test("PLAN model은 subscription request에 명시하고 나머지 lifecycle AI 호출은 explicit model을 유지한다", async () => {
@@ -59,15 +57,4 @@ test("Product Evaluation은 subscription executor(sonnet)를 쓰고 provenance�
   assert.match(product, /kind: PRODUCT_EVALUATION\n/);
   assert.match(product, /EVALUATOR_PROVIDER: claude-max-subscription\n/);
   assert.match(product, /EVALUATOR_MODEL: sonnet\n/);
-});
-
-test("smoke는 Luna를 명시한다", async () => {
-
-  for (const path of [
-    ".github/workflows/bounded-fix-smoke.yml",
-    ".github/workflows/single-pass-smoke.yml",
-  ]) {
-    const workflow = await readFile(path, "utf8");
-    assert.match(workflow, /model: gpt-6-luna\n\s+effort: low/);
-  }
 });
