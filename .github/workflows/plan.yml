@@ -248,7 +248,7 @@ jobs:
               `Frozen target SHA: \`${identity.targetSha}\``,
               `Model class: \`${model}\``,
               'Private subscription executor가 이 bounded prompt/schema만 사용해 PLAN을 생성합니다.',
-              'Public repository에는 Claude/ChatGPT 구독 자격증명이나 executor write credential이 없습니다.',
+              'Public repository에는 Claude/ChatGPT 구독 자격증명이 없습니다. Executor wake-up credential은 private repo Actions dispatch-only로 제한됩니다.',
               '### HumanStatus: PLAN_REQUEST',
               '**현재 상황:** PLAN 입력은 trusted prepare까지 끝났고 subscription executor의 결과를 기다리고 있습니다.',
               '**다음 행동:** 자동 실행을 기다리세요. 사람이 Claude 세션을 시작할 필요는 없습니다.',
@@ -259,6 +259,23 @@ jobs:
               body,
             });
             core.setOutput('request_comment_id', String(comment.id));
+
+      - name: Wake private subscription executor
+        env:
+          EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${EXECUTOR_DISPATCH_TOKEN:-}" ]; then
+            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: subscription-ai-executor / Actions: write)." >&2
+            exit 1
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/plan-poller.yml/dispatches \
+            -d '{"ref":"main"}'
 
   resolve:
     needs: [plan, request]
