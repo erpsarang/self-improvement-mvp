@@ -50,3 +50,12 @@ test("동일 PLAN run의 request는 최대 2 attempts로 제한하고 public wor
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action|openai\/codex-action/);
   assert.doesNotMatch(workflow, /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/);
 });
+
+
+test("private PLAN executor wake-up은 exact request_id를 전달한다", () => {
+  const wake = workflow.split("      - name: Wake private subscription executor\n")[1]?.split("\n  resolve:", 1)[0] ?? "";
+  assert.match(wake, /PLAN_REQUEST_ID: \$\{\{ steps\.request\.outputs\.request_id \}\}/);
+  assert.match(wake, /\^\[0-9a-f\]\{64\}\$/);
+  assert.match(wake, /plan-poller\.yml\/dispatches/);
+  assert.match(wake, /\\\"inputs\\\":\{\\\"request_id\\\":\\\"\$PLAN_REQUEST_ID\\\"\}/);
+});

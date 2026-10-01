@@ -263,6 +263,7 @@ jobs:
       - name: Wake private subscription executor
         env:
           EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
+          PLAN_REQUEST_ID: ${{ steps.request.outputs.request_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -270,12 +271,16 @@ jobs:
             echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: subscription-ai-executor / Actions: write)." >&2
             exit 1
           fi
+          if [[ ! "$PLAN_REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid PLAN_REQUEST_ID; refusing executor dispatch." >&2
+            exit 1
+          fi
           curl -fsS -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/plan-poller.yml/dispatches \
-            -d '{"ref":"main"}'
+            -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$PLAN_REQUEST_ID\"}}"
 
   resolve:
     needs: [plan, request]
