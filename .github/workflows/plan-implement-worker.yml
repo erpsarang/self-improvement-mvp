@@ -383,13 +383,16 @@ jobs:
     permissions:
       actions: read
       issues: write
-    uses: ./.github/workflows/implement-subscription.yml
+    uses: ./.github/workflows/subscription-exchange.yml
     with:
-      attempt: "0"
+      kind: IMPLEMENT
+      label: 최초 IMPLEMENT
       issue_number: ${{ needs.prepare0.outputs.issue_number }}
       request_artifact_name: ${{ needs.prepare0.outputs.request_artifact_name }}
       request_artifact_id: ${{ needs.prepare0.outputs.request_artifact_id }}
       request_artifact_digest: ${{ needs.prepare0.outputs.request_artifact_digest }}
+      result_artifact_name: bounded-worker-raw-proposal-0-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      result_file_name: raw-proposal.json
     secrets:
       EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
 
@@ -695,13 +698,16 @@ jobs:
     permissions:
       actions: read
       issues: write
-    uses: ./.github/workflows/implement-subscription.yml
+    uses: ./.github/workflows/subscription-exchange.yml
     with:
-      attempt: "1"
+      kind: IMPLEMENT
+      label: repair 1
       issue_number: ${{ needs.attempt0_result.outputs.issue_number }}
       request_artifact_name: ${{ needs.attempt0_result.outputs.repair_request_artifact_name }}
       request_artifact_id: ${{ needs.attempt0_result.outputs.repair_request_artifact_id }}
       request_artifact_digest: ${{ needs.attempt0_result.outputs.repair_request_artifact_digest }}
+      result_artifact_name: bounded-worker-raw-proposal-1-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      result_file_name: raw-proposal.json
     secrets:
       EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
 
@@ -899,13 +905,16 @@ jobs:
     permissions:
       actions: read
       issues: write
-    uses: ./.github/workflows/implement-subscription.yml
+    uses: ./.github/workflows/subscription-exchange.yml
     with:
-      attempt: "2"
+      kind: IMPLEMENT
+      label: repair 2
       issue_number: ${{ needs.attempt0_result.outputs.issue_number }}
       request_artifact_name: ${{ needs.repair1.outputs.repair_request_artifact_name }}
       request_artifact_id: ${{ needs.repair1.outputs.repair_request_artifact_id }}
       request_artifact_digest: ${{ needs.repair1.outputs.repair_request_artifact_digest }}
+      result_artifact_name: bounded-worker-raw-proposal-2-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      result_file_name: raw-proposal.json
     secrets:
       EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
 

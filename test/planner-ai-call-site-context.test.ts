@@ -373,14 +373,14 @@ test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 �
   // 이 repo 자신을 target으로 쓴다. AI 호출 step을 가진 lifecycle workflow(smoke 제외)는 모두 들어가야 한다.
   const target = process.cwd();
   // PLAN과 PLAN Worker IMPLEMENT/repair는 Private subscription executor로 옮겨 직접 AI 호출 step이 없다.
-  for (const subscription of ["plan.yml", "plan-implement-worker.yml", "implement-subscription.yml"]) {
+  for (const subscription of ["plan.yml", "plan-implement-worker.yml", "semantic-review.yml", "subscription-exchange.yml"]) {
     const workflow = readFileSync(join(target, ".github", "workflows", subscription), "utf8");
     assert.doesNotMatch(workflow, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/, subscription);
   }
 
   const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
   const paths = candidates.map((file) => file.path);
-  for (const lifecycle of ["implement", "fix-worker", "semantic-review", "learn", "product-evaluation"]) {
+  for (const lifecycle of ["implement", "fix-worker", "learn", "product-evaluation"]) {
     assert.ok(paths.includes(`.github/workflows/${lifecycle}.yml`), `${lifecycle} must be an AI call-site candidate: ${paths.join(", ")}`);
   }
   const lifecycleOnly = paths.filter((path) => !/-smoke\.yml$/.test(path));

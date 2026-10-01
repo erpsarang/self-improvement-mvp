@@ -7,7 +7,6 @@ const selector = "${{ secrets[github.repository == 'erpsarang/self-improvement-m
 const directCodexWorkflows = [
   ".github/workflows/fix-worker.yml",
   ".github/workflows/learn.yml",
-  ".github/workflows/semantic-review.yml",
 ] as const;
 
 test("PLAN public workflow는 subscription/API credential을 보유하지 않고 나머지 direct AI workflow만 repository-scoped Codex key를 사용한다", async () => {
@@ -24,18 +23,22 @@ test("PLAN public workflow는 subscription/API credential을 보유하지 않고
     total += matches;
     assert.doesNotMatch(workflow, /openai-api-key:\s*\$\{\{\s*secrets\.(?:FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY)\s*\}\}/);
   }
-  assert.equal(total, 3);
+  assert.equal(total, 2);
 
-  // PLAN Worker의 최초 IMPLEMENT와 repair는 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
-  for (const path of [".github/workflows/plan-implement-worker.yml", ".github/workflows/implement-subscription.yml"]) {
+  // PLAN Worker의 IMPLEMENT/repair와 Semantic REVIEW는 Private subscription executor를 쓰고 Codex/Claude credential을 갖지 않는다.
+  for (const path of [
+    ".github/workflows/plan-implement-worker.yml",
+    ".github/workflows/semantic-review.yml",
+    ".github/workflows/subscription-exchange.yml",
+  ]) {
     const workflow = await readFile(path, "utf8");
     assert.doesNotMatch(workflow, /openai\/codex-action|openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY/, path);
   }
 });
 
-test("Semantic REVIEW reusable workflow는 두 secret을 optional contract로 받는다", async () => {
+test("Semantic REVIEW reusable workflow는 Private wake-up token 하나만 optional contract로 받는다", async () => {
   const workflow = await readFile(".github/workflows/semantic-review.yml", "utf8");
-  assert.match(workflow, /FRAMEWORK_CODEX_API_KEY:\s*\n\s*required: false/);
-  assert.match(workflow, /APP_CODEX_API_KEY:\s*\n\s*required: false/);
-  assert.doesNotMatch(workflow, /(?:FRAMEWORK|APP)_CODEX_API_KEY:\s*\n\s*required: true/);
+  assert.match(workflow, /secrets:\n\s+EXECUTOR_DISPATCH_TOKEN:\s*\n\s*required: false\n/);
+  assert.doesNotMatch(workflow, /(?:FRAMEWORK|APP)_CODEX_API_KEY/);
+  assert.deepEqual(workflow.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
 });

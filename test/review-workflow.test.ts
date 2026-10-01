@@ -5,7 +5,8 @@ import test from "node:test";
 const trustedRail = await readFile(".github/workflows/trusted-rail.yml", "utf8");
 const reviewWorkflow = await readFile(".github/workflows/semantic-review.yml", "utf8");
 const prepareSection = reviewWorkflow.split("\n  review_prepare:\n")[1]?.split("\n  review_agent:\n")[0] ?? "";
-const agentSection = reviewWorkflow.split("\n  review_agent:\n")[1]?.split("\n  review_finalize:\n")[0] ?? "";
+const agentSection = reviewWorkflow.split("\n  review_agent:\n")[1]?.split("\n  review_exchange:\n")[0] ?? "";
+const exchangeSection = reviewWorkflow.split("\n  review_exchange:\n")[1]?.split("\n  review_finalize:\n")[0] ?? "";
 const finalizeSection = reviewWorkflow.split("\n  review_finalize:\n")[1] ?? "";
 
 test("Trusted Rail은 VERIFY 성공 뒤 Semantic REVIEW reusable workflow를 동기 호출한다", () => {
@@ -17,37 +18,70 @@ test("Trusted Rail은 VERIFY 성공 뒤 Semantic REVIEW reusable workflow를 동
   assert.match(reviewWorkflow, /workflow_call:/);
 });
 
-test("REVIEW는 trusted prepare → isolated AI reviewer → trusted finalize로 runner를 분리한다", () => {
+test("REVIEW는 trusted prepare → isolated request → subscription exchange → trusted finalize로 runner를 분리한다", () => {
   assert.match(reviewWorkflow, /\n  review_prepare:\n/);
   assert.match(reviewWorkflow, /\n  review_agent:\n/);
+  assert.match(reviewWorkflow, /\n  review_exchange:\n/);
   assert.match(reviewWorkflow, /\n  review_finalize:\n/);
   assert.match(agentSection, /needs: review_prepare/);
-  assert.match(finalizeSection, /needs: \[review_prepare, review_agent\]/);
+  assert.match(exchangeSection, /needs: \[review_prepare, review_agent\]/);
+  assert.match(finalizeSection, /needs: \[review_prepare, review_agent, review_exchange\]/);
   assert.match(finalizeSection, /needs\.review_agent\.result == 'success'/);
+  assert.match(finalizeSection, /needs\.review_exchange\.result == 'success'/);
 });
 
-test("trusted REVIEW prepare/finalize는 read-only이며 reviewer에도 write 권한이 없다", () => {
+test("trusted REVIEW prepare/request/finalize는 read-only이고 Issue write는 checkout 없는 subscription exchange에만 있다", () => {
   assert.match(prepareSection, /permissions:\n      contents: read\n      actions: read/);
-  assert.match(agentSection, /permissions:\n      contents: read/);
+  assert.match(agentSection, /permissions:\n      contents: read\n    runs-on:/);
   assert.match(finalizeSection, /permissions:\n      contents: read\n      actions: read/);
   for (const section of [prepareSection, agentSection, finalizeSection]) {
     assert.doesNotMatch(section, /contents: write|pull-requests: write|issues: write/);
   }
+  assert.match(exchangeSection, /permissions:\n      actions: read\n      issues: write\n    uses: \.\/\.github\/workflows\/subscription-exchange\.yml\n/);
+  assert.doesNotMatch(exchangeSection, /steps:|runs-on:|actions\/checkout@/);
+  assert.equal((reviewWorkflow.match(/issues: write/g) ?? []).length, 1);
+  // Trusted Rail은 REVIEW_REQUEST marker를 위해서만 review 호출에 issues: write를 준다.
+  const railReview = trustedRail.split("\n  review:\n")[1]?.split("\n  orchestrate:\n")[0] ?? "";
+  assert.match(railReview, /permissions:\n      contents: read\n      actions: read\n      issues: write\n    uses: \.\/\.github\/workflows\/semantic-review\.yml\n/);
 });
 
-test("AI reviewer는 exact verified SHA를 credential-free checkout하고 neutral workspace에서 read-only로 실행한다", () => {
+test("REVIEW request는 exact verified SHA를 credential-free checkout하고 AI를 직접 호출하지 않는다", () => {
   assert.match(agentSection, /ref: \$\{\{ needs\.review_prepare\.outputs\.verified_head_sha \}\}/);
   assert.match(agentSection, /persist-credentials: false/);
   assert.match(agentSection, /GITHUB_TOKEN: ""/);
   assert.match(agentSection, /GH_TOKEN: ""/);
   assert.match(agentSection, /NODE_AUTH_TOKEN: ""/);
   assert.match(agentSection, /NPM_TOKEN: ""/);
-  assert.match(agentSection, /working-directory: review-neutral/);
-  assert.match(agentSection, /permission-profile: ":read-only"/);
-  assert.match(agentSection, /allow-bot-users: "github-actions\[bot\]"/);
-  assert.doesNotMatch(agentSection, /allow-bots:\s*true/);
-  assert.match(agentSection, /safety-strategy: drop-sudo/);
-  assert.match(agentSection, /project_doc_max_bytes=0/);
+  assert.doesNotMatch(reviewWorkflow, /openai\/codex-action|openai-api-key|CODEX_API_KEY|model: gpt-/);
+  assert.doesNotMatch(agentSection, /secrets\./);
+});
+
+test("REVIEW request는 Private 계약의 exact identity와 review-context 원문을 담은 3개 파일 artifact다", () => {
+  for (const key of ["schemaVersion: 1", "kind: 'trusted-review-request'", "repository: env.REVIEW_REPOSITORY", "headSha: env.VERIFIED_SHA", "reviewInput: {", "rail: {"]) {
+    assert.ok(agentSection.includes(key), key);
+  }
+  assert.ok(agentSection.includes("const model = 'opus';"));
+  assert.match(agentSection, /REVIEW_INPUT_DIGEST: \$\{\{ needs\.review_prepare\.outputs\.review_input_artifact_digest \}\}/);
+  assert.match(prepareSection, /review_input_artifact_digest: \$\{\{ steps\.review_input_upload\.outputs\.artifact-digest \}\}/);
+  // patch와 파일 목록은 내용 digest가 붙은 구획으로 prompt에 그대로 들어간다.
+  assert.ok(agentSection.includes("section('review-context/changed-files.txt', fs.readFileSync('review-neutral/review-context/changed-files.txt', 'utf8'))"));
+  assert.ok(agentSection.includes("section('review-context/patch.diff', fs.readFileSync('review-neutral/review-context/patch.diff', 'utf8'))"));
+  assert.ok(agentSection.includes("-----BEGIN ${name} sha256=${digest}-----"));
+  assert.ok(agentSection.includes("-----END ${name} sha256=${digest}-----"));
+  assert.ok(agentSection.includes("fs.copyFileSync(path.join(env.RUNNER_TEMP, 'review-input', 'review-output.schema.json'), path.join(output, 'schema.json'));"));
+  assert.ok(agentSection.includes(`= "f:identity.json f:prompt.md f:schema.json "`));
+  assert.match(agentSection, /request_artifact_digest: \$\{\{ steps\.review_request_upload\.outputs\.artifact-digest \}\}/);
+  // full checkout을 지운 뒤에만 request를 만든다.
+  assert.ok(agentSection.indexOf("test ! -e review-target") < agentSection.indexOf("REVIEW_REQUEST 입력 고정"));
+});
+
+test("REVIEW subscription exchange는 opus REVIEW 계약으로 기존 reviewer output artifact를 만든다", () => {
+  assert.match(exchangeSection, /kind: REVIEW\n/);
+  assert.match(exchangeSection, /result_artifact_name: reviewer-output-issue-\$\{\{ needs\.review_prepare\.outputs\.issue_number \}\}-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}\n/);
+  assert.match(exchangeSection, /result_file_name: reviewer\.json\n/);
+  assert.match(exchangeSection, /request_artifact_digest: \$\{\{ needs\.review_agent\.outputs\.request_artifact_digest \}\}/);
+  assert.match(exchangeSection, /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/);
+  assert.match(finalizeSection, /REVIEWER_PROVIDER: claude-max-subscription/);
 });
 
 test("Semantic REVIEW는 AI 호출 전에 bounded patch를 만들고 full checkout을 폐기한다", () => {
@@ -60,15 +94,12 @@ test("Semantic REVIEW는 AI 호출 전에 bounded patch를 만들고 full checko
   assert.match(agentSection, /review-neutral\/review-context\/patch\.diff/);
   assert.match(agentSection, /rm -rf review-target/);
   assert.match(agentSection, /test ! -e review-target/);
-  assert.match(agentSection, /effort: medium/);
-  assert.doesNotMatch(agentSection, /effort: high/);
 });
 
 test("reviewer는 target project code를 실행하지 않고 structured output schema를 사용한다", () => {
   assert.doesNotMatch(agentSection, /working-directory: review-target\n\s+run: npm (?:ci|test|run)/);
-  assert.match(agentSection, /output-schema-file:/);
-  assert.match(agentSection, /output-file:/);
-  assert.match(agentSection, /reviewer-output-issue-/);
+  assert.match(agentSection, /review-output\.schema\.json/);
+  assert.match(exchangeSection, /reviewer-output-issue-/);
 });
 
 test("fresh trusted finalize는 VERIFY와 AUTHORIZE를 재검증하고 raw reviewer artifact만 별도로 검증한다", () => {
@@ -117,8 +148,8 @@ test("Semantic REVIEW patch는 trusted package-lock.json만 제외하고 나머�
   assert.match(step, /\[ "\$\(git rev-parse HEAD\)" != "\$VERIFIED_SHA" \]/);
   assert.match(step, /BASE_SHA: \$\{\{ needs\.review_prepare\.outputs\.base_sha \}\}/);
   assert.match(step, /VERIFIED_SHA: \$\{\{ needs\.review_prepare\.outputs\.verified_head_sha \}\}/);
-  // Reviewer read-only 경계 유지
-  assert.match(agentSection, /permission-profile: ":read-only"/);
+  // Reviewer는 repository 없이 bounded context만 받는다.
+  assert.doesNotMatch(agentSection, /openai\/codex-action/);
   assert.match(agentSection, /rm -rf review-target/);
   // workflow 전체에서 제외 pathspec은 이 한 곳뿐이다.
   assert.equal((reviewWorkflow.match(/:\(top,exclude,literal\)/g) ?? []).length, 1);

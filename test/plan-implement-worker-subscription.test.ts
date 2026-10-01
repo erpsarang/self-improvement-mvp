@@ -9,7 +9,7 @@ import test from "node:test";
 import { gzipSync } from "node:zlib";
 
 const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "utf8");
-const exchange = readFileSync(".github/workflows/implement-subscription.yml", "utf8");
+const exchange = readFileSync(".github/workflows/subscription-exchange.yml", "utf8");
 
 /** workflow 원문의 BEGIN/END 사이 코드를 들여쓰기만 걷어 그대로 돌려준다. mock 복제본을 검증하지 않는다. */
 function blocks(source: string, name: string): string[] {
@@ -19,7 +19,7 @@ function blocks(source: string, name: string): string[] {
   );
 }
 
-const coreBlocks = blocks(exchange, "implement-subscription");
+const coreBlocks = blocks(exchange, "subscription-exchange");
 const identityBlocks = blocks(workflow, "implement-identity");
 
 interface SubscriptionApi {
@@ -30,11 +30,27 @@ interface SubscriptionApi {
   selectImplementResult(comments: unknown[], expected: Record<string, unknown>): { commentId: number; raw: string } | null;
   buildImplementIdentity(input: Record<string, unknown>): Record<string, unknown>;
   loadImplementRequest(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  subscriptionRequestMarker(kind: string, identity: unknown, requestId: string, artifactId: number, artifactDigest: string): string;
+  subscriptionResultMarker(kind: string, identity: unknown, requestId: string, artifactId: number, artifactDigest: string): string;
+  selectSubscriptionResult(kind: string, comments: unknown[], expected: Record<string, unknown>): { commentId: number; raw: string } | null;
+  loadSubscriptionRequest(input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 const api = new Function(
   "require",
-  `${identityBlocks[0]}\n${coreBlocks[0]}\nreturn { canonicalJson, implementRequestId, implementRequestMarker, implementResultMarker, selectImplementResult, buildImplementIdentity, loadImplementRequest };`,
+  `${identityBlocks[0]}\n${coreBlocks[0]}\nreturn {
+    canonicalJson,
+    implementRequestId: subscriptionRequestId,
+    implementRequestMarker: (...args) => subscriptionRequestMarker('IMPLEMENT', ...args),
+    implementResultMarker: (...args) => subscriptionResultMarker('IMPLEMENT', ...args),
+    selectImplementResult: (comments, expected) => selectSubscriptionResult('IMPLEMENT', comments, expected),
+    buildImplementIdentity,
+    loadImplementRequest: (input) => loadSubscriptionRequest({ kind: 'IMPLEMENT', ...input }),
+    subscriptionRequestMarker,
+    subscriptionResultMarker,
+    selectSubscriptionResult,
+    loadSubscriptionRequest,
+  };`,
 )(createRequire(import.meta.url)) as SubscriptionApi;
 
 const BASE_SHA = "f690a1ae3685d2aeddbfe3509b719690898854f5";
@@ -83,7 +99,7 @@ test("공통 request/result 함수는 exchange workflow의 두 job이 같은 사
   assert.equal(coreBlocks.length, 2);
   assert.equal(coreBlocks[0], coreBlocks[1]);
   assert.equal(identityBlocks.length, 1);
-  assert.doesNotMatch(workflow, /BEGIN implement-subscription/);
+  assert.doesNotMatch(workflow, /BEGIN subscription-exchange/);
   assert.doesNotMatch(exchange, /BEGIN implement-identity/);
 });
 
@@ -244,6 +260,73 @@ test("request artifact는 id로 다시 받아 zip digest, 파일 집합, 이 run
 
     const extra = requestArchive({ ...files, "token.txt": "x" });
     await assert.rejects(load({ github: fakeGithub(extra.data, extra.digest), artifactDigest: extra.digest }), /file set mismatch/);
+  } finally {
+    if (previousAttempt === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
+    else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** Semantic REVIEW job이 만드는 trusted-review-request identity (Private review_bridge 계약). */
+function reviewIdentity(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    kind: "trusted-review-request",
+    repository: "erpsarang/self-improvement-mvp",
+    issueNumber: 349,
+    baseSha: "a".repeat(40),
+    headSha: "b".repeat(40),
+    reviewInput: { name: "review-input-issue-349-901-attempt-1", id: 404, digest: "c".repeat(64) },
+    rail: { runId: 901, runAttempt: 1 },
+    model: "opus",
+    ...overrides,
+  };
+}
+
+test("REVIEW marker는 head와 Trusted Rail run을 담고 IMPLEMENT 결과와 섞이지 않는다", () => {
+  const value = reviewIdentity();
+  const requestId = api.implementRequestId(value, ARTIFACT_ID, ARTIFACT_DIGEST);
+  const marker = api.subscriptionRequestMarker("REVIEW", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
+  assert.equal(
+    marker,
+    `<!-- ai-dev-framework:REVIEW_REQUEST v=1 request=${requestId} issue=349 repository=erpsarang/self-improvement-mvp base=${"a".repeat(40)} head=${"b".repeat(40)} run=901 run-attempt=1 artifact=808 digest=${ARTIFACT_DIGEST} model=opus -->`,
+  );
+  const expectedMarker = api.subscriptionResultMarker("REVIEW", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
+  const review = { decision: "PASS", requirementComplete: true, summary: "ok", findings: [] };
+  const body = `${expectedMarker}\nREVIEW_RESULT_GZIP_BASE64:\n${gzipSync(Buffer.from(JSON.stringify(review), "utf8")).toString("base64")}`;
+  const expected = { requestId, requestCommentId: 10, owner: "erpsarang", expectedMarker };
+  const accepted = api.selectSubscriptionResult("REVIEW", [resultComment(body)], expected);
+  assert.deepEqual(accepted && JSON.parse(accepted.raw), review);
+  // IMPLEMENT 교환은 같은 request_id의 REVIEW 결과를 결과로 보지 않는다.
+  assert.equal(api.selectSubscriptionResult("IMPLEMENT", [resultComment(body)], { ...expected, expectedMarker: "x" }), null);
+  assert.throws(() => api.subscriptionRequestMarker("FIX", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST), /unsupported subscription kind/);
+});
+
+test("REVIEW request artifact는 Trusted Rail run과 opus에 묶인 identity만 받는다", async () => {
+  const files = (value: unknown) => ({ "identity.json": JSON.stringify(value), "prompt.md": "prompt", "schema.json": "{}" });
+  const context = { repo: { owner: "erpsarang", repo: "self-improvement-mvp" }, runId: 901 };
+  const root = mkdtempSync(join(tmpdir(), "review-request-load-"));
+  const previousAttempt = process.env.GITHUB_RUN_ATTEMPT;
+  process.env.GITHUB_RUN_ATTEMPT = "1";
+  const load = (value: unknown, kind = "REVIEW") => {
+    const { data, digest } = requestArchive(files(value));
+    return api.loadSubscriptionRequest({
+      kind,
+      github: fakeGithub(data, digest, { workflow_run: { id: 901 } }),
+      context,
+      artifactName: "implement-request-a",
+      artifactId: 808,
+      artifactDigest: digest,
+      issueNumber: 349,
+      directory: join(root, "request"),
+    });
+  };
+  try {
+    assert.deepEqual(await load(reviewIdentity()), reviewIdentity());
+    await assert.rejects(load(reviewIdentity({ model: "sonnet" })), /identity mismatch/);
+    await assert.rejects(load(reviewIdentity({ kind: "trusted-implement-request" })), /identity mismatch/);
+    await assert.rejects(load(reviewIdentity({ rail: { runId: 902, runAttempt: 1 } })), /identity mismatch/);
+    await assert.rejects(load(reviewIdentity(), "IMPLEMENT"), /identity mismatch/);
   } finally {
     if (previousAttempt === undefined) delete process.env.GITHUB_RUN_ATTEMPT;
     else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;
