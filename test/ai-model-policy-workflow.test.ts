@@ -1,36 +1,27 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
-const codexWorkflowPaths = [
-  ".github/workflows/implement.yml",
-] as const;
-
-test("PLAN model은 subscription request에 명시하고 나머지 lifecycle AI 호출은 explicit model을 유지한다", async () => {
+test("PLAN model은 subscription request에 명시하고 Framework에는 직접 Codex 호출이 남지 않는다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
   assert.doesNotMatch(plan, /uses:\s*(?:anthropics\/claude-code-action|openai\/codex-action)@/);
   assert.match(plan, /PLAN_MODEL: \$\{\{ needs\.plan\.outputs\.planner_model \}\}/);
   assert.match(plan, /model=\$\{model\} -->/);
 
-  for (const path of codexWorkflowPaths) {
-    const workflow = await readFile(path, "utf8");
-    const calls = workflow.match(/uses:\s*openai\/codex-action@/g) ?? [];
-    const models = workflow.match(/^\s+model:\s*\S+/gm) ?? [];
-    assert.ok(calls.length > 0, path);
-    assert.equal(models.length, calls.length, `${path}: AI 호출 수와 explicit model 수가 달라서는 안 됩니다`);
+  // legacy AUTHORIZE/IMPLEMENT 입구와 수동 smoke를 지워 Codex Action과 Codex API key를 쓰는 workflow가 없다.
+  for (const name of await readdir(".github/workflows")) {
+    const workflow = await readFile(`.github/workflows/${name}`, "utf8");
+    assert.doesNotMatch(workflow, /openai\/codex-action|CODEX_API_KEY|model: gpt-/, name);
   }
 });
 
-test("고레버리지 PLAN은 Opus, 구 IMPLEMENT는 Sol, PLAN Worker·REVIEW·FIX는 subscription executor를 쓴다", async () => {
+test("고레버리지 PLAN은 Opus, PLAN Worker·REVIEW·FIX는 subscription executor를 쓴다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
   assert.match(plan, /productImprovementCandidate \? 'sonnet' : 'opus'/);
 
   const worker = await readFile(".github/workflows/plan-implement-worker.yml", "utf8");
   // 최초 IMPLEMENT와 repair 1/2는 Private subscription executor(sonnet)로 옮겨 Codex model을 쓰지 않는다.
   assert.doesNotMatch(worker, /uses:\s*openai\/codex-action@|model: gpt-/);
-
-  const implement = await readFile(".github/workflows/implement.yml", "utf8");
-  assert.match(implement, /model: gpt-6-sol\n\s+effort: medium/);
 
   // bounded FIX Worker는 Private subscription executor(sonnet)로 옮겨 Codex model을 쓰지 않는다.
   const fix = await readFile(".github/workflows/fix-worker.yml", "utf8");

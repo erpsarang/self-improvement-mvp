@@ -43,9 +43,9 @@ test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인�
   for (const path of NEW_FILE_FIXTURE_PATHS) {
     assert.equal(existsSync(join(target, path)), false, `${path} must stay a fixture-only path that never exists in the repository`);
   }
-  const callSites = aiCallSiteCandidates(REQUIREMENT, target).filter((file) => !/-smoke\.yml$/.test(file.path));
-  // PLAN Worker, Semantic REVIEW, FIX Worker, LEARN, Product Evaluation은 subscription executor로 옮겨 직접 AI 호출 지점이 아니다 (#346).
-  assert.ok(callSites.length >= 1, `expected the lifecycle call sites, got ${callSites.map((file) => file.path).join(", ")}`);
+  // lifecycle AI는 모두 subscription executor로 옮겨 canonical repo에 직접 AI 호출 지점이 없다 (#346 이후).
+  const callSites = aiCallSiteCandidates(REQUIREMENT, target);
+  assert.deepEqual(callSites, []);
   const packageJson = readFileSync(join(target, "package.json"), "utf8");
   // subscription executor로 옮긴 lifecycle workflow도 read-only 문맥으로는 여전히 크다. Planner가 본 3KB 발췌로 넣는다.
   const subscriptionWorkflows = [
@@ -59,7 +59,6 @@ test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인�
     return { path, startOffset: 0, content, contentDigest: createHash("sha256").update(content, "utf8").digest("hex") };
   });
   const evidence = [
-    ...callSites.map((file) => ({ path: file.path, startOffset: file.startOffset, content: file.content, contentDigest: file.contentDigest })),
     ...subscriptionWorkflows,
     { path: "package.json", startOffset: 0, content: packageJson, contentDigest: createHash("sha256").update(packageJson, "utf8").digest("hex") },
   ];

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -336,62 +336,55 @@ test("기본 pack에 package.json이 없어도 canonical Framework target이면 
   }
 });
 
-test("실제 canonical repo에서 #244 모양의 2바이트 package.json excerpt는 보강 후 test/build script가 보이는 전체 파일이 된다", () => {
-  const target = process.cwd();
-  const packageText = readFileSync(join(target, "package.json"), "utf8");
-  const seed: PlanContextFile = {
-    evidenceId: "E1",
-    path: "src/self-improvement/plan-context-policy.ts",
-    startOffset: 0,
-    byteLength: 0,
-    digestAlgorithm: "sha256",
-    contentDigest: "",
-    content: "",
-  };
-  const policyText = readFileSync(join(target, seed.path), "utf8");
-  const base = repack(
-    { schemaVersion: 1, kind: "trusted-plan-context-pack", repository: "erpsarang/self-improvement-mvp", sha: "834554908df9796373b2ad010092cc61087cdc82", files: [], totalBytes: 0, digestAlgorithm: "sha256", contextDigest: "0".repeat(64) },
-    [
-      truncatedExcerpt(seed, policyText, 0, Math.min(policyText.length, 2_000)),
-      truncatedExcerpt({ ...seed, path: "package.json" }, packageText, 231, 2),
-    ],
-  );
-  assert.equal(base.files[1]!.content, "ci");
+test("#244 모양의 2바이트 package.json excerpt는 보강 후 test/build script가 보이는 전체 파일이 된다", () => {
+  // canonical repo에는 이제 직접 AI 호출 step이 없어 보강이 일어나지 않는다. 같은 회귀를 canonical 모양 fixture로 고정한다.
+  const fixture = makeTarget("self-improvement-mvp");
+  try {
+    const target = fixture.target;
+    const packageText = readFileSync(join(target, "package.json"), "utf8");
+    const seed: PlanContextFile = {
+      evidenceId: "E1",
+      path: "src/self-improvement/learn-handler.ts",
+      startOffset: 0,
+      byteLength: 0,
+      digestAlgorithm: "sha256",
+      contentDigest: "",
+      content: "",
+    };
+    const seedText = readFileSync(join(target, seed.path), "utf8");
+    const scriptsOffset = packageText.indexOf('"scripts"');
+    const base = repack(
+      { schemaVersion: 1, kind: "trusted-plan-context-pack", repository: "erpsarang/self-improvement-mvp", sha: "834554908df9796373b2ad010092cc61087cdc82", files: [], totalBytes: 0, digestAlgorithm: "sha256", contextDigest: "0".repeat(64) },
+      [
+        truncatedExcerpt(seed, seedText, 0, seedText.length),
+        truncatedExcerpt({ ...seed, path: "package.json" }, packageText, scriptsOffset + 1, 2),
+      ],
+    );
+    assert.equal(base.files[1]!.content, "sc");
 
-  const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, target, base);
-  verifyPlanContextPack(augmented);
-  const packageFile = augmented.files.find((file) => file.path === "package.json");
-  assert.ok(packageFile);
-  assert.equal(packageFile.content, packageText);
-  const scripts = (JSON.parse(packageFile.content) as { scripts: Record<string, string> }).scripts;
-  assert.equal(typeof scripts.test, "string");
-  assert.equal(typeof scripts.build, "string");
-  assert.equal(packageText.slice(packageFile.startOffset, packageFile.startOffset + packageFile.content.length), packageFile.content);
+    const augmented = augmentPlanContextWithAiCallSites(FRAMEWORK_AI_COST_REQUIREMENT, target, base);
+    verifyPlanContextPack(augmented);
+    const packageFile = augmented.files.find((file) => file.path === "package.json");
+    assert.ok(packageFile);
+    assert.equal(packageFile.content, packageText);
+    const scripts = (JSON.parse(packageFile.content) as { scripts: Record<string, string> }).scripts;
+    assert.equal(typeof scripts.test, "string");
+    assert.equal(typeof scripts.build, "string");
+    assert.equal(packageText.slice(packageFile.startOffset, packageFile.startOffset + packageFile.content.length), packageFile.content);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
 });
 
-test("실제 canonical repo에서 #244 요구는 lifecycle AI 호출 지점을 모두 문맥에 넣는다", () => {
-  // 이 repo 자신을 target으로 쓴다. AI 호출 step을 가진 lifecycle workflow(smoke 제외)는 모두 들어가야 한다.
+test("실제 canonical repo에는 직접 AI 호출 step이 없고 lifecycle AI는 모두 subscription executor를 쓴다", () => {
+  // PLAN, PLAN Worker IMPLEMENT/repair, REVIEW, FIX, LEARN, Product Evaluation은 Private subscription executor로 옮겼고,
+  // legacy AUTHORIZE/IMPLEMENT 입구와 수동 smoke는 삭제했다.
   const target = process.cwd();
-  // PLAN, PLAN Worker IMPLEMENT/repair, REVIEW, FIX, LEARN, Product Evaluation은 Private subscription executor로 옮겨 직접 AI 호출 step이 없다.
-  for (const subscription of ["plan.yml", "plan-implement-worker.yml", "semantic-review.yml", "fix-worker.yml", "learn.yml", "product-evaluation.yml", "subscription-exchange.yml"]) {
-    const workflow = readFileSync(join(target, ".github", "workflows", subscription), "utf8");
-    assert.doesNotMatch(workflow, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/, subscription);
+  for (const name of readdirSync(join(target, ".github", "workflows"))) {
+    const workflow = readFileSync(join(target, ".github", "workflows", name), "utf8");
+    assert.doesNotMatch(workflow, /uses: (?:openai\/codex-action|anthropics\/claude-code-action)/, name);
   }
-
-  const candidates = aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target);
-  const paths = candidates.map((file) => file.path);
-  for (const lifecycle of ["implement"]) {
-    assert.ok(paths.includes(`.github/workflows/${lifecycle}.yml`), `${lifecycle} must be an AI call-site candidate: ${paths.join(", ")}`);
-  }
-  const lifecycleOnly = paths.filter((path) => !/-smoke\.yml$/.test(path));
-  assert.ok(lifecycleOnly.length <= PLAN_CONTEXT_MAX_FILES - 1, "all lifecycle call sites fit beside one primary slot");
-  for (const file of candidates) {
-    assert.match(file.content, /uses: (?:openai\/codex-action|anthropics\/claude-code-action\/base-action)@/, file.path);
-    assert.ok(file.byteLength <= AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES, file.path);
-    // trusted validatePlan의 frozen repository 검사 (#244 run 35971708433 회귀: byte 오프셋이 문자 인덱스로 쓰였다).
-    const frozenText = readFileSync(join(target, file.path), "utf8");
-    assert.equal(frozenText.slice(file.startOffset, file.startOffset + file.content.length), file.content, `${file.path} evidence must match frozen repository`);
-  }
+  assert.deepEqual(aiCallSiteCandidates(FRAMEWORK_AI_COST_REQUIREMENT, target), []);
 });
 
 test("#319: 원칙 문구로 호출 지점 보강이 켜져도 canonical Framework의 변경 대상 source/직접 테스트가 PLAN Context에 남는다", async () => {
