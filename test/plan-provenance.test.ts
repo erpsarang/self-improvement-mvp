@@ -9,6 +9,9 @@ import { createRequire } from "node:module";
 const workflow = readFileSync(".github/workflows/plan.yml", "utf8");
 const scripts = [...workflow.matchAll(/          script: \|\n((?:            .*\n|\n)+)/g)]
   .map(match => match[1]!.split("\n").map(line => line.slice(12)).join("\n"));
+const freezeScript = scripts.find((script) => script.includes("const raw = process.env.ISSUE_NUMBER"))!;
+const provenanceScript = scripts.find((script) => script.includes("kind: 'untrusted-plan-provenance'"))!;
+const pointerScript = scripts.find((script) => script.includes("Missing PLAN Decision Packet"))!;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const require = createRequire(import.meta.url);
 
@@ -29,7 +32,7 @@ export async function freeze(title: string, body: string, attemptOrOptions: stri
   const root = mkdtempSync(join(tmpdir(), "plan-provenance-"));
   const outputs: Record<string, string> = {};
   try {
-    await new AsyncFunction("require", "process", "github", "context", "core", scripts[0])(
+    await new AsyncFunction("require", "process", "github", "context", "core", freezeScript)(
       require, { env: {
         RUNNER_TEMP: root, ISSUE_NUMBER: "60", GITHUB_RUN_ID: "1234", GITHUB_RUN_ATTEMPT: attempt,
         PLAN_INGRESS_EVENT: options.event ?? "issues", PLAN_INGRESS_ACTOR: options.actor ?? "member",
@@ -69,11 +72,12 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
     RUNNER_TEMP: root, PLAN_IDENTITY: JSON.stringify(identity), PLAN_ARTIFACT_ID: "456",
     PLAN_ARTIFACT_DIGEST: "c".repeat(64), PLAN_ARTIFACT_URL: "https://github.com/example/app/actions/runs/1234/artifacts/456",
     PROVENANCE_URL: "https://github.com/example/app/actions/runs/1234/artifacts/457",
+    PLAN_REQUEST_ID: "d".repeat(64),
     PLAN_DECISION_PACKET: "### PLAN Decision Packet (사람이 읽는 판단 재료)\n\n**준비 상태:** `ready=true` — Blocking Question 없음.",
     PLAN_READY: "true",
   };
   try {
-    const bind = (values: typeof env) => new AsyncFunction("require", "process", "core", scripts[1])(require, { env: values }, { setOutput() {} });
+    const bind = (values: typeof env) => new AsyncFunction("require", "process", "core", provenanceScript)(require, { env: values }, { setOutput() {} });
     await bind(env);
     const provenance = JSON.parse(readFileSync(join(root, "PLAN-provenance.json"), "utf8"));
     assert.deepEqual(provenance.artifact, { name: identity.artifactName, id: "456", digestAlgorithm: "sha256", digest: env.PLAN_ARTIFACT_DIGEST, url: env.PLAN_ARTIFACT_URL });
@@ -82,13 +86,13 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
     await assert.rejects(bind({ ...env, PLAN_ARTIFACT_DIGEST: "" }), /exact uploaded PLAN identity/);
     await assert.rejects(bind({ ...env, PLAN_ARTIFACT_ID: "bad" }), /exact uploaded PLAN identity/);
     let comment: any;
-    const pointer = (values: typeof env) => new AsyncFunction("process", "github", "context", scripts[2])(
+    const pointer = (values: typeof env) => new AsyncFunction("process", "github", "context", pointerScript)(
       { env: values }, { rest: { issues: { createComment: async (value: unknown) => { comment = value; } } } },
       { repo: { owner: "example", repo: "app" } },
     );
     await pointer(env);
     assert.equal(comment.issue_number, 60);
-    for (const value of [identity.artifactName, identity.requirement.digest, env.PLAN_ARTIFACT_DIGEST, env.PROVENANCE_URL, identity.targetSha]) assert.ok(comment.body.includes(value));
+    for (const value of [identity.artifactName, identity.requirement.digest, env.PLAN_ARTIFACT_DIGEST, env.PROVENANCE_URL, identity.targetSha, env.PLAN_REQUEST_ID]) assert.ok(comment.body.includes(value));
     assert.doesNotMatch(comment.body, /untrusted title|untrusted body/);
 
     // Decision Packet은 trusted validation을 통과한 PLAN의 사람용 발췌로 pointer에 들어가되,
@@ -115,15 +119,25 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
 });
 
 test("workflow isolates write permission and uses upload result rather than planner claims", () => {
-  assert.equal(scripts.length, 3);
-  const [planner, provenance] = workflow.split("  provenance:");
-  assert.match(planner!, /github\.event_name == 'workflow_dispatch'[\s\S]*github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
-  assert.match(planner!, /github\.event_name == 'issues'[\s\S]*startsWith\(github\.event\.issue\.title, '\[업무 요구\]'\)/);
-  assert.match(planner!, /ai-plan\/identity.json/);
-  assert.match(planner!, /name: \$\{\{ fromJSON\(steps.input.outputs.identity\).artifactName \}\}/);
-  assert.match(planner!, /artifact_digest: \$\{\{ steps.upload.outputs.artifact-digest \}\}/);
-  assert.doesNotMatch(planner!, /issues: write/);
-  assert.match(provenance!, /needs: plan/);
-  assert.match(provenance!, /issues: write/);
-  assert.doesNotMatch(provenance!, /checkout@|codex-action|download-artifact|raw-plan/);
+  assert.equal(scripts.length, 5);
+  assert.ok(freezeScript && provenanceScript && pointerScript);
+  const planJob = workflow.split("\n  plan:\n")[1]?.split("\n  request:\n", 1)[0] ?? "";
+  const requestJob = workflow.split("\n  request:\n")[1]?.split("\n  resolve:\n", 1)[0] ?? "";
+  const resolveJob = workflow.split("\n  resolve:\n")[1]?.split("\n  provenance:\n", 1)[0] ?? "";
+  const provenanceJob = workflow.split("\n  provenance:\n")[1] ?? "";
+  assert.match(planJob, /github\.event_name == 'workflow_dispatch'[\s\S]*github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
+  assert.match(planJob, /github\.event_name == 'issues'[\s\S]*startsWith\(github\.event\.issue\.title, '\[업무 요구\]'\)/);
+  assert.match(planJob, /ai-plan\/identity.json/);
+  assert.match(planJob, /artifactName \}\}-request/);
+  assert.doesNotMatch(planJob, /issues: write|codex-action|claude-code-action/);
+  assert.match(requestJob, /issues: write/);
+  assert.doesNotMatch(requestJob, /checkout@|codex-action|claude-code-action/);
+  assert.match(resolveJob, /issues: read/);
+  assert.match(resolveJob, /actions: read/);
+  assert.match(resolveJob, /download-artifact@v4/);
+  assert.match(resolveJob, /raw-plan\.json/);
+  assert.match(resolveJob, /artifact_digest: \$\{\{ steps\.upload\.outputs\.artifact-digest \}\}/);
+  assert.match(provenanceJob, /needs: resolve/);
+  assert.match(provenanceJob, /issues: write/);
+  assert.doesNotMatch(provenanceJob, /checkout@|codex-action|claude-code-action|download-artifact|raw-plan/);
 });
