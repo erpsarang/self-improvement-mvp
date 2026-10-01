@@ -44,6 +44,6 @@ test("bot이 dispatch한 recovery PLAN도 Claude Max OAuth read-only 계약을 �
   assert.match(planWorkflow, /--permission-mode plan/);
   assert.match(planWorkflow, /--restricted/);
   assert.match(planWorkflow, /--tools ""/);
-  assert.match(planWorkflow, /--disallowedTools "\\*"/);
+  assert.match(planWorkflow, /--disallowedTools "\*"/);
   assert.doesNotMatch(planWorkflow, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|anthropics\/claude-code-action/);
 });
