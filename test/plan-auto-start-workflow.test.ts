@@ -45,8 +45,8 @@ test("동일 PLAN run의 AI 호출은 최대 2 attempts로 제한하고 Claude M
   const plannerIndex = workflow.indexOf("Read-only bounded AI Planner");
   assert.ok(guardIndex >= 0 && plannerIndex > guardIndex);
   assert.match(workflow, /\[ "\$GITHUB_RUN_ATTEMPT" -gt 2 \]/);
-  assert.equal((workflow.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1);
-  assert.match(workflow, /claude_code_oauth_token:\s*\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
+  assert.equal((workflow.match(/\bclaude -p\b/g) ?? []).length, 1);
+  assert.match(workflow, /CLAUDE_CODE_OAUTH_TOKEN:\s*\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
   assert.match(workflow, /ANTHROPIC_API_KEY:\s*""/);
-  assert.doesNotMatch(workflow, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY/);
+  assert.doesNotMatch(workflow, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|anthropics\/claude-code-action/);
 });
