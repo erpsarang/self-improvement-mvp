@@ -15,7 +15,7 @@ const codexWorkflowPaths = [
 
 test("모든 lifecycle AI 호출은 provider별 model을 명시한다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
-  assert.equal((plan.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1);
+  assert.equal((plan.match(/\bclaude -p\b/g) ?? []).length, 1);
   assert.match(plan, /--model \$\{\{ steps\.input\.outputs\.planner_model \}\}/);
 
   for (const path of codexWorkflowPaths) {
