@@ -351,23 +351,31 @@ test("rejects free-form quote/path evidence, missing strategies, empty requireme
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("PLAN workflow removes repositories before bounded Claude Max OAuth execution", () => {
+test("PLAN workflow removes repositories before bounded Claude Max OAuth CLI execution", () => {
   const workflow = readFileSync(".github/workflows/plan.yml", "utf8");
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /timeout-minutes: 5/);
   assert.match(workflow, /Remove repository checkouts before AI/);
   assert.match(workflow, /rm -rf planner-control plan-target/);
+  assert.match(workflow, /npm install -g @anthropic-ai\/claude-code@2\.1\.286/);
+  assert.match(workflow, /test "\$version" = "2\.1\.286"/);
   assert.match(workflow, /Read-only bounded AI Planner[\s\S]*timeout-minutes: 3/);
-  assert.match(workflow, /anthropics\/claude-code-action\/base-action@12dd8d74c712f5f3669365b2369b558c495b1104/);
-  assert.match(workflow, /claude_code_oauth_token:.*CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.match(workflow, /CLAUDE_CODE_OAUTH_TOKEN: \$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
   assert.match(workflow, /ANTHROPIC_API_KEY: ""/);
+  assert.match(workflow, /ANTHROPIC_AUTH_TOKEN: ""/);
+  assert.match(workflow, /claude -p /);
+  assert.match(workflow, /--output-format json/);
+  assert.match(workflow, /--json-schema "\$schema"/);
   assert.match(workflow, /--permission-mode plan/);
-  assert.match(workflow, /--max-turns 1/);
-  assert.match(workflow, /--disallowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"/);
-  assert.match(workflow, /--json-schema/);
-  assert.match(workflow, /steps\.plan_ai\.outputs\.structured_output/);
+  assert.match(workflow, /--permission-prompts none/);
+  assert.match(workflow, /--restricted/);
+  assert.match(workflow, /--tools ""/);
+  assert.match(workflow, /--disallowedTools "\*"/);
+  assert.match(workflow, /--no-session-persistence/);
+  assert.match(workflow, /response\?\.structured_output/);
   assert.match(workflow, /raw-plan\.json/);
   assert.match(workflow, /productImprovementCandidate \? 'sonnet' : 'opus'/);
+  assert.doesNotMatch(workflow, /anthropics\/claude-code-action/);
   assert.doesNotMatch(workflow, /openai\/codex-action/);
   assert.doesNotMatch(workflow, /FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/);
   assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 4);
