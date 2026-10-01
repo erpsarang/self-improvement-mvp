@@ -10,10 +10,10 @@ const workflow = readFileSync(".github/workflows/plan-implement-worker.yml", "ut
 const KNOWN_GOOD_CODEX_ACTION =
   "openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56";
 
-type WorkerJob = "attempt0" | "timeout_retry" | "attempt0_result" | "repair1" | "repair2" | "finalize";
+type WorkerJob = "prepare0" | "request0" | "attempt0" | "attempt0_result" | "repair1" | "repair2" | "finalize";
 
 function jobBlock(name: WorkerJob): string {
-  const markers = ["attempt0", "timeout_retry", "attempt0_result", "repair1", "repair2", "finalize"] as const;
+  const markers = ["prepare0", "request0", "attempt0", "attempt0_result", "repair1", "repair2", "finalize"] as const;
   const index = markers.indexOf(name);
   const start = workflow.indexOf(`\n  ${name}:\n`);
   assert.ok(start >= 0, `${name} job not found`);
@@ -40,7 +40,7 @@ test("production Worker는 Trusted Handoff 성공 run 또는 Trusted Recovery Pr
 });
 
 test("RECOVERY_READY는 exact provenance 검증 후 기존 승인 Handoff source로만 Worker에 재진입한다", () => {
-  const attempt0 = jobBlock("attempt0");
+  const attempt0 = jobBlock("prepare0");
   assert.match(attempt0, /name: RECOVERY_READY artifact 다운로드\n\s+if: github\.event\.workflow_run\.name == 'Trusted Worker Recovery Preflight'/);
   assert.match(attempt0, /name: RECOVERY_READY artifact 다운로드[\s\S]*?run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
   assert.match(attempt0, /expected exactly one RECOVERY_READY payload/);
@@ -59,51 +59,54 @@ test("RECOVERY_READY는 exact provenance 검증 후 기존 승인 Handoff source
   // 재진입 후에는 모든 validation이 event run이 아니라 원래 Handoff run을 source로 다시 받는다.
   assert.doesNotMatch(workflow, /SOURCE_RUN_ID: \$\{\{ github\.event\.workflow_run\.id \}\}/);
   assert.match(workflow, /run-id: \$\{\{ steps\.source\.outputs\.run_id \}\}/);
-  assert.match(workflow, /run-id: \$\{\{ needs\.attempt0\.outputs\.source_run_id \}\}/);
+  assert.match(workflow, /run-id: \$\{\{ needs\.prepare0\.outputs\.source_run_id \}\}/);
   assert.match(workflow, /run-id: \$\{\{ needs\.attempt0_result\.outputs\.source_run_id \}\}/);
-  assert.equal((workflow.match(/RECOVERY_GUARD_KIND: /g) ?? []).length, 6);
+  assert.equal((workflow.match(/RECOVERY_GUARD_KIND: /g) ?? []).length, 5);
 
-  // Worker 자신은 어떤 workflow도 dispatch하지 않는다.
+  // Worker 자신은 Public workflow를 dispatch하지 않는다. 예외는 Private implement-poller wake-up 1개뿐이다.
   assert.doesNotMatch(workflow, /createWorkflowDispatch|workflow_id: 'plan-implement-worker\.yml'/);
 });
 
-test("AI/검증 job 권한은 read-only이고, Issue write는 AI도 checkout도 없는 finalize에만 있다", () => {
+test("AI/검증 job 권한은 read-only이고, Issue write는 checkout 없는 request0와 finalize에만 있다", () => {
   assert.match(workflow, /permissions: \{\}/);
-  assert.ok((workflow.match(/contents: read/g) ?? []).length >= 3);
-  assert.ok((workflow.match(/actions: read/g) ?? []).length >= 4);
+  assert.ok((workflow.match(/contents: read/g) ?? []).length >= 4);
+  assert.ok((workflow.match(/actions: read/g) ?? []).length >= 5);
   assert.doesNotMatch(workflow, /contents: write|actions: write|pull-requests: write/);
   assert.doesNotMatch(workflow, /git push|gh pr|createPullRequest|enable_auto_merge/i);
 
-  // STALLED marker 기록을 위한 issues: write는 finalize job 하나뿐이다.
-  assert.equal((workflow.match(/issues: write/g) ?? []).length, 1);
-  for (const name of ["attempt0", "timeout_retry", "attempt0_result", "repair1", "repair2"] as const) {
+  // issues: write는 IMPLEMENT_REQUEST marker를 남기는 request0와 STALLED marker를 남기는 finalize 둘뿐이다.
+  assert.equal((workflow.match(/issues: write/g) ?? []).length, 2);
+  for (const name of ["prepare0", "attempt0", "attempt0_result", "repair1", "repair2"] as const) {
     assert.doesNotMatch(jobBlock(name), /issues: write/, name);
   }
+  const request0 = jobBlock("request0");
+  assert.match(request0, /permissions:\n\s+issues: write\n\s+runs-on:/);
+  assert.doesNotMatch(request0, /actions\/checkout@|openai\/codex-action@|npm |tsx |node -e/);
+  // candidate 코드를 실행하는 attempt0는 issue를 읽기만 한다.
+  assert.match(jobBlock("attempt0"), /permissions:\n\s+contents: read\n\s+actions: read\n\s+issues: read\n/);
   const finalize = jobBlock("finalize");
   assert.match(finalize, /permissions:\n\s+actions: read\n\s+issues: write\n/);
   assert.doesNotMatch(finalize, /actions\/checkout@|openai\/codex-action@|npm |node --import/);
 });
 
-test("initial Worker, timeout retry, 두 repair는 각각 fresh Job에서 Codex를 정확히 한 번만 실행한다", () => {
-  const attempt0 = jobBlock("attempt0");
-  const timeoutRetry = jobBlock("timeout_retry");
-  const attempt0Result = jobBlock("attempt0_result");
-  const repair1 = jobBlock("repair1");
-  const repair2 = jobBlock("repair2");
-  const finalize = jobBlock("finalize");
+test("최초 IMPLEMENT는 Codex 없이 subscription request로 가고, 두 repair만 fresh Job에서 Codex를 한 번씩 실행한다", () => {
+  for (const name of ["prepare0", "request0", "attempt0", "attempt0_result", "finalize"] as const) {
+    const block = jobBlock(name);
+    assert.equal(block.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 0, name);
+    assert.doesNotMatch(block, /FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/, name);
+  }
+  assert.equal(jobBlock("repair1").split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
+  assert.equal(jobBlock("repair2").split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
+  assert.equal(workflow.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 2);
+  assert.equal((workflow.match(/uses: openai\/codex-action@/g) ?? []).length, 2);
 
-  assert.equal(attempt0.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
-  assert.equal(timeoutRetry.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
-  assert.equal(attempt0Result.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 0);
-  assert.equal(repair1.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
-  assert.equal(repair2.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 1);
-  assert.equal(finalize.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 0);
-  assert.equal(workflow.split(KNOWN_GOOD_CODEX_ACTION).length - 1, 4);
-  assert.equal((workflow.match(/uses: openai\/codex-action@/g) ?? []).length, 4);
+  // Codex 4분 경계 전용 timeout retry는 subscription 경로에서 제거되었다.
+  assert.doesNotMatch(workflow, /\n  timeout_retry:\n|retry_required|IMPLEMENT timeout|bounded-worker-timeout-retry-input/);
 
-  assert.match(workflow, /\n  attempt0:\n/);
-  assert.match(workflow, /\n  timeout_retry:\n\s+needs: attempt0\n/);
-  assert.match(workflow, /\n  attempt0_result:\n\s+needs: \[attempt0, timeout_retry\]/);
+  assert.match(workflow, /\n  prepare0:\n/);
+  assert.match(workflow, /\n  request0:\n\s+needs: prepare0\n/);
+  assert.match(workflow, /\n  attempt0:\n\s+needs: \[prepare0, request0\]\n\s+# [^\n]+\n\s+if: "!cancelled\(\) && needs\.prepare0\.outputs\.should_run == 'true'"\n/);
+  assert.match(workflow, /\n  attempt0_result:\n\s+needs: attempt0\n/);
   assert.match(workflow, /\n  repair1:\n\s+needs: attempt0_result\n/);
   assert.match(workflow, /\n  repair2:\n\s+needs: \[attempt0_result, repair1\]/);
   assert.match(workflow, /\n  finalize:\n\s+needs: \[attempt0_result, repair1, repair2\]/);
@@ -112,17 +115,52 @@ test("initial Worker, timeout retry, 두 repair는 각각 fresh Job에서 Codex�
   assert.doesNotMatch(workflow, /openai\/codex-action@v1(?:\s|$)/);
 });
 
+test("subscription request는 Private implement-poller 하나만 exact request_id로 깨우고 dispatch token은 그 step에만 있다", () => {
+  const request0 = jobBlock("request0");
+  assert.equal((workflow.match(/\/dispatches/g) ?? []).length, 1);
+  assert.match(
+    request0,
+    /https:\/\/api\.github\.com\/repos\/erpsarang\/subscription-ai-executor\/actions\/workflows\/implement-poller\.yml\/dispatches/,
+  );
+  assert.match(request0, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$IMPLEMENT_REQUEST_ID\\"\}\}"/);
+  assert.match(request0, /\[\[ ! "\$IMPLEMENT_REQUEST_ID" =~ \^\[0-9a-f\]\{64\}\$ \]\]/);
+  assert.equal((workflow.match(/EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/g) ?? []).length, 1);
+  const dispatchStep = request0.slice(request0.indexOf("name: Private subscription executor 깨우기"));
+  assert.match(dispatchStep, /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/);
+  // Private Executor가 Framework repository만 받으므로 App에서는 marker를 남기기 전에 멈춘다.
+  assert.ok(request0.indexOf("subscription IMPLEMENT supports only the Framework repository") < request0.indexOf("createComment"));
+  // request는 marker 댓글 다음에 깨운다. Private discover는 bot marker를 찾는다.
+  assert.ok(request0.indexOf("IMPLEMENT_REQUEST marker 기록") < request0.indexOf("Private subscription executor 깨우기"));
+});
+
+test("결과는 같은 run의 attempt0가 polling으로 받고 raw-proposal.json으로 기존 trusted 검증에 넘긴다", () => {
+  const prepare0 = jobBlock("prepare0");
+  const attempt0 = jobBlock("attempt0");
+  assert.match(prepare0, /name: IMPLEMENT_REQUEST artifact 저장\n[\s\S]*?path: \$\{\{ runner\.temp \}\}\/implement-request\n/);
+  assert.match(prepare0, /request_artifact_digest: \$\{\{ steps\.request_upload\.outputs\.artifact-digest \}\}/);
+  assert.match(attempt0, /PREPARE_RESULT: \$\{\{ needs\.prepare0\.result \}\}/);
+  assert.match(attempt0, /REQUEST_RESULT: \$\{\{ needs\.request0\.result \}\}/);
+  assert.match(attempt0, /for \(let poll = 0; poll < 90; poll \+= 1\)/);
+  assert.match(attempt0, /setTimeout\(resolve, 10_000\)/);
+  assert.match(attempt0, /Timed out waiting for private subscription executor IMPLEMENT_RESULT/);
+  assert.match(attempt0, /IMPLEMENT request artifact digest mismatch/);
+  assert.match(attempt0, /IMPLEMENT request identity mismatch/);
+  assert.ok(attempt0.indexOf("IMPLEMENT_RESULT 대기 및 exact 검증") < attempt0.indexOf("Trusted candidate 검증 0"));
+  assert.ok(attempt0.indexOf("IMPLEMENT_RESULT 대기 및 exact 검증") < attempt0.indexOf("actions/checkout@"));
+  assert.match(attempt0, /path\.join\(process\.env\.RUNNER_TEMP, 'worker-output'\)/);
+  assert.match(attempt0, /RAW_PROPOSAL_PATH: \$\{\{ runner\.temp \}\}\/worker-output\/raw-proposal\.json/);
+});
+
 test("out-of-scope 경계 실패는 AI repair를 시작하지 않고 fail-closed 한다", () => {
   assert.match(workflow, /repair_ready: \${\{ steps\.ci0\.outputs\.repair_ready \}\}/);
   assert.match(workflow, /repair_ready: \${\{ steps\.ci1\.outputs\.repair_ready \}\}/);
-  assert.match(workflow, /repair_ready: \${\{ steps\.ci0_retry\.outputs\.repair_ready \}\}/);
   assert.match(workflow, /needs\.attempt0_result\.outputs\.repair_ready == 'true'/);
   assert.match(workflow, /needs\.repair1\.outputs\.repair_ready == 'true'/);
   assert.match(workflow, /out-of-scope boundary repair 차단 시 fail-closed/);
   assert.match(workflow, /AI repair blocked by deterministic repair policy/);
 });
 
-test("timeout_retry가 skipped여도 repair는 implicit skip되지 않고 FAIL + repair_ready일 때만 실행한다", () => {
+test("repair는 implicit skip되지 않고 FAIL + repair_ready일 때만 실행한다", () => {
   const repair1 = jobBlock("repair1");
   const repair2 = jobBlock("repair2");
   assert.match(
@@ -135,21 +173,21 @@ test("timeout_retry가 skipped여도 repair는 implicit skip되지 않고 FAIL +
   );
 });
 
-test("각 untrusted Job은 repository 없이 neutral input만 보고 drop-sudo read-only로 실행한다", () => {
-  assert.match(workflow, /Worker 실행 전 repository와 trusted source 제거/);
+test("각 untrusted repair Job은 repository 없이 neutral input만 보고 drop-sudo read-only로 실행한다", () => {
   assert.match(workflow, /repair 1 untrusted input 격리/);
   assert.match(workflow, /repair 2 untrusted input 격리/);
   assert.match(workflow, /worker-neutral-repair-1/);
   assert.match(workflow, /worker-neutral-repair-2/);
-  assert.equal((workflow.match(/permission-profile: ":read-only"/g) ?? []).length, 4);
-  assert.equal((workflow.match(/safety-strategy: drop-sudo/g) ?? []).length, 4);
-  assert.equal((workflow.match(/model: gpt-6-sol\n\s+effort: medium/g) ?? []).length, 2);
+  assert.equal((workflow.match(/permission-profile: ":read-only"/g) ?? []).length, 2);
+  assert.equal((workflow.match(/safety-strategy: drop-sudo/g) ?? []).length, 2);
+  assert.equal((workflow.match(/model: gpt-6-sol\n\s+effort: medium/g) ?? []).length, 0);
   assert.equal((workflow.match(/model: gpt-6-luna\n\s+effort: medium/g) ?? []).length, 2);
   assert.ok((workflow.match(/GH_TOKEN: ""/g) ?? []).length >= 4);
   assert.ok((workflow.match(/GITHUB_TOKEN: ""/g) ?? []).length >= 4);
-  assert.equal((workflow.match(/secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\]/g) ?? []).length, 4);
-  assert.doesNotMatch(workflow, /secrets\.[A-Za-z0-9_]+/);
-  assert.ok((workflow.match(/test -z "\$\(find "\$GITHUB_WORKSPACE"/g) ?? []).length >= 3);
+  assert.equal((workflow.match(/secrets\[github\.repository == 'erpsarang\/self-improvement-mvp' && 'FRAMEWORK_CODEX_API_KEY' \|\| 'APP_CODEX_API_KEY'\]/g) ?? []).length, 2);
+  // direct secret 참조는 Private wake-up token 하나뿐이다.
+  assert.deepEqual(workflow.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
+  assert.ok((workflow.match(/test -z "\$\(find "\$GITHUB_WORKSPACE"/g) ?? []).length >= 2);
 });
 
 test("attempt 간 상태는 GitHub artifact로만 전달한다", () => {
@@ -170,11 +208,11 @@ test("attempt 간 상태는 GitHub artifact로만 전달한다", () => {
 
 test("candidate는 exact approved base에서 deterministic CI를 통과해야 최종 artifact가 된다", () => {
   assert.match(workflow, /exact approved base SHA 고정/);
-  assert.match(workflow, /ref: \$\{\{ steps\.base\.outputs\.sha \}\}/);
-  assert.equal((workflow.match(/ref: \$\{\{ needs\.attempt0\.outputs\.base_sha \}\}/g) ?? []).length, 1);
+  assert.equal((workflow.match(/ref: \$\{\{ needs\.prepare0\.outputs\.base_sha \}\}/g) ?? []).length, 1);
+  assert.match(workflow, /base_sha: \$\{\{ steps\.base\.outputs\.sha \}\}/);
   assert.equal((workflow.match(/ref: \$\{\{ needs\.attempt0_result\.outputs\.base_sha \}\}/g) ?? []).length, 2);
   assert.match(workflow, /BASE_SHA: \$\{\{ needs\.attempt0\.outputs\.base_sha \}\}/);
-  assert.equal((workflow.match(/plan-worker-ci-repair-handler\.ts check/g) ?? []).length, 4);
+  assert.equal((workflow.match(/plan-worker-ci-repair-handler\.ts check/g) ?? []).length, 3);
   assert.match(workflow, /candidate CI dependencies 설치 0/);
   assert.match(workflow, /candidate CI dependencies 설치 1/);
   assert.match(workflow, /candidate CI dependencies 설치 2/);
@@ -205,50 +243,14 @@ test("CI evidence는 최종 finalize Job에서 합치고 최대 두 repair 실�
   assert.doesNotMatch(workflow, /Trusted Rail|trusted-rail\.yml|seal\.yml|publish\.yml/);
 });
 
-test("timeout 경계 failure만 fresh runner에서 1회 bounded 자동 재시도한다", () => {
-  const attempt0 = jobBlock("attempt0");
-  const timeoutRetry = jobBlock("timeout_retry");
-  const attempt0Result = jobBlock("attempt0_result");
-
-  assert.match(attempt0, /name: IMPLEMENT timeout 측정 시작/);
-  assert.match(attempt0, /id: implement0[\s\S]*continue-on-error: true[\s\S]*timeout-minutes: 4/);
-  assert.match(attempt0, /name: IMPLEMENT timeout 재시도 분류/);
-  assert.match(attempt0, /\[ "\$IMPLEMENT_OUTCOME" = "failure" \] && \[ "\$elapsed" -ge 230 \] && \[ "\$complete_output" = "false" \]/);
-  assert.match(attempt0, /bounded IMPLEMENT failed before retry eligibility/);
-  assert.match(attempt0, /name: timeout retry input artifact 저장/);
-  assert.doesNotMatch(attempt0, /name: Untrusted bounded IMPLEMENT timeout retry/);
-
-  assert.match(timeoutRetry, /if: needs\.attempt0\.outputs\.retry_required == 'true'/);
-  assert.match(timeoutRetry, /runs-on: ubuntu-latest/);
-  assert.match(timeoutRetry, /name: timeout retry input artifact 다운로드/);
-  assert.match(timeoutRetry, /name: Untrusted bounded IMPLEMENT timeout retry\n\s+timeout-minutes: 6\n/);
-  assert.equal((workflow.match(/name: Untrusted bounded IMPLEMENT timeout retry/g) ?? []).length, 1);
-  assert.doesNotMatch(timeoutRetry, /continue-on-error: true/);
-
-  const codexIndex = timeoutRetry.indexOf("name: Untrusted bounded IMPLEMENT timeout retry");
-  const checkoutIndex = timeoutRetry.indexOf("actions/checkout@");
-  assert.ok(codexIndex >= 0 && checkoutIndex > codexIndex, "retry Codex must run before any repository checkout");
-  assert.match(timeoutRetry, /Trusted validation checkout retry/);
-  assert.match(timeoutRetry, /plan-worker-ci-repair-handler\.ts check/);
-
-  assert.match(attempt0Result, /initial\/retry effective 결과 고정/);
-  assert.match(attempt0Result, /RETRY_RESULT: \$\{\{ needs\.timeout_retry\.result \}\}/);
-  assert.match(attempt0Result, /infrastructure_failed=true/);
-  assert.match(workflow, /needs\.attempt0_result\.outputs\.infrastructure_failed == 'true'/);
-});
-
 test("complete=false는 INFRA_FAILURE가 아니라 WORKER_INCOMPLETE로 fail-closed 한다", () => {
   const attempt0 = jobBlock("attempt0");
-  const timeoutRetry = jobBlock("timeout_retry");
   const attempt0Result = jobBlock("attempt0_result");
   const finalize = jobBlock("finalize");
 
   assert.match(attempt0, /name: PLAN Worker complete 상태 분류 0/);
   assert.match(attempt0, /worker_incomplete: \$\{\{ steps\.completion0\.outputs\.incomplete \}\}/);
-  assert.match(timeoutRetry, /name: PLAN Worker complete 상태 분류 retry/);
-  assert.match(timeoutRetry, /worker_incomplete: \$\{\{ steps\.completion_retry\.outputs\.incomplete \}\}/);
   assert.match(attempt0Result, /DIRECT_INCOMPLETE: \$\{\{ needs\.attempt0\.outputs\.worker_incomplete \}\}/);
-  assert.match(attempt0Result, /RETRY_INCOMPLETE: \$\{\{ needs\.timeout_retry\.outputs\.worker_incomplete \}\}/);
   assert.match(attempt0Result, /worker_incomplete=true/);
 
   assert.match(finalize, /name: WORKER_INCOMPLETE stalled cycle 기록\n\s+if: needs\.attempt0_result\.outputs\.worker_incomplete == 'true'/);
@@ -302,52 +304,41 @@ function runStep(block: string, stepName: string, env: Record<string, string>): 
   return { status: result.status, outputs, stdout: result.stdout };
 }
 
-test("timeout 경계에서 완성된 output은 버리지 않고 trusted 검증으로, 잘렸거나 없으면 retry로 보낸다 (#228)", () => {
-  const attempt0 = jobBlock("attempt0");
-  const dir = mkdtempSync(join(tmpdir(), "worker-proposal-"));
-  const complete = join(dir, "complete.json");
-  const truncated = join(dir, "truncated.json");
-  writeFileSync(complete, JSON.stringify({ summary: "done", changes: [{ path: "src/web-main.ts", operation: "modify" }] }));
-  writeFileSync(truncated, '{"summary":"done","changes":[{"path":"src/web-main.ts","content":"import');
-  const startedAt = String(Math.floor(Date.now() / 1000) - 237);
-  const classify = (outcome: string, proposal: string, started = startedAt) =>
-    runStep(attempt0, "IMPLEMENT timeout 재시도 분류", { IMPLEMENT_OUTCOME: outcome, STARTED_AT: started, RAW_PROPOSAL: proposal });
-  const gate = (outcome: string, retry: string, accept: string) =>
-    runStep(attempt0, "bounded IMPLEMENT 실행 결과 확인", { INITIAL_OUTCOME: outcome, RETRY_REQUIRED: retry, ACCEPT_OUTPUT: accept });
+test("subscription 결과를 받지 못한 attempt0 실패는 INFRA_FAILURE로, complete=false는 WORKER_INCOMPLETE로 분류한다", () => {
+  const attempt0Result = jobBlock("attempt0_result");
+  const classify = (attempt0: string, incomplete: string, status: string) =>
+    runStep(attempt0Result, "attempt 0 effective 결과 고정", {
+      SHOULD_RUN: "true",
+      ATTEMPT0_RESULT: attempt0,
+      DIRECT_STATUS: status,
+      DIRECT_REPAIR_READY: status === "FAIL" ? "true" : "",
+      DIRECT_BLOCKED_REASON: "",
+      DIRECT_INCOMPLETE: incomplete,
+      ...Object.fromEntries(
+        ["SOURCE_NAME", "SOURCE_ID", "SOURCE_DIGEST", "SOURCE_RUN_ID", "SOURCE_RUN_ATTEMPT", "RECOVERY_GUARD_KIND", "RECOVERY_BASE_SHA", "RECOVERY_CURRENT_SHA", "BASE_SHA", "CANDIDATE_ARTIFACT_NAME"]
+          .map((name) => [name, ""]),
+      ),
+    });
 
-  try {
-    // #228: 237초에 완성된 output → retry 없이 trusted 검증으로 진행한다.
-    const accepted = classify("failure", complete);
-    assert.equal(accepted.status, 0);
-    assert.deepEqual([accepted.outputs.retry, accepted.outputs.accept_output, accepted.outputs.complete_output], ["false", "true", "true"]);
-    assert.equal(gate("failure", "false", "true").status, 0);
+  // request/dispatch/timeout/identity mismatch는 모두 attempt0 job 실패로 모인다.
+  const infra = classify("failure", "", "");
+  assert.equal(infra.status, 0);
+  assert.deepEqual([infra.outputs.infrastructure_failed, infra.outputs.worker_incomplete, infra.outputs.ci_status], ["true", "false", ""]);
 
-    // 잘린 output과 output 없음은 완성본이 아니므로 기존처럼 fresh runner retry 1회로 보낸다.
-    for (const proposal of [truncated, join(dir, "missing.json")]) {
-      const retried = classify("failure", proposal);
-      assert.deepEqual([retried.outputs.retry, retried.outputs.accept_output], ["true", "false"], proposal);
-      assert.equal(gate("failure", "true", "false").status, 0);
-    }
+  const incomplete = classify("failure", "true", "");
+  assert.deepEqual([incomplete.outputs.infrastructure_failed, incomplete.outputs.worker_incomplete], ["false", "true"]);
 
-    // timeout 경계 전 실패는 완성된 output이 있어도 받지 않고 지금처럼 fail-closed 한다.
-    const early = classify("failure", complete, String(Math.floor(Date.now() / 1000) - 60));
-    assert.deepEqual([early.outputs.retry, early.outputs.accept_output], ["false", "false"]);
-    assert.notEqual(gate("failure", "false", "false").status, 0);
+  const passed = classify("success", "false", "PASS");
+  assert.deepEqual([passed.outputs.infrastructure_failed, passed.outputs.worker_incomplete, passed.outputs.ci_status], ["false", "false", "PASS"]);
 
-    // 정상 성공 경로는 바뀌지 않는다.
-    const success = classify("success", complete);
-    assert.deepEqual([success.outputs.retry, success.outputs.accept_output], ["false", "false"]);
-    assert.equal(gate("success", "false", "false").status, 0);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const failed = classify("success", "false", "FAIL");
+  assert.deepEqual([failed.outputs.ci_status, failed.outputs.repair_ready], ["FAIL", "true"]);
 });
 
 test("edit 적용 실패는 candidate 없이도 attempt state에 evidence로 남고 기존 repair 한도로 흐른다 (#332)", () => {
-  // attempt0 / timeout retry / repair1 / repair2 모두 candidate가 없으면 edit-failure 기록만 evidence로 옮긴다.
+  // attempt0 / repair1 / repair2 모두 candidate가 없으면 edit-failure 기록만 evidence로 옮긴다.
   for (const [attempt, candidateDir, job] of [
     ["0", "validated-candidate-0", "attempt0"],
-    ["0", "validated-candidate-retry", "timeout_retry"],
     ["1", "validated-candidate-1", "repair1"],
     ["2", "validated-candidate-2", "repair2"],
   ] as const) {

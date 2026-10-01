@@ -25,7 +25,8 @@ test("PLAN public workflow는 subscription/API credential을 보유하지 않고
     total += matches;
     assert.doesNotMatch(workflow, /openai-api-key:\s*\$\{\{\s*secrets\.(?:FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY)\s*\}\}/);
   }
-  assert.equal(total, 7);
+  // Worker 최초 IMPLEMENT는 Private subscription executor로 옮겨 repair 2개만 Codex key를 쓴다.
+  assert.equal(total, 5);
 });
 
 test("Semantic REVIEW reusable workflow는 두 secret을 optional contract로 받는다", async () => {

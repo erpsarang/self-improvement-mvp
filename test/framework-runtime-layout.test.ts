@@ -114,7 +114,8 @@ test("모든 Framework runtime install은 같은 checkout 직후의 layout 준�
       }
     });
   }
-  assert.equal(installs, 11, "every Framework runtime install site is covered");
+  // #346: subscription 경로로 바꾸며 Worker timeout_retry job의 install 1곳이 사라졌다.
+  assert.equal(installs, 10, "every Framework runtime install site is covered");
 });
 
 test(
