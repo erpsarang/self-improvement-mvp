@@ -39,9 +39,11 @@ test("PLAN Recovery handler는 exact PLAN_AUTHORIZE identity를 재검증하고 
 });
 
 test("bot이 dispatch한 recovery PLAN도 Claude Max OAuth read-only 계약을 사용한다", () => {
-  assert.equal((planWorkflow.match(/uses:\s*anthropics\/claude-code-action\/base-action@/g) ?? []).length, 1);
-  assert.match(planWorkflow, /claude_code_oauth_token:\s*\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
+  assert.equal((planWorkflow.match(/\bclaude -p\b/g) ?? []).length, 1);
+  assert.match(planWorkflow, /CLAUDE_CODE_OAUTH_TOKEN:\s*\$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
   assert.match(planWorkflow, /--permission-mode plan/);
-  assert.match(planWorkflow, /--disallowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"/);
-  assert.doesNotMatch(planWorkflow, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY/);
+  assert.match(planWorkflow, /--restricted/);
+  assert.match(planWorkflow, /--tools ""/);
+  assert.match(planWorkflow, /--disallowedTools "\\*"/);
+  assert.doesNotMatch(planWorkflow, /openai-api-key|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|anthropics\/claude-code-action/);
 });
