@@ -56,7 +56,11 @@ test("private PLAN executor wake-up은 exact request_id를 전달한다", () => 
   const wake = workflow.split("      - name: Wake private subscription executor\n")[1]?.split("\n  resolve:", 1)[0] ?? "";
   assert.match(wake, /PLAN_REQUEST_ID: \$\{\{ steps\.request\.outputs\.request_id \}\}/);
   assert.match(wake, /\^\[0-9a-f\]\{64\}\$/);
-  assert.match(wake, /plan-poller\.yml\/dispatches/);
+  // executor는 repository 변수로 정하고, 없거나 형식이 틀리면 dispatch 전에 멈춘다.
+  assert.ok(wake.includes('"https://api.github.com/repos/${AI_EXECUTOR_REPOSITORY}/actions/workflows/plan-poller.yml/dispatches"'));
+  assert.match(wake, /AI_EXECUTOR_REPOSITORY: \$\{\{ vars\.AI_EXECUTOR_REPOSITORY \}\}/);
+  assert.ok(wake.indexOf("Missing or invalid AI_EXECUTOR_REPOSITORY") < wake.indexOf("curl -fsS"));
+  assert.doesNotMatch(wake, /erpsarang\//);
   assert.match(wake, /\\\"inputs\\\":\{\\\"request_id\\\":\\\"\$PLAN_REQUEST_ID\\\",\\\"repository\\\":\\\"\$PLAN_REPOSITORY\\\"\}/);
   assert.match(wake, /PLAN_REPOSITORY: \$\{\{ github\.repository \}\}/);
 });

@@ -35,7 +35,7 @@ const AI_CALL_STEP_USES = /^(\s*)uses:\s*(?:openai\/codex-action|anthropics\/cla
 // Claude Max subscription executor 호출 지점. job이 subscription exchange reusable workflow를 부르거나
 // (kind가 identity/model을 고른다), step이 Private poller를 직접 깨운다(PLAN, exchange 자체).
 const SUBSCRIPTION_EXCHANGE_JOB_USES = /^\s*uses:\s*\.\/\.github\/workflows\/subscription-exchange\.yml\s*$/;
-const SUBSCRIPTION_POLLER_DISPATCH = /api\.github\.com\/repos\/erpsarang\/subscription-ai-executor\/actions\/workflows\//;
+const SUBSCRIPTION_POLLER_DISPATCH = /api\.github\.com\/repos\/\$\{AI_EXECUTOR_REPOSITORY\}\/actions\/workflows\//;
 // exchange 자체에서는 kind별 identity/model 표가 dispatch step보다 먼저 나오는 marker step에 있다.
 const SUBSCRIPTION_KIND_TABLE = /^\s*const SUBSCRIPTION_KINDS = \{\s*$/;
 const decoder = new TextDecoder("utf-8", { fatal: true });

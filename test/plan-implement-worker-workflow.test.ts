@@ -132,7 +132,12 @@ test("subscription exchange는 Private implement-poller 하나만 exact request_
   // Worker 자신은 어떤 workflow도 직접 dispatch하지 않는다.
   assert.doesNotMatch(workflow, /\/dispatches|createWorkflowDispatch|curl /);
   assert.equal((exchange.match(/\/dispatches/g) ?? []).length, 1);
-  assert.ok(exchange.includes('"https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches"'));
+  // executor는 repository 변수로 정한다. 팀마다 자기 구독 runner로 도는 executor를 쓴다.
+  assert.ok(exchange.includes('"https://api.github.com/repos/${AI_EXECUTOR_REPOSITORY}/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches"'));
+  assert.match(exchange, /AI_EXECUTOR_REPOSITORY: \$\{\{ vars\.AI_EXECUTOR_REPOSITORY \}\}/);
+  assert.match(exchange, /\[\[ ! "\$\{AI_EXECUTOR_REPOSITORY:-\}" =~ \^\[A-Za-z0-9_\.-\]\+\/\[A-Za-z0-9_\.-\]\+\$ \]\]/);
+  assert.ok(exchange.indexOf("Missing or invalid AI_EXECUTOR_REPOSITORY") < exchange.indexOf("curl -fsS"));
+  assert.doesNotMatch(exchange, /erpsarang\//);
   // dispatch 대상은 kind가 고른 다섯 Private poller로만 제한된다.
   assert.ok(exchange.includes("implement-poller.yml|review-poller.yml|fix-poller.yml|learn-poller.yml|product-evaluation-poller.yml) ;;"));
   assert.ok(exchange.includes("IMPLEMENT: { identityKind: 'trusted-implement-request', model: 'sonnet', run: 'worker', poller: 'implement-poller.yml' },"));
@@ -148,9 +153,6 @@ test("subscription exchange는 Private implement-poller 하나만 exact request_
   assert.deepEqual(exchange.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
   const dispatchStep = exchange.slice(exchange.indexOf("name: Private subscription executor 깨우기"), exchange.indexOf("\n  wait:\n"));
   assert.match(dispatchStep, /EXECUTOR_DISPATCH_TOKEN: \$\{\{ secrets\.EXECUTOR_DISPATCH_TOKEN \}\}/);
-  // Private Executor allowlist 밖 repository는 marker를 남기기 전에 멈춘다.
-  assert.ok(exchange.includes("const SUBSCRIPTION_REPOSITORIES = ['erpsarang/self-improvement-mvp', 'erpsarang/sales-order-exception-analyzer'];"));
-  assert.ok(exchange.indexOf("subscription executor does not accept this repository") < exchange.indexOf("createComment"));
   assert.ok(exchange.indexOf("subscription request 고정 및 marker 기록") < exchange.indexOf("Private subscription executor 깨우기"));
   // Worker의 직접 secret 참조는 subscription 호출에 넘기는 wake-up token 3개뿐이다.
   assert.deepEqual(

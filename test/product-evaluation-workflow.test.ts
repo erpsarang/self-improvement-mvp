@@ -65,7 +65,7 @@ test("Evaluator는 Private subscription executor에 exact snapshot만 담은 요
 
 test("Evaluator provenance는 subscription executor와 sonnet을 기록한다", () => {
   assert.match(workflow, /EVALUATOR_PROVIDER: claude-max-subscription\n/);
-  assert.match(workflow, /EVALUATOR_ACTION: erpsarang\/subscription-ai-executor\/product-evaluation-poller\.yml\n/);
+  assert.match(workflow, /EVALUATOR_ACTION: \$\{\{ vars\.AI_EXECUTOR_REPOSITORY \}\}\/product-evaluation-poller\.yml\n/);
   assert.match(workflow, /EVALUATOR_MODEL: sonnet\n/);
 });
 

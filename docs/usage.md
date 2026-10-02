@@ -25,38 +25,30 @@
 - main 직접 push 금지
 ```
 
-## 2. OpenAI API 비용 경계 준비
+## 2. AI 실행 경계 준비 (팀별 Claude 구독 executor)
 
-Framework와 실제 App의 API 비용을 구분하기 위해 OpenAI Project와 API Key를 분리한다.
-
-권장 배치는 다음과 같다.
+AI 호출 비용은 그 App을 개발하는 팀의 Claude 구독이 낸다. 팀마다 Private executor repository(`subscription-ai-executor` 복제)와 self-hosted runner를 두고, runner에는 팀 전용 Claude 계정으로 로그인한다. App repository는 자기 executor로만 요청을 보낸다.
 
 ```text
-Framework repo: self-improvement-mvp
-OpenAI Project: framework-dev
-GitHub Secret: FRAMEWORK_CODEX_API_KEY
-
-App repo: sales-order-exception-analyzer
-OpenAI Project: sales-order-app
-GitHub Secret: APP_CODEX_API_KEY
+App repo (Public)                        executor repo (Private, 팀 소유)
+  variable AI_EXECUTOR_REPOSITORY   →      variable EXECUTOR_ALLOWED_REPOSITORIES = <App repo>
+  secret   EXECUTOR_DISPATCH_TOKEN         secret   FRAMEWORK_BRIDGE_TOKEN
+                                           self-hosted runner + claude 로그인(팀 전용 계정)
 ```
 
 운영 절차:
 
-1. OpenAI API Platform에서 Framework용 Project를 만든다.
-2. 해당 Project 전용 API Key를 만든다.
-3. `self-improvement-mvp` repository secret에 `FRAMEWORK_CODEX_API_KEY`로 등록한다.
-4. App별로 별도 OpenAI Project와 별도 API Key를 만든다.
-5. 각 App repository에는 `APP_CODEX_API_KEY`로 등록한다.
-6. Usage Dashboard에서 Project별 사용량을 별도로 확인한다.
-7. 기존 공용 `CODEX_API_KEY`는 각 repo의 cutover PR이 merge되고 새 secret 동작이 검증된 뒤 폐기한다.
+1. executor repository를 팀 계정에 private으로 복제한다.
+2. executor repository variable `EXECUTOR_ALLOWED_REPOSITORIES`에 처리할 App repository(`owner/repo`, 쉼표 구분)를 적는다. 없으면 모든 poller가 Claude 호출 전에 멈춘다.
+3. executor repository secret `FRAMEWORK_BRIDGE_TOKEN`에 App repository의 Issues(Read and write), Actions(Read) fine-grained token을 등록한다. 결과 댓글은 이 token의 계정으로 남는다.
+4. executor repository에 self-hosted runner를 등록하고, runner에서 팀 전용 Claude 계정으로 `claude`에 로그인한다. 개인 계정으로 로그인하면 그 사람의 사용 한도를 함께 쓴다.
+5. App repository variable `AI_EXECUTOR_REPOSITORY`에 executor repository(`owner/repo`)를 적는다. 없거나 형식이 틀리면 AI 단계가 dispatch 전에 멈춘다.
+6. App repository secret `EXECUTOR_DISPATCH_TOKEN`에 executor repository의 Actions(Read and write) fine-grained token을 등록한다.
 
 주의:
 
+- 결과 댓글은 App repository 소유자 계정이 남긴 것만 받는다(`author_association` OWNER, login = repository owner). 그래서 지금은 `FRAMEWORK_BRIDGE_TOKEN` 계정이 App repository를 소유한 개인 계정이어야 하고, Organization 소유 App repository는 아직 지원하지 않는다.
 - secret 값은 repository나 문서에 기록하지 않는다.
-- 두 repo에서 같은 API Key를 재사용하지 않는다.
-- OpenAI Project의 spend limit은 알림/모니터링 경계로 취급하고, 실행을 강제로 막는 hard cap으로 가정하지 않는다.
-- Framework의 중복 AI call 방지, bounded retry, token ledger는 별도 runtime guardrail로 유지한다.
 
 ## 2-1. Merge-Ready PR 생성 identity (Framework 전용 GitHub App)
 
@@ -299,7 +291,7 @@ LEARN은 "개발 cycle이 어떻게 흘렀는가"를 봅니다. Product Evaluati
 
 Human Merge PR이 닫히면 `Trusted Product Evaluation`이 자동으로 시작합니다. MERGE_READY marker가 없는 PR은 조용히 건너뜁니다.
 
-Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, sonnet)가 실행합니다. 요청·결과 댓글은 닫힌 요구사항 Issue에 남고, App repository는 Private executor allowlist에 있어야 합니다.
+Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, sonnet)가 실행합니다. 요청·결과 댓글은 닫힌 요구사항 Issue에 남고, App repository는 자기 executor의 `EXECUTOR_ALLOWED_REPOSITORIES`에 있어야 합니다.
 
 ```text
 Human Merge (MERGE_READY PR)
