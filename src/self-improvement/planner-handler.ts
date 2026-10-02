@@ -8,6 +8,7 @@ import {
   PLAN_SCHEMA,
   selectPlanContext,
   snapshot,
+  trimReadOnlyContextToBudget,
   validatePlan,
   verifyPlanContextPack,
   type PlanContextPack,
@@ -86,7 +87,9 @@ if (command === "prepare") {
   const companionResult = applyImpactedTestCompanions(target, context, evidenceResult.plan);
   // ready PLAN이 Context Pack 안의 읽기 전용 파일을 언급만 하고 contextPaths에 빠뜨린 경우도 결정적으로 보강한다.
   const mentionResult = applyReadOnlyContextMentions(context, companionResult.plan);
-  const plan = validatePlan(mentionResult.plan, target, context);
+  // IMPLEMENT 입력 한도를 넘으면 PLAN이 언급하지 않은 읽기 전용 참고 파일만 큰 것부터 뺀다. 쓰기 범위는 줄이지 않는다.
+  const trimResult = trimReadOnlyContextToBudget(target, context, mentionResult.plan);
+  const plan = validatePlan(trimResult.plan, target, context);
   writeFileSync(file("PLAN.json"), JSON.stringify({
     kind: "untrusted-plan",
     repository: input.repository,
@@ -116,6 +119,9 @@ if (command === "prepare") {
           : []),
         ...(mentionResult.added.length > 0
           ? [`- trusted 보강 참고 경로: ${mentionResult.added.map((path) => `\`${path}\``).join(", ")} (PLAN이 언급한 Context Pack 안의 기존 파일을 읽기 전용으로 추가)`]
+          : []),
+        ...(trimResult.removed.length > 0
+          ? [`- trusted 축소 참고 경로: ${trimResult.removed.map((path) => `\`${path}\``).join(", ")} (IMPLEMENT 입력 한도에 맞추려고 PLAN이 언급하지 않은 읽기 전용 참고 파일을 뺌)`]
           : []),
         `- 필수 변경: ${scope.requiredChanges.join(" / ")}`,
         `- 금지 변경: ${scope.forbiddenChanges.length > 0 ? scope.forbiddenChanges.join(" / ") : "없음"}`,
