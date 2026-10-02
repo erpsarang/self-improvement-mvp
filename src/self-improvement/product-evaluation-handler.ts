@@ -1,19 +1,18 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import {
-  changedProductSnapshotPaths,
+  createProductDiscoverySubscriptionIdentity,
   createProductEvaluationOutputSchema,
   createProductEvaluationPrompt,
   createProductEvaluationReport,
-  createProductEvaluationSubscriptionIdentity,
   createProductSnapshot,
   decideImprovementIssue,
-  decideProductEvaluationNeed,
   productEvaluationReportArtifactName,
-  productSnapshotArtifactName,
+  renderDiscoveryResultComment,
   verifyProductEvaluationReport,
   verifyProductSnapshot,
+  type CompletedRequirement,
   type ExistingIssue,
-  type ProductCycleIdentity,
+  type ProductDiscoveryTarget,
   type ProductEvaluationReport,
   type ProductSnapshot,
   type RejectedCandidate,
@@ -63,19 +62,12 @@ if (command !== "prepare" && command !== "finalize" && command !== "decide") {
 }
 
 if (command === "prepare") {
-  const identity = parseJson<ProductCycleIdentity>(requiredEnv("PRODUCT_CYCLE_FACTS_JSON"));
-  const rejectedPath = process.env.REJECTED_CANDIDATES_JSON;
-  const rejectedCandidates = rejectedPath && existsSync(rejectedPath)
-    ? parseJson<readonly RejectedCandidate[]>(rejectedPath)
-    : [];
-  const changedPathsPath = process.env.PRODUCT_CHANGED_PATHS_JSON;
-  const changedPaths = changedPathsPath && existsSync(changedPathsPath) ? parseJson<unknown>(changedPathsPath) : null;
-  const snapshot = createProductSnapshot(
-    identity,
-    requiredEnv("PRODUCT_TARGET_ROOT"),
-    rejectedCandidates,
-    changedProductSnapshotPaths(changedPaths),
-  );
+  const target = parseJson<ProductDiscoveryTarget>(requiredEnv("PRODUCT_DISCOVERY_TARGET_JSON"));
+  const snapshot = createProductSnapshot(target, requiredEnv("PRODUCT_TARGET_ROOT"), {
+    completedRequirements: parseJson<readonly CompletedRequirement[]>(requiredEnv("COMPLETED_REQUIREMENTS_JSON")),
+    rejectedCandidates: parseJson<readonly RejectedCandidate[]>(requiredEnv("REJECTED_CANDIDATES_JSON")),
+    recentChangedPaths: parseJson<readonly unknown[]>(requiredEnv("RECENT_CHANGED_PATHS_JSON")),
+  });
   verifyProductSnapshot(snapshot);
 
   const runtimeDir = requiredEnv("PRODUCT_EVALUATION_RUNTIME_DIR");
@@ -92,7 +84,7 @@ if (command === "prepare") {
   // 위 snapshot artifact는 finalize의 exact binding용으로 그대로 둔다.
   const subscriptionDir = requiredEnv("PRODUCT_EVALUATION_SUBSCRIPTION_DIR");
   mkdirSync(subscriptionDir, { recursive: true });
-  const subscriptionIdentity = createProductEvaluationSubscriptionIdentity(snapshot, {
+  const subscriptionIdentity = createProductDiscoverySubscriptionIdentity(snapshot, {
     runId: positiveIntegerEnv("GITHUB_RUN_ID"),
     runAttempt: positiveIntegerEnv("GITHUB_RUN_ATTEMPT"),
   });
@@ -103,20 +95,21 @@ if (command === "prepare") {
     throw new Error("PRODUCT_EVALUATION request directory는 identity.json, prompt.md, schema.json만 가져야 합니다");
   }
 
-  writeOutput("issue_number", snapshot.deployedCycle.requirementIssueNumber);
-  writeOutput("human_merge_pr", snapshot.deployedCycle.humanMergePullRequestNumber);
+  writeOutput("issue_number", snapshot.discovery.issueNumber);
   writeOutput("snapshot_digest", snapshot.snapshotDigest);
-  writeOutput("snapshot_artifact_name", productSnapshotArtifactName(snapshot));
   writeOutput("file_count", snapshot.fileCount);
-  writeOutput("rejected_candidate_count", snapshot.rejectedCandidates.length);
 
-  // 제품 파일을 바꾸지 않은 cycle은 AI 평가를 생략한다. 사유는 사람이 볼 수 있게 남긴다.
-  const need = decideProductEvaluationNeed(changedPaths, snapshot);
-  writeOutput("should_evaluate", need.needed ? "true" : "false");
-  console.log(`Product Evaluation: ${need.reason}`);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Product Evaluation\n\n${need.reason}\n`, "utf8");
-  }
+  // 전체 한도를 넘어 빠진 파일은 사람이 볼 수 있게 남긴다.
+  const summary = [
+    "### Product Discovery snapshot",
+    "",
+    `- 배포 SHA: \`${snapshot.discovery.deployedSha}\``,
+    `- 담은 제품 파일 ${snapshot.fileCount}개 / ${snapshot.totalSnapshotBytes}B (전체 한도 ${snapshot.budget.maxTotalBytes}B)`,
+    `- 한도로 빠진 파일 ${snapshot.omittedPaths.length}개${snapshot.omittedPaths.length > 0 ? `: ${snapshot.omittedPaths.join(", ")}` : ""}`,
+    `- 완료한 요구 ${snapshot.history.completedRequirements.length}건, 기각된 후보 ${snapshot.history.rejectedCandidates.length}건, 최근 변경 경로 ${snapshot.history.recentChangedPaths.length}개`,
+  ].join("\n");
+  console.log(summary);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`, "utf8");
   process.exit(0);
 }
 
@@ -152,8 +145,7 @@ if (command === "finalize") {
     `${JSON.stringify(report, null, 2)}\n`,
     "utf8",
   );
-  writeOutput("issue_number", report.deployedCycle.requirementIssueNumber);
-  writeOutput("human_merge_pr", report.deployedCycle.humanMergePullRequestNumber);
+  writeOutput("issue_number", report.discovery.issueNumber);
   writeOutput("report_digest", report.reportDigest);
   writeOutput("report_artifact_name", productEvaluationReportArtifactName(snapshot, runId, runAttempt));
   writeOutput("candidate_count", report.candidate === null ? 0 : 1);
@@ -169,6 +161,11 @@ const decision = decideImprovementIssue(report, existingIssues);
 writeFileSync(
   requiredEnv("IMPROVEMENT_ISSUE_DECISION_JSON"),
   `${JSON.stringify(decision, null, 2)}\n`,
+  "utf8",
+);
+writeFileSync(
+  requiredEnv("DISCOVERY_RESULT_COMMENT_MD"),
+  `${renderDiscoveryResultComment(report, decision)}\n`,
   "utf8",
 );
 writeOutput("action", decision.action);

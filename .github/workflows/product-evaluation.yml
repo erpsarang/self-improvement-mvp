@@ -1,33 +1,79 @@
 name: Trusted Product Evaluation
 
-# 배포된 App을 제품 관점에서 한 번 평가하고, 명백한 개선이 있을 때만
-# App repository에 Improvement Candidate Issue를 만든다.
-# 머지 후 자동 실행은 하지 않는다. 사람이 workflow_dispatch로 실행할 때만 돈다.
+# 사람이 실행할 때만 지금 배포된 App을 제품 관점에서 한 번 살펴보고(Product Discovery),
+# 서로 다른 영역의 후보 3개를 비교해 1위가 충분히 가치 있을 때만 App repository에 Improvement Candidate Issue를 만든다.
+# 머지 후 자동 실행은 하지 않는다.
 #
 # 경계:
-# - 한 cycle당 Improvement Candidate 최대 1개
+# - 한 실행당 Improvement Candidate 최대 1개
 # - 기존 Issue와 중복이면 생성 금지
 # - Framework 자체 개선 후보는 생성 금지
-# - AI 호출은 cycle당 1회, 재시도 없음. Evaluator는 Private subscription executor(Claude Max, sonnet)다
+# - AI 호출은 실행당 1회, 재시도 없음. Evaluator는 Private subscription executor(Claude Max, opus)다
+# - 교환 comment와 사람이 읽을 결과는 Discovery 전용 Issue 하나에 계속 남긴다
 # - 생성한 Issue는 proposal이다. read-only AI PLAN은 자동으로 한 번 시작되지만 구현은 사람의 PLAN-승인 이후에만 진행된다
 # - Auto Merge를 사용하지 않고 최종 Merge는 Human-only다
 on:
   workflow_dispatch:
-    inputs:
-      human_merge_pr_number:
-        description: Merged Human Merge PR number to evaluate
-        required: true
-        type: string
 
 permissions: {}
 
 concurrency:
-  group: product-evaluation-${{ github.repository }}-${{ inputs.human_merge_pr_number }}
+  group: product-evaluation-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
+  discovery_issue:
+    name: Discovery 전용 Issue 확보
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      issues: write
+    outputs:
+      issue_number: ${{ steps.issue.outputs.issue_number }}
+
+    steps:
+      - name: Discovery 전용 Issue를 찾거나 처음 한 번 만든다
+        id: issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Framework가 만든 열린 Discovery Issue 하나만 계속 쓴다. 사람이 닫으면 다음 실행에서 새로 만든다.
+            const title = '[Product Discovery] 실행 기록';
+            const marker = '<!-- ai-dev-framework:PRODUCT_DISCOVERY_LOG v=1 -->';
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const found = open.filter((issue) =>
+              !issue.pull_request &&
+              issue.user?.login === 'github-actions[bot]' &&
+              issue.title === title &&
+              (issue.body || '').startsWith(marker)
+            );
+            if (found.length > 1) {
+              throw new Error(`열린 Discovery Issue가 여러 개입니다: ${found.map((issue) => `#${issue.number}`).join(', ')}. 하나만 남기고 닫아 주세요`);
+            }
+            let issueNumber = found[0]?.number;
+            if (issueNumber === undefined) {
+              const { data: issue } = await github.rest.issues.create({
+                ...context.repo,
+                title,
+                body: [
+                  marker,
+                  '사람이 Actions에서 `Trusted Product Evaluation`을 실행할 때마다 Product Discovery 요청·결과와 판단 요약을 이 Issue에 남깁니다.',
+                  '이 Issue는 기록용입니다. 여기에 PLAN을 요청하지 마세요. 닫으면 다음 실행에서 새 기록 Issue를 만듭니다.',
+                ].join('\n\n'),
+              });
+              issueNumber = issue.number;
+              core.info(`Discovery 전용 Issue #${issueNumber}를 만들었습니다`);
+            }
+            core.setOutput('issue_number', String(issueNumber));
+
   prepare:
     name: trusted 제품 snapshot 생성
+    needs: discovery_issue
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -39,10 +85,8 @@ jobs:
       issues: read
     outputs:
       issue_number: ${{ steps.prepare.outputs.issue_number }}
-      human_merge_pr: ${{ steps.prepare.outputs.human_merge_pr }}
       snapshot_digest: ${{ steps.prepare.outputs.snapshot_digest }}
       file_count: ${{ steps.prepare.outputs.file_count }}
-      should_evaluate: ${{ steps.prepare.outputs.should_evaluate }}
       request_artifact_name: ${{ steps.names.outputs.request_artifact_name }}
       request_artifact_id: ${{ steps.upload.outputs.artifact-id }}
       request_artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -51,21 +95,20 @@ jobs:
       subscription_request_artifact_digest: ${{ steps.subscription_upload.outputs.artifact-digest }}
 
     steps:
-      - name: exact Human Merge 경계 고정
-        id: freeze
+      - name: 실행 시점 기본 브랜치 SHA와 Discovery Issue 고정
         uses: actions/github-script@v7
         env:
-          HUMAN_MERGE_PR: ${{ inputs.human_merge_pr_number }}
+          DISCOVERY_ISSUE_NUMBER: ${{ needs.discovery_issue.outputs.issue_number }}
         with:
           script: |
             const fs = require('node:fs');
             const path = require('node:path');
-            const raw = process.env.HUMAN_MERGE_PR || '';
+            const raw = process.env.DISCOVERY_ISSUE_NUMBER || '';
             if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
-              throw new Error('human_merge_pr_number must be a positive integer');
+              throw new Error('Discovery Issue number must be a positive integer');
             }
-            const prNumber = Number(raw);
 
+            // 평가 대상은 특정 PR이 아니라 실행 시점에 배포된 기본 브랜치다.
             const { data: repository } = await github.rest.repos.get(context.repo);
             const { data: currentDefault } = await github.rest.repos.getBranch({
               ...context.repo,
@@ -75,68 +118,16 @@ jobs:
               throw new Error('Trusted Product Evaluation must execute at the exact current default branch SHA');
             }
 
-            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
-            if (!pr.merged || !pr.merge_commit_sha) throw new Error('Human Merge PR must be actually merged');
-            if (pr.base.ref !== repository.default_branch) {
-              throw new Error('Human Merge PR must target the default branch');
-            }
-
-            const body = pr.body || '';
-            const mergeReady = body.match(
-              /<!-- ai-dev-framework:MERGE_READY issue=([1-9]\d*) reviewed-sha=([0-9a-f]{40}) -->/,
-            );
-            if (!mergeReady) throw new Error('Human Merge PR must carry an exact MERGE_READY marker');
-            const issueNumber = Number(mergeReady[1]);
-            const reviewedHeadSha = mergeReady[2];
-            if (
-              pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-              !new RegExp(`^ai-publish/issue-${issueNumber}(?:-cycle-[0-9a-f]{16})?$`).test(pr.head.ref) ||
-              pr.head.sha !== reviewedHeadSha
-            ) {
-              throw new Error('Human Merge PR exact identity mismatch');
-            }
-
-            // 평가 대상은 특정 PR의 트리가 아니라 지금 배포된 default branch다.
-            // 이 cycle이 그 배포에 실제로 포함되었는지만 exact하게 확인한다.
-            const deployedSha = currentDefault.commit.sha;
-            const { data: comparison } = await github.rest.repos.compareCommits({
-              ...context.repo,
-              base: pr.merge_commit_sha,
-              head: deployedSha,
-            });
-            if (comparison.status !== 'identical' && comparison.status !== 'ahead') {
-              throw new Error('Human Merge commit must be part of the currently deployed default branch');
-            }
-
             const output = path.join(process.env.RUNNER_TEMP, 'product-evaluation');
             fs.mkdirSync(output, { recursive: true });
             fs.writeFileSync(
-              path.join(output, 'facts.json'),
+              path.join(output, 'target.json'),
               JSON.stringify({
                 repository: `${context.repo.owner}/${context.repo.repo}`,
-                requirementIssueNumber: issueNumber,
-                humanMergePullRequestNumber: prNumber,
-                reviewedHeadSha,
-                mergeCommitSha: pr.merge_commit_sha,
-                deployedSha,
+                discoveryIssueNumber: Number(raw),
+                deployedSha: currentDefault.commit.sha,
               }, null, 2),
             );
-
-            // 이 cycle이 바꾼 경로. 제품 파일을 하나도 바꾸지 않았음이 확실할 때만 AI 평가를 생략한다.
-            // 조회 실패나 API 상한(3000개) 도달은 complete=false로 두어 지금처럼 평가한다.
-            let changedPaths = { complete: false, paths: [] };
-            try {
-              const files = await github.paginate(github.rest.pulls.listFiles, {
-                ...context.repo,
-                pull_number: prNumber,
-                per_page: 100,
-              });
-              const paths = files.flatMap((file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]);
-              changedPaths = { complete: files.length > 0 && files.length < 3000, paths };
-            } catch (error) {
-              core.warning('Human Merge PR 변경 파일을 읽지 못해 Product Evaluation을 생략하지 않습니다');
-            }
-            fs.writeFileSync(path.join(output, 'changed-paths.json'), JSON.stringify(changedPaths, null, 2));
 
       - name: 사람이 기각한 후보 수집
         uses: actions/github-script@v7
@@ -180,6 +171,72 @@ jobs:
             fs.writeFileSync(process.env.REJECTED_CANDIDATES_JSON, JSON.stringify(rejected, null, 2));
             core.info(`기각된 후보 ${rejected.length}건을 평가 입력에 포함합니다`);
 
+      - name: 최근 이력 수집 (완료한 요구와 최근 변경 경로)
+        uses: actions/github-script@v7
+        env:
+          COMPLETED_REQUIREMENTS_JSON: ${{ runner.temp }}/product-evaluation/completed-requirements.json
+          RECENT_CHANGED_PATHS_JSON: ${{ runner.temp }}/product-evaluation/recent-changed-paths.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            const maxCompleted = 16;
+            const maxTitleBytes = 160;
+            const recentPullRequests = 10;
+            const bounded = (text) => {
+              let value = String(text || '').replace(/\s+/g, ' ').trim();
+              while (Buffer.byteLength(value, 'utf8') > maxTitleBytes) value = value.slice(0, -1);
+              return value.trim();
+            };
+
+            // 완료(completed)로 닫힌 Issue는 이미 끝난 요구다. 최근에 닫힌 것부터 읽는다.
+            const completed = [];
+            for (let page = 1; page <= 5 && completed.length < maxCompleted; page += 1) {
+              const { data } = await github.rest.issues.listForRepo({
+                ...context.repo,
+                state: 'closed',
+                sort: 'updated',
+                direction: 'desc',
+                per_page: 100,
+                page,
+              });
+              for (const issue of data) {
+                if (completed.length >= maxCompleted) break;
+                // 닫힌 Discovery 기록 Issue는 요구가 아니다.
+                if (issue.pull_request || issue.state_reason !== 'completed' || issue.title === '[Product Discovery] 실행 기록') continue;
+                const title = bounded(issue.title);
+                if (title) completed.push({ issueNumber: issue.number, title });
+              }
+              if (data.length < 100) break;
+            }
+
+            // 최근 머지된 PR들이 바꾼 경로. 제품 경로만 남기는 일은 trusted handler가 결정적으로 한다.
+            const { data: repository } = await github.rest.repos.get(context.repo);
+            const { data: pulls } = await github.rest.pulls.list({
+              ...context.repo,
+              state: 'closed',
+              base: repository.default_branch,
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 50,
+            });
+            const merged = pulls
+              .filter((pull) => pull.merged_at)
+              .sort((left, right) => Date.parse(right.merged_at) - Date.parse(left.merged_at))
+              .slice(0, recentPullRequests);
+            const recentChangedPaths = [];
+            for (const pull of merged) {
+              const { data: files } = await github.rest.pulls.listFiles({
+                ...context.repo,
+                pull_number: pull.number,
+                per_page: 100,
+              });
+              recentChangedPaths.push(...files.map((file) => file.filename));
+            }
+
+            fs.writeFileSync(process.env.COMPLETED_REQUIREMENTS_JSON, JSON.stringify(completed, null, 2));
+            fs.writeFileSync(process.env.RECENT_CHANGED_PATHS_JSON, JSON.stringify(recentChangedPaths, null, 2));
+            core.info(`완료한 요구 ${completed.length}건, 최근 머지 PR ${merged.length}개의 변경 경로를 입력에 포함합니다`);
+
       - name: trusted control-plane checkout
         uses: actions/checkout@v4
         with:
@@ -211,28 +268,27 @@ jobs:
             npm ci --ignore-scripts
           fi
 
-      - name: bounded 제품 snapshot과 평가 요청 생성
+      - name: 제품 snapshot과 Discovery 요청 생성
         id: prepare
         working-directory: evaluation-control
         run: node_modules/.bin/tsx src/self-improvement/product-evaluation-handler.ts prepare
         env:
-          PRODUCT_CYCLE_FACTS_JSON: ${{ runner.temp }}/product-evaluation/facts.json
+          PRODUCT_DISCOVERY_TARGET_JSON: ${{ runner.temp }}/product-evaluation/target.json
           PRODUCT_TARGET_ROOT: ${{ github.workspace }}/product-target
           REJECTED_CANDIDATES_JSON: ${{ runner.temp }}/product-evaluation/rejected-candidates.json
-          PRODUCT_CHANGED_PATHS_JSON: ${{ runner.temp }}/product-evaluation/changed-paths.json
+          COMPLETED_REQUIREMENTS_JSON: ${{ runner.temp }}/product-evaluation/completed-requirements.json
+          RECENT_CHANGED_PATHS_JSON: ${{ runner.temp }}/product-evaluation/recent-changed-paths.json
           PRODUCT_EVALUATION_RUNTIME_DIR: ${{ runner.temp }}/product-evaluation/request
           PRODUCT_EVALUATION_SUBSCRIPTION_DIR: ${{ runner.temp }}/product-evaluation/subscription-request
 
+      # 요청 식별 정보와 artifact 이름은 이 실행 run과 평가한 SHA로 정한다.
       - name: 평가 요청 artifact 이름 고정
         id: names
         shell: bash
-        env:
-          ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
-          HUMAN_MERGE_PR: ${{ steps.prepare.outputs.human_merge_pr }}
         run: |
           set -euo pipefail
-          echo "request_artifact_name=product-evaluation-request-issue-${ISSUE_NUMBER}-pr-${HUMAN_MERGE_PR}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-          echo "subscription_request_artifact_name=product-evaluation-subscription-issue-${ISSUE_NUMBER}-pr-${HUMAN_MERGE_PR}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "request_artifact_name=product-discovery-request-${GITHUB_SHA}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "subscription_request_artifact_name=product-discovery-subscription-${GITHUB_SHA}-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: trusted 평가 요청 저장
         id: upload
@@ -242,9 +298,7 @@ jobs:
           path: ${{ runner.temp }}/product-evaluation/request
           if-no-files-found: error
 
-      # 아래 두 단계는 AI를 부를 cycle에서만 돈다. 제품 파일 변경이 없으면 요청 artifact도 만들지 않는다.
       - name: Product Evaluation AI 비용 상한 확인
-        if: steps.prepare.outputs.should_evaluate == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -254,7 +308,6 @@ jobs:
           fi
 
       - name: PRODUCT_EVALUATION_REQUEST artifact 저장
-        if: steps.prepare.outputs.should_evaluate == 'true'
         id: subscription_upload
         uses: actions/upload-artifact@v4
         with:
@@ -263,28 +316,27 @@ jobs:
           if-no-files-found: error
 
   evaluator:
-    name: Product Evaluation subscription 교환
+    name: Product Discovery subscription 교환
     needs: prepare
-    # 제품 파일을 바꾸지 않은 cycle은 직전 평가와 같은 제품이므로 AI를 호출하지 않는다.
-    if: needs.prepare.result == 'success' && needs.prepare.outputs.should_evaluate == 'true'
+    if: needs.prepare.result == 'success'
     permissions:
       actions: read
       issues: write
     uses: ./.github/workflows/subscription-exchange.yml
     with:
       kind: PRODUCT_EVALUATION
-      label: PR #${{ needs.prepare.outputs.human_merge_pr }} Product Evaluation
+      label: Product Discovery ${{ github.sha }}
       issue_number: ${{ needs.prepare.outputs.issue_number }}
       request_artifact_name: ${{ needs.prepare.outputs.subscription_request_artifact_name }}
       request_artifact_id: ${{ needs.prepare.outputs.subscription_request_artifact_id }}
       request_artifact_digest: ${{ needs.prepare.outputs.subscription_request_artifact_digest }}
-      result_artifact_name: evaluator-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      result_artifact_name: evaluator-output-${{ github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
       result_file_name: evaluator.json
     secrets:
       EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
 
   finalize:
-    name: trusted 평가 검증과 Improvement Candidate Issue 결정
+    name: trusted 검증과 Improvement Candidate Issue 결정
     needs: [prepare, evaluator]
     if: needs.prepare.result == 'success' && needs.evaluator.result == 'success'
     runs-on: ubuntu-latest
@@ -328,7 +380,7 @@ jobs:
       - name: untrusted Evaluator output 다운로드
         uses: actions/download-artifact@v4
         with:
-          name: evaluator-output-issue-${{ needs.prepare.outputs.issue_number }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: evaluator-output-${{ github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/evaluator-output
 
       - name: source artifact 구조 확인
@@ -360,7 +412,7 @@ jobs:
           SNAPSHOT_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.request_artifact_digest }}
           EVALUATOR_PROVIDER: claude-max-subscription
           EVALUATOR_ACTION: ${{ vars.AI_EXECUTOR_REPOSITORY }}/product-evaluation-poller.yml
-          EVALUATOR_MODEL: sonnet
+          EVALUATOR_MODEL: opus
           # Private executor poller가 claude -p --effort medium으로 호출한다.
           EVALUATOR_REASONING_EFFORT: medium
 
@@ -407,6 +459,7 @@ jobs:
           PRODUCT_EVALUATION_REPORT_JSON: ${{ runner.temp }}/product-evaluation-final/product-evaluation-report.json
           EXISTING_ISSUES_JSON: ${{ runner.temp }}/product-evaluation-final/existing-issues.json
           IMPROVEMENT_ISSUE_DECISION_JSON: ${{ runner.temp }}/product-evaluation-final/issue-decision.json
+          DISCOVERY_RESULT_COMMENT_MD: ${{ runner.temp }}/product-evaluation-final/discovery-result.md
 
       - name: proposal-only Improvement Candidate Issue 생성
         id: create
@@ -458,9 +511,27 @@ jobs:
           echo "Improvement Candidate Issue를 만들지 않았습니다: ${SKIP_REASON}"
           echo "Improvement Candidate Issue를 만들지 않았습니다: ${SKIP_REASON}" >> "$GITHUB_STEP_SUMMARY"
 
+      # 비교한 후보 3개, 1위와 고르지 않은 이유, Issue 생성 결과를 Discovery 전용 Issue에 남긴다. AI를 다시 부르지 않는다.
+      - name: Discovery 전용 Issue에 결과 기록
+        uses: actions/github-script@v7
+        env:
+          DISCOVERY_ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
+          DISCOVERY_RESULT_COMMENT_MD: ${{ runner.temp }}/product-evaluation-final/discovery-result.md
+          CANDIDATE_ISSUE_NUMBER: ${{ steps.create.outputs.issue_number }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const issueNumber = process.env.DISCOVERY_ISSUE_NUMBER || '';
+            const created = process.env.CANDIDATE_ISSUE_NUMBER || '';
+            if (!/^[1-9]\d*$/.test(issueNumber)) throw new Error('Discovery Issue number is required');
+            if (created && !/^[1-9]\d*$/.test(created)) throw new Error('candidate issue number is invalid');
+            let body = fs.readFileSync(process.env.DISCOVERY_RESULT_COMMENT_MD, 'utf8').trimEnd();
+            if (created) body += `\n\n생성한 Improvement Candidate Issue: #${created} (read-only AI PLAN을 자동으로 한 번 시작했습니다)`;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: Number(issueNumber), body });
+
       - name: Improvement Candidate 판단 결과 저장
         uses: actions/upload-artifact@v4
         with:
-          name: product-improvement-decision-issue-${{ needs.prepare.outputs.issue_number }}-pr-${{ needs.prepare.outputs.human_merge_pr }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: product-improvement-decision-${{ github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/product-evaluation-final/issue-decision.json
           if-no-files-found: error

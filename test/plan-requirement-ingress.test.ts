@@ -84,6 +84,15 @@ test("Product Evaluation이 만든 [Self-Improvement] 후보의 자동 PLAN은 s
   assert.equal(await plannerModel("[Self-Improvement] 후보", `${marker}\n\n본문`, productEvaluationDispatch), "sonnet");
 });
 
+test("Product Discovery가 만든 Issue도 source=PRODUCT_EVALUATION이고 Discovery provenance가 기록된다", async () => {
+  const discoveryMarker = `<!-- ai-dev-framework:PRODUCT_IMPROVEMENT discovery-issue=40 discovery-run=36121809205 snapshot=${"1".repeat(64)} -->`;
+  const identity = await freeze("[Self-Improvement] 후보", `${discoveryMarker}\n\n## 어떤 업무가 불편한가요?\n\n본문`, productEvaluationDispatch);
+  assert.equal(identity.source.kind, "PRODUCT_EVALUATION");
+  assert.deepEqual(identity.source.productImprovement, { discoveryIssue: 40, discoveryRun: 36121809205, snapshotDigest: "1".repeat(64) });
+  // 자동 PLAN 모델 판별도 기존 후보와 같다.
+  assert.equal(await plannerModel("[Self-Improvement] 후보", `${discoveryMarker}\n\n본문`, productEvaluationDispatch), "sonnet");
+});
+
 test("사람이 만든 [업무 요구] PLAN은 opus를 명시한다", async () => {
   assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "issues", association: "OWNER" }), "opus");
   assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "workflow_dispatch", actor: "member" }), "opus");

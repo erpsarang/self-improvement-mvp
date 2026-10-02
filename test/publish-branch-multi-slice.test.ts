@@ -27,7 +27,6 @@ test("publish branch 형식은 publish-branch.ts와 명시된 workflow consumer�
   const allowed = new Map<string, number>([
     [".github/workflows/orchestrator.yml", 2],
     [".github/workflows/post-merge-learn.yml", 1],
-    [".github/workflows/product-evaluation.yml", 1],
   ]);
   for (const file of listFiles(".github/workflows", ".yml")) {
     const text = readFileSync(file, "utf8");

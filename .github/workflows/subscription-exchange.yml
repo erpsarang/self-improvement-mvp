@@ -71,7 +71,8 @@ jobs:
               REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },
               FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },
               LEARN: { identityKind: 'trusted-learn-request', model: 'sonnet', run: 'worker', poller: 'learn-poller.yml' },
-              PRODUCT_EVALUATION: { identityKind: 'trusted-product-evaluation-request', model: 'sonnet', run: 'worker', poller: 'product-evaluation-poller.yml' },
+              // PRODUCT_EVALUATION은 사람이 실행하는 Product Discovery다. Human Merge PR 없이 opus로 1회 요청한다.
+              PRODUCT_EVALUATION: { identityKind: 'trusted-product-discovery-request', model: 'opus', run: 'worker', poller: 'product-evaluation-poller.yml' },
             };
 
             function subscriptionKind(kind) {
@@ -305,7 +306,8 @@ jobs:
               REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },
               FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },
               LEARN: { identityKind: 'trusted-learn-request', model: 'sonnet', run: 'worker', poller: 'learn-poller.yml' },
-              PRODUCT_EVALUATION: { identityKind: 'trusted-product-evaluation-request', model: 'sonnet', run: 'worker', poller: 'product-evaluation-poller.yml' },
+              // PRODUCT_EVALUATION은 사람이 실행하는 Product Discovery다. Human Merge PR 없이 opus로 1회 요청한다.
+              PRODUCT_EVALUATION: { identityKind: 'trusted-product-discovery-request', model: 'opus', run: 'worker', poller: 'product-evaluation-poller.yml' },
             };
 
             function subscriptionKind(kind) {

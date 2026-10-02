@@ -285,32 +285,38 @@ LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candi
 
 이 경로는 AI가 evidence에서 후보를 발견했을 때를 위한 것이지, 사람이 이미 발견한 요구를 위한 관문이 아닙니다. 사람이 업무 요구를 직접 알고 있다면 `[업무 요구]` Issue로 바로 PLAN을 시작하는 것이 올바른 경로이며, 그것을 LEARN을 거치지 않았다는 이유로 막지 않습니다.
 
-## 11-1. Product Evaluation과 Improvement Candidate Issue
+## 11-1. Product Discovery와 Improvement Candidate Issue
 
-LEARN은 "개발 cycle이 어떻게 흘렀는가"를 봅니다. Product Evaluation은 "배포된 App이 사용자에게 충분한가"를 봅니다.
+LEARN은 "개발 cycle이 어떻게 흘렀는가"를 봅니다. Product Discovery는 "배포된 App이 사용자에게 충분한가"를 봅니다.
 
-`Trusted Product Evaluation`은 머지 후 자동으로 시작하지 않습니다. 사람이 Actions에서 workflow_dispatch로 실행할 때만 돌며, 평가할 Human Merge PR(MERGE_READY marker 필수) 번호를 입력합니다.
+`Trusted Product Evaluation`은 머지 후 자동으로 시작하지 않습니다. 사람이 Actions에서 workflow_dispatch로 실행할 때만 돌며, 입력은 없습니다. 실행 시점의 기본 브랜치 SHA를 평가합니다.
 
-Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, sonnet)가 실행합니다. 요청·결과 댓글은 닫힌 요구사항 Issue에 남고, App repository는 자기 executor의 `EXECUTOR_ALLOWED_REPOSITORIES`에 있어야 합니다.
+Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, opus, effort medium)가 실행합니다. 재시도하지 않습니다. 요청·결과 댓글과 사람이 읽을 판단 요약은 Discovery 전용 Issue `[Product Discovery] 실행 기록` 하나에 계속 남습니다. 이 Issue는 첫 실행 때 Framework가 만들고, 사람이 닫으면 다음 실행에서 새로 만듭니다. App repository는 자기 executor의 `EXECUTOR_ALLOWED_REPOSITORIES`에 있어야 합니다.
 
 ```text
-Human Merge (MERGE_READY PR)
-→ 현재 배포된 merge commit 확인
-→ bounded Product Snapshot 생성
-→ isolated read-only AI Product Evaluator
+사람이 Trusted Product Evaluation 실행
+→ 실행 시점 기본 브랜치 SHA 확인
+→ Product Snapshot 생성 (제품 source 전체 + 최근 이력)
+→ isolated read-only AI Product Discovery (후보 3개 비교, 1위 또는 NONE)
 → trusted finalize + 결정적 중복 판단
-→ 필요할 때만 [Self-Improvement] Issue 1개
+→ 필요할 때만 [Self-Improvement] Issue 1개 + Discovery Issue에 결과 기록
 ```
 
 ### Product Snapshot에 담기는 것
 
-배포된 merge commit의 제품 파일만 담습니다. README, 화면, 제품 소스를 먼저 담고 예산을 넘으면 나머지는 `omittedPaths`로 남깁니다.
+실행 시점 기본 브랜치의 제품 source 전체(테스트 제외)와 README를 담습니다. 파일별 한도와 파일 수 한도는 없고, 전체 한도 131,072B만 있습니다. README, 화면, 제품 소스 순서로 담고 전체 한도를 넘는 파일은 `omittedPaths`로 남깁니다. 바뀐 파일을 앞에 두지 않습니다.
+
+함께 담는 최근 이력:
+
+- 완료한 요구: `completed`로 닫힌 Issue 최근 16개
+- 기각된 후보와 사유: `not_planned`로 닫힌 `[Self-Improvement]` Issue와 사람의 마지막 코멘트
+- 최근 변경 경로: 최근 머지된 PR 10개가 바꾼 제품 경로. 이 영역의 후보는 결함이 아니면 순위를 낮춥니다
 
 snapshot에서 항상 제외되는 것:
 
 - `.github/`, `src/self-improvement/`, `policy/`, `.framework-runtime/`, `FRAMEWORK.md` 등 Framework distribution
 - 테스트 파일과 lockfile 같은 생성 파일
-- symlink, UTF-8이 아닌 파일, 개별 예산을 넘는 파일
+- symlink, UTF-8이 아닌 파일
 
 따라서 Evaluator는 Framework를 읽을 수 없고, Framework 개선을 제안할 근거 자체를 갖지 못합니다.
 
@@ -318,11 +324,12 @@ snapshot에서 항상 제외되는 것:
 
 | 가드레일 | 강제 지점 |
 | --- | --- |
-| 한 cycle당 Improvement Candidate 최대 1개 | 출력 schema의 `candidates.maxItems: 1`과 trusted finalize |
+| 후보 3개를 서로 다른 영역에서 비교하고 고르지 않은 이유를 남김 | 출력 schema와 trusted finalize (영역 중복, 이유 누락, 선택과 제안 불일치는 거부) |
+| 한 실행당 Improvement Candidate 최대 1개 | 출력 schema의 `candidates.maxItems: 1`과 trusted finalize |
 | 기존 Issue와 중복이면 생성 금지 | trusted control-plane의 결정적 판단 (AI가 판단하지 않음) |
 | Framework 자체 개선 후보 금지 | snapshot 선택 제외 + `scopePaths`의 Framework 경로 fail-closed |
 | App의 실제 사용자 가치만 | prompt와 snapshot 범위, 근거 경로 enum 제한 |
-| 불필요한 AI 호출/재시도 금지 | cycle당 1회, `GITHUB_RUN_ATTEMPT > 1`이면 중단 |
+| 불필요한 AI 호출/재시도 금지 | 사람이 실행할 때만, 실행당 1회, `GITHUB_RUN_ATTEMPT > 1`이면 중단 |
 | Auto Merge 금지 / 최종 Merge Human-only | 어떤 job도 merge·push 권한을 갖지 않음. PLAN은 자동 제안되지만 `PLAN-승인`과 Merge는 사람만 함 |
 | 사람이 기각한 후보를 다시 제안하지 않음 | `not_planned`로 닫힌 `[Self-Improvement]` Issue와 닫기 코멘트를 snapshot에 담아 Evaluator에게 금지 목록으로 전달 |
 

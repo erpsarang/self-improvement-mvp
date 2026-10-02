@@ -33,13 +33,13 @@ User Requirement
 → 다음 Requirement / PLAN cycle
 ```
 
-Human Merge된 App은 사람이 실행할 때 같은 경계에서 제품 관점으로도 한 번 평가됩니다. 머지 후 자동 평가는 하지 않습니다.
+배포된 App은 사람이 실행할 때만 같은 경계에서 제품 관점으로도 한 번 살펴봅니다(Product Discovery). 머지 후 자동 평가는 하지 않습니다.
 
 ```text
-Human Merge
-→ bounded Product Snapshot (배포된 merge commit의 제품 파일만)
-→ read-only AI Product Evaluation
-→ 사이클당 최대 1개의 Improvement Candidate Issue
+사람이 Trusted Product Evaluation 실행
+→ Product Snapshot (실행 시점 기본 브랜치의 제품 source 전체 + 최근 이력)
+→ read-only AI Product Discovery (서로 다른 영역의 후보 3개 비교)
+→ 실행당 최대 1개의 Improvement Candidate Issue
 → Human 판단
 → 사람이 시작하는 PLAN cycle
 ```
@@ -98,18 +98,19 @@ Merge가 실제 완료된 뒤에만 Completed Cycle Record를 만듭니다. LEAR
 
 LEARN 결과는 authority가 아니라 evidence-grounded proposal이고, Improvement Candidate도 `proposal-only / pending-human`입니다. 사람이 선택한 candidate만 새 Requirement / PLAN cycle로 연결됩니다.
 
-### 5. Human Merge → Product Evaluation → Improvement Candidate Issue
+### 5. 사람이 실행하는 Product Discovery → Improvement Candidate Issue
 
-LEARN이 개발 cycle의 진행 방식을 본다면, Product Evaluation은 **배포된 App 자체가 사용자에게 충분한가**를 봅니다. 두 stage는 입력도 산출물도 공유하지 않습니다.
+LEARN이 개발 cycle의 진행 방식을 본다면, Product Discovery는 **배포된 App 자체가 사용자에게 충분한가**를 봅니다. 두 stage는 입력도 산출물도 공유하지 않습니다.
 
-평가 대상은 merge commit 시점의 제품 파일로 한정한 bounded Product Snapshot입니다. Framework distribution 파일은 snapshot 선택에서 제외되므로 Evaluator는 Framework를 볼 수 없습니다.
+사람이 Actions에서 `Trusted Product Evaluation`을 실행할 때만 돕니다. 평가 대상은 실행 시점 기본 브랜치의 제품 source 전체(테스트 제외)와 README, 그리고 최근 이력(완료한 요구, 기각된 후보와 사유, 최근 변경 경로)입니다. Framework distribution 파일은 snapshot 선택에서 제외되므로 Evaluator는 Framework를 볼 수 없습니다.
 
-명백한 개선이 있을 때만 App repository에 `[Self-Improvement]` Issue 하나가 만들어집니다. 지켜지는 경계는 다음과 같습니다.
+AI는 서로 다른 영역의 후보 3개를 사용자 영향, 사용 빈도, README 비전으로 비교해 1위 1개만 제안하고, 고르지 않은 후보의 이유를 함께 적습니다. 최근 변경 영역은 결함이 아니면 순위를 낮추고, 셋 다 가치가 낮으면 NONE을 냅니다. 1위가 있을 때만 App repository에 `[Self-Improvement]` Issue 하나가 만들어집니다. 지켜지는 경계는 다음과 같습니다.
 
-- 한 cycle당 Improvement Candidate 최대 1개 (출력 schema가 구조적으로 제한)
+- 한 실행당 Improvement Candidate 최대 1개 (trusted finalize가 구조적으로 제한)
 - 열린 `[Self-Improvement]` Issue가 있거나 같은 제목이 이미 있으면 생성 금지
 - 개선 범위가 Framework 소유 경로면 fail-closed로 거부
-- AI 호출은 cycle당 1회이고 재시도하지 않음
+- AI 호출은 실행당 1회(Claude opus, effort medium)이고 재시도하지 않음
+- 요청·결과와 사람이 읽을 판단 요약은 Discovery 전용 Issue(`[Product Discovery] 실행 기록`) 하나에 남음
 - 생성된 Issue에는 read-only AI PLAN이 정확히 한 번 자동으로 제안됨
 - 구현은 사람이 `PLAN-승인`한 이후에만 진행하고, 진행하지 않을 후보는 사유를 남기고 `not_planned`로 닫음
 - `not_planned`로 닫힌 후보와 그 사유는 다음 평가에 금지 목록으로 전달되어 다시 제안되지 않음
