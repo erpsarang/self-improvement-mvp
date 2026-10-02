@@ -33,7 +33,7 @@ User Requirement
 → 다음 Requirement / PLAN cycle
 ```
 
-Human Merge된 App은 같은 경계에서 제품 관점으로도 한 번 평가됩니다.
+Human Merge된 App은 사람이 실행할 때 같은 경계에서 제품 관점으로도 한 번 평가됩니다. 머지 후 자동 평가는 하지 않습니다.
 
 ```text
 Human Merge
