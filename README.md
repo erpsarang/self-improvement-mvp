@@ -201,12 +201,13 @@ v0.2는 신뢰 가능한 **수직 개발 루프**를 증명한 MVP입니다. 다
 - durable / append-only 장기 provenance store
 - 운영 UI와 관측성 개선
 - 비용·시간 최적화
-- Framework/App별 OpenAI Project·API Key 분리와 전 stage 공통 AI call dedup / budget guardrail (Product Evaluation은 cycle당 1회 호출 상한과 Issue 중복 차단을 이미 적용)
+- 전 stage 공통 AI call dedup / budget guardrail (Product Discovery는 실행당 1회 호출 상한과 Issue 중복 차단을 이미 적용). 팀별 executor 분리는 적용됐고, 작업 난이도에 따른 PLAN 모델 선택은 미완(#344)
 
 Auto Merge는 향후 목표가 아니며, 최종 Merge는 계속 Human-only입니다.
 
 ## 문서
 
+- [`CHARTER.md`](CHARTER.md) — 헌장. 목적, 가치의 우선순위, 과제 선정 기준, 프레임워크 고도화의 경계, 사람과 AI의 역할
 - [`docs/usage.md`](docs/usage.md) — v0.2 실제 사용 흐름
 - [`docs/architecture.md`](docs/architecture.md) — Trust Boundary, provenance, 비용 경계 구조
 - [`docs/roadmap.md`](docs/roadmap.md) — 현재 검증 위치와 다음 확장 방향

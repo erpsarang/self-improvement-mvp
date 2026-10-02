@@ -113,13 +113,14 @@ FIX Worker가 승인 범위 밖 workflow를 수정했다.)
 
 ## Provider-neutral core
 
-현재 GitHub 실행 adapter에서는 AI Reviewer로 `openai/codex-action@v1`을 사용합니다. 그러나 core의 `SemanticReviewerOutput`과 `ReviewProvenance`는 특정 모델 이름에 종속되지 않습니다.
+현재 GitHub 실행 adapter에서는 AI Reviewer를 팀 소유 Private subscription executor(Claude Max, opus)에 REVIEW_REQUEST 1회로 위임합니다(`docs/usage.md` 2절). 설계 당시 adapter였던 `openai/codex-action@v1`은 2026-10-01에 제거됐습니다. core의 `SemanticReviewerOutput`과 `ReviewProvenance`는 특정 모델 이름에 종속되지 않습니다.
 
 ```text
 Semantic Reviewer Provider
-  ├─ OpenAI / Codex   ← 현재 adapter
+  ├─ Claude subscription executor   ← 현재 adapter
+  ├─ OpenAI / Codex                 ← 이전 adapter (제거됨)
   ├─ Azure OpenAI
-  ├─ Anthropic
+  ├─ Anthropic API
   └─ Local Model
           │
           ▼

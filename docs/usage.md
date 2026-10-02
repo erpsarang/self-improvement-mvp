@@ -71,7 +71,7 @@ App 권한과 설치:
 동작:
 
 - `orchestrator.yml`의 PR boundary job이 `actions/create-github-app-token`으로 **현재 repository로만 scope된 1시간짜리 설치 토큰**을 발급받아 `pulls.create`에만 쓰고, job 종료 시 revoke 한다. 발급 시 `pull requests: write`, `contents: read`로 다시 축소한다.
-- Trusted Rail은 이 두 secret만 Orchestrator에 명시적으로 넘긴다(`secrets: inherit` 없음). Codex API key와 `TRUSTED_PUBLISH_TOKEN`은 Orchestrator에 보이지 않으며 그 역할도 바뀌지 않는다.
+- Trusted Rail은 이 두 secret만 Orchestrator에 명시적으로 넘긴다(`secrets: inherit` 없음). `EXECUTOR_DISPATCH_TOKEN`과 `TRUSTED_PUBLISH_TOKEN`은 Orchestrator에 보이지 않으며 그 역할도 바뀌지 않는다.
 - secret이 없으면 GITHUB_TOKEN(`github-actions[bot]`)으로 fallback 하여 이전과 같이 동작한다. secret이 있는데 무효하면 토큰 발급 step이 실패하고 Trusted Rail run이 멈춘다. 조용히 넘어가지 않는다.
 - PR 작성자가 App bot도 `github-actions[bot]`도 아니면(사람이 직접 만든 PR 등) MERGE_READY로 승격하지 않고 fail-closed 한다.
 
@@ -217,7 +217,7 @@ branch 이름이 아니라 exact `publishedHeadSha`를 checkout하여 기계 검
 
 ## 8. LOCAL_FIX
 
-`LOCAL_FIX`라고 해서 사람이 Codex에 자유형 수정 명령을 다시 주는 것이 아닙니다.
+`LOCAL_FIX`라고 해서 사람이 AI에게 자유형 수정 명령을 다시 주는 것이 아닙니다.
 
 ```text
 REVIEW = LOCAL_FIX

@@ -68,7 +68,7 @@ trusted 수집기가 대상으로 삼을 workflow/job 계약은 다음과 같다
 | LEARN | Read-only AI LEARN / isolated read-only AI Learner |
 | PRODUCT_EVALUATION | Trusted Product Evaluation / isolated read-only AI Product Evaluator |
 
-skipped job은 호출로 세지 않는다. workflow의 모델 설정, prompt 문자열, AI가 생성한 설명은 실제 사용량 evidence가 아니다. Codex 출력은 untrusted data이며 실제 시작 배너와 종료 usage를 구분하는 책임은 수집기에 있다. 예상값을 이 관측 계약에 제출하지 않는다.
+skipped job은 호출로 세지 않는다. workflow의 모델 설정, prompt 문자열, AI가 생성한 설명은 실제 사용량 evidence가 아니다. 이 수집기가 읽는 `OpenAI Codex v…` 배너 형식은 2026-10-01 이전 Public workflow의 Codex 호출에만 해당한다. 현재 subscription executor 호출의 요청 모델·effort·실제 모델 ID·토큰은 executor job log와 runner journal에 남으며(executor PR #20), 그것을 이 계약으로 수집하는 일은 후속 과제다. AI 출력은 untrusted data이며 실제 시작 배너와 종료 usage를 구분하는 책임은 수집기에 있다. 예상값을 이 관측 계약에 제출하지 않는다.
 
 ## 부분 관측과 비용 미확인
 

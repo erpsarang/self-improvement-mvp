@@ -62,7 +62,7 @@ Bounded Untrusted IMPLEMENT
 7. **모든 반복은 bounded이며, 반복 실패 시 STOP한다.**
 8. **Framework 결함을 Framework가 재귀적으로 무한 수정하지 않는다.**
 9. **AI 비용도 Trust Boundary의 일부다. 동일 입력의 성공 AI 작업을 불필요하게 재호출하지 않는다.**
-10. **Framework와 App은 OpenAI Project/API Key를 분리해 사용량·비용 provenance를 구분한다.**
+10. **Framework와 App, 그리고 App과 App은 AI 실행 자격과 사용 한도를 공유하지 않는다.** 분리의 메커니즘(현재는 팀 소유 Private subscription executor)은 바뀔 수 있지만 분리 자체는 원칙이다.
 
 Auto Merge는 설계 목표가 아니다.
 
@@ -136,26 +136,31 @@ Framework Core에서 중요한 것은 **누가 Issue를 만들었는가가 아�
 
 AI 호출 비용은 운영 부가 정보가 아니라 Framework가 통제해야 하는 실행 자원이다.
 
-기본 배치는 다음과 같다.
+기본 배치는 다음과 같다. 모든 AI 호출은 Public repository에서 직접 하지 않고, 그 App을 개발하는 팀이 소유한 Private subscription executor(`subscription-ai-executor` 복제본)로 보낸다. executor는 self-hosted runner에서 팀 전용 Claude 구독 계정으로 실행한다.
 
 ```text
-self-improvement-mvp
-  → OpenAI Project: framework-dev
-  → GitHub Secret: FRAMEWORK_CODEX_API_KEY
+self-improvement-mvp (Framework)
+  → variable AI_EXECUTOR_REPOSITORY = Framework 팀의 executor
+  → secret   EXECUTOR_DISPATCH_TOKEN
 
 dogfood / 실제 App repo
-  → App별 OpenAI Project
-  → GitHub Secret: APP_CODEX_API_KEY
+  → variable AI_EXECUTOR_REPOSITORY = 그 App 팀의 executor
+  → secret   EXECUTOR_DISPATCH_TOKEN
+
+executor repo (Private, 팀 소유)
+  → variable EXECUTOR_ALLOWED_REPOSITORIES = 처리할 repository 목록
+  → secret   FRAMEWORK_BRIDGE_TOKEN
+  → runner에 팀 전용 Claude 계정 로그인
 ```
 
 원칙:
 
-- Framework와 App이 동일 API Key를 공유하지 않는다.
-- 가능하면 Project-scoped API Key 또는 해당 Project의 service account key를 사용한다.
+- Framework와 App, App과 App이 같은 executor나 같은 구독 계정을 공유하지 않는다.
+- executor는 allowlist에 없는 repository의 요청을 Claude 호출 전에 거부한다.
 - 동일 Requirement/Handoff/Context/Prompt/실행정책의 성공 AI call은 artifact 재사용을 우선한다.
-- retry/repair는 단계별 bounded budget을 가진다.
-- Usage Dashboard의 Project budget은 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
-- Framework 내부 Cost Gate가 호출 횟수·token ledger·중복 호출을 별도로 통제한다.
+- retry/repair는 단계별 bounded budget을 가진다. 모든 호출은 1 turn이며 도구를 쓰지 않는다.
+- 구독 사용 한도는 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
+- Framework 내부 Cost Gate가 호출 횟수·중복 호출을 별도로 통제한다. 요청 모델·effort·실제 모델 ID·토큰은 executor job log와 runner journal에 남는다.
 - 비용 경계 위반 또는 정해진 budget 초과는 fail-open하지 않고 STOP/ON_HOLD 후보가 된다.
 
 ## 5. STOP은 실패가 아니라 정상 상태다
@@ -222,7 +227,7 @@ GRAPH와 LOOP는 위 Trust Boundary를 우회하는 별도 authority가 아니�
 
 ## 9. Canonical 변경 규칙
 
-이 문서는 프로젝트의 **상위 설계 authority**다.
+이 문서는 프로젝트의 **상위 설계 authority**다. 목적·가치의 우선순위·과제 선정 기준·고도화의 경계는 [`CHARTER.md`](../CHARTER.md)가 정하며, 헌장은 이 문서의 Trust Boundary를 느슨하게 하는 근거가 되지 않는다.
 
 - 세부 workflow나 구현이 이 문서와 충돌하면 이 문서를 우선한다.
 - 이 문서의 Trust Boundary를 바꾸려면 명시적인 Human 결정과 별도 PR이 필요하다.

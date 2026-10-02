@@ -4,7 +4,7 @@
 
 `IMPLEMENT`와 `FIX`는 untrusted 영역이다. 이 영역에는 GitHub write credential을 제공하지 않으며, 산출한 candidate patch를 직접 PUBLISH할 수 없다.
 
-Semantic `REVIEW`의 AI Reviewer도 **untrusted reasoning worker**로 취급한다. Reviewer는 trusted provenance를 직접 만들 수 없고, 구조화된 raw `reviewer.json`만 candidate output으로 남긴다. 현재 GitHub adapter는 `openai/codex-action`을 사용하지만 core의 Reviewer output 계약은 provider-neutral하다.
+Semantic `REVIEW`의 AI Reviewer도 **untrusted reasoning worker**로 취급한다. Reviewer는 trusted provenance를 직접 만들 수 없고, 구조화된 raw `reviewer.json`만 candidate output으로 남긴다. 현재 GitHub adapter는 Reviewer를 팀 소유 Private subscription executor(Claude Max, opus)에 1회 요청으로 위임하지만 core의 Reviewer output 계약은 provider-neutral하다.
 
 ## Trusted execution
 
