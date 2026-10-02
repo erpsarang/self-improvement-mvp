@@ -222,7 +222,7 @@ GRAPH와 LOOP는 위 Trust Boundary를 우회하는 별도 authority가 아니�
 
 ## 9. Canonical 변경 규칙
 
-이 문서는 프로젝트의 **상위 설계 authority**다.
+이 문서는 프로젝트의 **상위 설계 authority**다. 목적·가치의 우선순위·과제 선정 기준·고도화의 경계는 [`CHARTER.md`](../CHARTER.md)가 정하며, 헌장은 이 문서의 Trust Boundary를 느슨하게 하는 근거가 되지 않는다.
 
 - 세부 workflow나 구현이 이 문서와 충돌하면 이 문서를 우선한다.
 - 이 문서의 Trust Boundary를 바꾸려면 명시적인 Human 결정과 별도 PR이 필요하다.
