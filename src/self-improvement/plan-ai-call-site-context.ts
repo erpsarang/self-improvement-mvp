@@ -23,7 +23,8 @@ import {
  * (self-improvement-mvp #244 PLAN run 35968565239: 호출 지점 8곳 중 1곳만 문맥에 포함 → ready=false).
  *
  * 이 보강은 canonical Framework source tree에서만, 요구가 AI 실행 정책을 다룰 때만 발동하며,
- * AI 호출 step을 담은 workflow마다 그 step 주변의 작은 창 하나를 evidence로 넣는다.
+ * AI 호출 지점(Action step, subscription exchange job, Private poller dispatch step)을 담은 workflow마다
+ * 그 블록의 작은 창 하나를 evidence로 넣는다.
  * 새 AI 호출은 없고, 파일 시스템 밖의 정보(모델 식별자, 가격 등)는 만들지 않는다.
  */
 
@@ -31,6 +32,12 @@ export const AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES = 3_000;
 const CANONICAL_FRAMEWORK_PACKAGE_NAME = "self-improvement-mvp";
 const WORKFLOW_DIRECTORY = ".github/workflows";
 const AI_CALL_STEP_USES = /^(\s*)uses:\s*(?:openai\/codex-action|anthropics\/claude-code-action\/base-action)@/;
+// Claude Max subscription executor 호출 지점. job이 subscription exchange reusable workflow를 부르거나
+// (kind가 identity/model을 고른다), step이 Private poller를 직접 깨운다(PLAN, exchange 자체).
+const SUBSCRIPTION_EXCHANGE_JOB_USES = /^\s*uses:\s*\.\/\.github\/workflows\/subscription-exchange\.yml\s*$/;
+const SUBSCRIPTION_POLLER_DISPATCH = /api\.github\.com\/repos\/erpsarang\/subscription-ai-executor\/actions\/workflows\//;
+// exchange 자체에서는 kind별 identity/model 표가 dispatch step보다 먼저 나오는 marker step에 있다.
+const SUBSCRIPTION_KIND_TABLE = /^\s*const SUBSCRIPTION_KINDS = \{\s*$/;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 interface AiCallSiteContextBudget {
@@ -128,35 +135,49 @@ function leadingSpaces(line: string): number {
 }
 
 /**
- * 첫 지원 AI provider 호출 step(Codex 또는 Claude Code Base Action)이 속한 step 블록을 돌려준다.
- * 블록은 그 step의 `- ` 줄에서 시작해 같은 들여쓰기의 다음 step 또는 상위 key 직전에서 끝난다.
+ * 첫 AI 호출 지점이 속한 블록을 돌려준다. 호출 지점은 셋 중 파일에서 먼저 나오는 것이다.
+ * - 지원 AI provider Action step(Codex 또는 Claude Code Base Action): 그 step 블록
+ * - subscription exchange reusable workflow를 부르는 job: 그 job 블록(kind 포함)
+ * - subscription kind별 model 표 또는 Private subscription poller를 깨우는 step(exchange 자체, PLAN): 그 step 블록
+ * step 블록은 `- ` 줄에서 시작해 같은 들여쓰기의 다음 step 또는 상위 key 직전에서 끝난다.
  * 반환하는 startOffset은 `text.slice(startOffset, startOffset + content.length) === content`를 만족한다.
- * 한 workflow에 호출 step이 여러 개면(예: bounded IMPLEMENT Worker의 retry step) 첫 번째만 쓴다.
+ * 한 workflow에 호출 지점이 여러 개면(예: bounded IMPLEMENT Worker의 repair exchange) 첫 번째만 쓴다.
  */
 export function aiCallStepWindow(text: string, maxBytes: number): { content: string; startOffset: number } | null {
   const lines = text.split("\n");
-  const usesIndex = lines.findIndex((line) => AI_CALL_STEP_USES.test(line));
-  if (usesIndex < 0) return null;
-  const usesIndent = leadingSpaces(lines[usesIndex]!);
-  const stepIndent = usesIndent - 2;
-  if (stepIndent < 0) return null;
+  const matchIndex = lines.findIndex((line) =>
+    AI_CALL_STEP_USES.test(line) ||
+    SUBSCRIPTION_EXCHANGE_JOB_USES.test(line) ||
+    SUBSCRIPTION_KIND_TABLE.test(line) ||
+    SUBSCRIPTION_POLLER_DISPATCH.test(line)
+  );
+  if (matchIndex < 0) return null;
+  const matchLine = lines[matchIndex]!;
+  const matchIndent = leadingSpaces(matchLine);
+  const isJobBlock = SUBSCRIPTION_EXCHANGE_JOB_USES.test(matchLine);
 
-  let start = usesIndex;
+  // step은 가장 가까운 상위 `- ` 줄, exchange job은 바로 위 들여쓰기의 `job_id:` 줄이 블록 시작이다.
+  let start = matchIndex;
   while (start > 0) {
-    const line = lines[start]!;
-    if (leadingSpaces(line) === stepIndent && line.trimStart().startsWith("- ")) break;
     start -= 1;
+    const line = lines[start]!;
+    if (line.trim() === "" || leadingSpaces(line) >= matchIndent) continue;
+    if (isJobBlock ? leadingSpaces(line) === matchIndent - 2 && /^\s*[A-Za-z0-9_-]+:\s*$/.test(line) : line.trimStart().startsWith("- ")) break;
   }
   const startLine = lines[start]!;
-  if (!(leadingSpaces(startLine) === stepIndent && startLine.trimStart().startsWith("- "))) return null;
+  const blockIndent = leadingSpaces(startLine);
+  const validStart = isJobBlock
+    ? blockIndent === matchIndent - 2 && /^\s*[A-Za-z0-9_-]+:\s*$/.test(startLine)
+    : blockIndent < matchIndent && startLine.trimStart().startsWith("- ");
+  if (!validStart) return null;
 
-  let end = usesIndex + 1;
+  let end = matchIndex + 1;
   while (end < lines.length) {
     const line = lines[end]!;
-    if (line.trim() !== "" && leadingSpaces(line) <= stepIndent) break;
+    if (line.trim() !== "" && leadingSpaces(line) <= blockIndent) break;
     end += 1;
   }
-  while (end > usesIndex + 1 && lines[end - 1]!.trim() === "") end -= 1;
+  while (end > matchIndex + 1 && lines[end - 1]!.trim() === "") end -= 1;
 
   // startOffset은 다른 Context 모듈과 validatePlan이 쓰는 것과 같은 문자(UTF-16 code unit) 인덱스다.
   // byte 오프셋을 넣으면 한글 step 이름이 앞에 있는 workflow에서 trusted 검증이 fail-closed 된다.

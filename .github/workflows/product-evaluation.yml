@@ -427,8 +427,8 @@ jobs:
           EVALUATOR_PROVIDER: claude-max-subscription
           EVALUATOR_ACTION: erpsarang/subscription-ai-executor/product-evaluation-poller.yml
           EVALUATOR_MODEL: sonnet
-          # Private executor는 아직 effort를 넘기지 않는다. 확인되지 않은 값을 기록하지 않는다.
-          EVALUATOR_REASONING_EFFORT: cli-default
+          # Private executor poller가 claude -p --effort medium으로 호출한다.
+          EVALUATOR_REASONING_EFFORT: medium
 
       - name: 검증된 Product Evaluation report 저장
         uses: actions/upload-artifact@v4
