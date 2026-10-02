@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence, strongestDirectTest } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
-import { PLAN_CONTEXT_MAX_FILES, PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
+import { applyReadOnlyContextMentions, PLAN_CONTEXT_MAX_FILES, PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
 
 const SHA = "621b8415c52c87facc45b27c7f06a85b7fb3d27b";
 const requirement = [
@@ -342,4 +342,36 @@ test("Context 밖에서 App source를 VM으로 읽어 실행하는 기존 테스
   const full = packOf(root, ["src/web-main.ts", "test/web-main.test.ts", "src/other.ts", "test/other.test.ts"], createHash, read);
   const skipped = augmentPlanContextWithDirectTestEvidence(root, full);
   assert.deepEqual(skipped.files.map((file) => file.path), full.files.map((file) => file.path));
+});
+
+test("ready PLAN이 언급만 한 Context Pack 안의 기존 파일은 trusted 단계가 contextPaths에 더한다 (App #284 run 36964414949)", () => {
+  const { target, context } = appFixture();
+  assert.equal(context.files.some((file) => file.path === "test/web.test.js"), true);
+  const raw = readyPlan(context, ["src/classics.js"], { testStrategy: ["기존 test/web.test.js가 추천 동작을 확인하므로 npm test로 회귀를 본다"] });
+  assert.throws(() => validatePlan(raw, target, context), /exact path outside bounded implementation scope: test\/web\.test\.js/);
+
+  const { plan, added } = applyReadOnlyContextMentions(context, raw);
+  assert.deepEqual(added, ["test/web.test.js"]);
+  const scope = (validatePlan(plan, target, context).implementationScope as { allowedPaths: string[]; contextPaths: string[] });
+  assert.deepEqual(scope.allowedPaths, ["src/classics.js"], "쓰기 권한은 늘리지 않는다");
+  assert.deepEqual(scope.contextPaths, ["package.json", "test/web.test.js"]);
+  assert.deepEqual(applyReadOnlyContextMentions(context, plan), { plan, added: [] }, "이미 보강된 PLAN은 그대로 둔다");
+});
+
+test("Context Pack 밖 경로, changeCandidates, ready=false, contextPaths 예산 초과는 보강하지 않고 fail-closed를 유지한다", () => {
+  const { target, context } = appFixture();
+  const outside = readyPlan(context, ["src/classics.js"], { testStrategy: ["test/missing.test.js로 확인한다"] });
+  assert.deepEqual(applyReadOnlyContextMentions(context, outside), { plan: outside, added: [] });
+  assert.throws(() => validatePlan(outside, target, context), /exact path outside bounded implementation scope: test\/missing\.test\.js/);
+
+  const candidate = readyPlan(context, ["src/classics.js"], { changeCandidates: ["src/classics.js 변경", "test/web.test.js 변경"] });
+  assert.deepEqual(applyReadOnlyContextMentions(context, candidate), { plan: candidate, added: [] });
+  assert.throws(() => validatePlan(candidate, target, context), /change candidate path is outside allowedPaths: test\/web\.test\.js/);
+
+  const notReady = { ...outside, testStrategy: ["test/web.test.js로 확인한다"], implementationScope: { ...outside.implementationScope, ready: false } };
+  assert.deepEqual(applyReadOnlyContextMentions(context, notReady), { plan: notReady, added: [] });
+
+  const full = readyPlan(context, ["src/classics.js"], { testStrategy: ["test/web.test.js로 확인한다"] });
+  const saturated = { ...full, implementationScope: { ...full.implementationScope, contextPaths: Array.from({ length: PLAN_IMPLEMENT_MAX_FILES }, (_, index) => `src/context-${index}.js`) } };
+  assert.deepEqual(applyReadOnlyContextMentions(context, saturated), { plan: saturated, added: [] });
 });

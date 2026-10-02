@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  applyReadOnlyContextMentions,
   assertOutsideTarget,
   createPlanPrompt,
   PLAN_SCHEMA,
@@ -13,7 +14,7 @@ import {
 } from "./planner.js";
 import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence } from "./plan-business-context.js";
 import { augmentPlanContextWithHumanOutputSurfaces } from "./plan-human-output-context.js";
-import { augmentPlanContextWithExplicitPaths } from "./plan-explicit-path-context.js";
+import { augmentPlanContextWithExplicitPaths, prioritizedRequirementPaths } from "./plan-explicit-path-context.js";
 import { augmentPlanContextWithAiCallSites } from "./plan-ai-call-site-context.js";
 import { needsHumanOutputPlanContext, planImpactTestScopeGuidance } from "./plan-context-policy.js";
 import { renderPlanDecisionPacket, writeGithubOutput, type PlanDecisionInput } from "./plan-decision-packet.js";
@@ -45,7 +46,7 @@ if (command === "prepare") {
   // Framework 자체 요구가 AI 실행 정책을 다루면 AI 호출 step 창을 결정적으로 넣는다 (canonical Framework tree에서만 발동).
   const aiCallSiteContext = augmentPlanContextWithAiCallSites(requirement, target, humanContext);
   const explicitContext = augmentPlanContextWithExplicitPaths(requirement, target, aiCallSiteContext);
-  const context = augmentPlanContextWithDirectTestEvidence(target, explicitContext);
+  const context = augmentPlanContextWithDirectTestEvidence(target, explicitContext, prioritizedRequirementPaths(requirement));
   writeFileSync(file("input.json"), JSON.stringify({
     requirement,
     repository,
@@ -80,7 +81,9 @@ if (command === "prepare") {
 
   // 변경 대상 소스를 import하는 기존 테스트는 trusted 단계가 scope에 결정적으로 추가한 뒤 검증한다.
   const companionResult = applyImpactedTestCompanions(target, context, JSON.parse(readFileSync(file("raw-plan.json"), "utf8")));
-  const plan = validatePlan(companionResult.plan, target, context);
+  // ready PLAN이 Context Pack 안의 읽기 전용 파일을 언급만 하고 contextPaths에 빠뜨린 경우도 결정적으로 보강한다.
+  const mentionResult = applyReadOnlyContextMentions(context, companionResult.plan);
+  const plan = validatePlan(mentionResult.plan, target, context);
   writeFileSync(file("PLAN.json"), JSON.stringify({
     kind: "untrusted-plan",
     repository: input.repository,
@@ -107,6 +110,9 @@ if (command === "prepare") {
         `- 허용 경로: ${scope.allowedPaths.map((path) => `\`${path}\``).join(", ")}`,
         ...(companionResult.companions.length > 0
           ? [`- trusted 보강 테스트: ${companionResult.companions.map((path) => `\`${path}\``).join(", ")} (변경 대상 소스를 import하는 기존 테스트를 결정적으로 추가)`]
+          : []),
+        ...(mentionResult.added.length > 0
+          ? [`- trusted 보강 참고 경로: ${mentionResult.added.map((path) => `\`${path}\``).join(", ")} (PLAN이 언급한 Context Pack 안의 기존 파일을 읽기 전용으로 추가)`]
           : []),
         `- 필수 변경: ${scope.requiredChanges.join(" / ")}`,
         `- 금지 변경: ${scope.forbiddenChanges.length > 0 ? scope.forbiddenChanges.join(" / ") : "없음"}`,

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { augmentPlanContextWithDirectTestEvidence } from "../src/self-improvement/plan-business-context.js";
-import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
+import { augmentPlanContextWithExplicitPaths, prioritizedRequirementPaths } from "../src/self-improvement/plan-explicit-path-context.js";
 import { selectPlanContext, verifyPlanContextPack } from "../src/self-improvement/planner.js";
 
 test("PLAN Context는 Requirement의 실재 exact path를 등장 순서대로 heuristic보다 우선한다", () => {
@@ -169,7 +169,32 @@ test("planner prepare pipeline은 explicit path 뒤에 direct impacted test evid
   const handler = readFileSync(join(process.cwd(), "src/self-improvement/planner-handler.ts"), "utf8");
   assert.match(handler, /const aiCallSiteContext = augmentPlanContextWithAiCallSites\(requirement, target, humanContext\);/);
   assert.match(handler, /const explicitContext = augmentPlanContextWithExplicitPaths\(requirement, target, aiCallSiteContext\);/);
-  assert.match(handler, /const context = augmentPlanContextWithDirectTestEvidence\(target, explicitContext\);/);
+  assert.match(handler, /const context = augmentPlanContextWithDirectTestEvidence\(target, explicitContext, prioritizedRequirementPaths\(requirement\)\);/);
+});
+
+test("요구에 exact path로 적힌 문서는 direct test 보강이 예산 때문에 밀어내지 않는다 (App #284 run 36961359658)", () => {
+  const root = mkdtempSync(join(tmpdir(), "planner-pinned-doc-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "test"));
+    writeFileSync(join(root, "README.md"), "# Guide\n" + "재고 배분 설명 ".repeat(1500));
+    for (const name of ["a", "b", "c"]) {
+      writeFileSync(join(root, "src", `${name}.ts`), `export const src_${name} = "${"x".repeat(15_000)}";\n`);
+      writeFileSync(join(root, "test", `${name}.test.ts`), `import { src_${name} } from "../src/${name}.js";\nconst fixture = "${"y".repeat(12_000)}";\nvoid src_${name}; void fixture;\n`);
+    }
+    const requirement = "`README.md`를 현재 구현에 맞게 고친다. 근거는 `src/a.ts`, `src/b.ts`, `src/c.ts`다.";
+    const explicit = augmentPlanContextWithExplicitPaths(requirement, root, selectPlanContext(requirement, root, "example/app", "e".repeat(40)));
+    assert.equal(explicit.files[0]!.path, "README.md");
+
+    // 고치기 전: 세 source의 직접 테스트를 넣느라 수정 대상 README.md가 빠졌다.
+    assert.ok(!augmentPlanContextWithDirectTestEvidence(root, explicit).files.some((file) => file.path === "README.md"));
+
+    const pinned = augmentPlanContextWithDirectTestEvidence(root, explicit, prioritizedRequirementPaths(requirement));
+    verifyPlanContextPack(pinned);
+    assert.deepEqual(pinned.files.map((file) => file.path), ["README.md", "src/a.ts", "src/b.ts", "test/a.test.ts", "test/b.test.ts"]);
+    // source/test는 기존 규칙대로 직접 테스트가 없는 뒤쪽 source부터 빠지고, 남은 source에는 직접 테스트가 함께 있다.
+    assert.deepEqual(augmentPlanContextWithDirectTestEvidence(root, explicit, prioritizedRequirementPaths(requirement)), pinned, "같은 입력이면 같은 결과");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 function directTestFixture(): string {
