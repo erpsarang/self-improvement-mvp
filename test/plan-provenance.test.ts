@@ -119,12 +119,12 @@ test("provenance binds upload outputs and pointer contains only trusted metadata
 });
 
 test("workflow isolates write permission and uses upload result rather than planner claims", () => {
-  assert.equal(scripts.length, 5);
+  assert.equal(scripts.length, 6);
   assert.ok(freezeScript && provenanceScript && pointerScript);
   const planJob = workflow.split("\n  plan:\n")[1]?.split("\n  request:\n", 1)[0] ?? "";
   const requestJob = workflow.split("\n  request:\n")[1]?.split("\n  resolve:\n", 1)[0] ?? "";
   const resolveJob = workflow.split("\n  resolve:\n")[1]?.split("\n  provenance:\n", 1)[0] ?? "";
-  const provenanceJob = workflow.split("\n  provenance:\n")[1] ?? "";
+  const provenanceJob = workflow.split("\n  provenance:\n")[1]?.split("\n  failure_notice:\n", 1)[0] ?? "";
   assert.match(planJob, /github\.event_name == 'workflow_dispatch'[\s\S]*github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
   assert.match(planJob, /github\.event_name == 'issues'[\s\S]*startsWith\(github\.event\.issue\.title, '\[업무 요구\]'\)/);
   assert.match(planJob, /ai-plan\/identity.json/);
@@ -140,4 +140,21 @@ test("workflow isolates write permission and uses upload result rather than plan
   assert.match(provenanceJob, /needs: resolve/);
   assert.match(provenanceJob, /issues: write/);
   assert.doesNotMatch(provenanceJob, /checkout@|codex-action|claude-code-action|download-artifact|raw-plan/);
+});
+
+test("PLAN 결과를 받거나 검증하지 못하면 failure notice job만 Issue에 실패를 알린다 (App #289 run 36982979475)", () => {
+  const resolveJob = workflow.split("\n  resolve:\n")[1]?.split("\n  provenance:\n", 1)[0] ?? "";
+  const noticeJob = workflow.split("\n  failure_notice:\n")[1] ?? "";
+  // resolve는 여전히 issues: read이고, 검증 실패 사유의 첫 Error 줄만 output으로 남긴다. 실패 판정은 그대로다.
+  assert.doesNotMatch(resolveJob, /issues: write/);
+  assert.match(resolveJob, /failure_reason: \$\{\{ steps\.validate\.outputs\.failure_reason \}\}/);
+  assert.match(resolveJob, /planner-handler\.ts artifact 2> "\$RUNNER_TEMP\/plan-validate\.err" \|\| status=\$\?/);
+  assert.match(resolveJob, /echo "failure_reason=\$reason" >> "\$GITHUB_OUTPUT"\n\s+exit "\$status"/);
+  // notice job은 plan이 성공하고 request 또는 resolve가 실패했을 때만, 댓글 쓰기 권한 하나로 실행된다.
+  assert.match(noticeJob, /needs: \[plan, request, resolve\]/);
+  assert.match(noticeJob, /always\(\) &&\n\s+needs\.plan\.result == 'success' &&\n\s+\(needs\.request\.result == 'failure' \|\| needs\.resolve\.result == 'failure'\)/);
+  assert.match(noticeJob, /permissions:\n      issues: write\n    steps:/);
+  assert.doesNotMatch(noticeJob, /checkout@|download-artifact|secrets\.|actions: |contents: /);
+  assert.match(noticeJob, /### HumanStatus: PLAN_FAILED/);
+  assert.match(noticeJob, /replace\(\/\[`\\r\\n\]\/g, ' '\)\.trim\(\)\.slice\(0, 300\)/);
 });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { applyImpactedTestCompanions, augmentPlanContextWithBusinessRelations, augmentPlanContextWithDirectTestEvidence, strongestDirectTest } from "../src/self-improvement/plan-business-context.js";
 import { augmentPlanContextWithExplicitPaths } from "../src/self-improvement/plan-explicit-path-context.js";
-import { applyReadOnlyContextMentions, PLAN_CONTEXT_MAX_FILES, PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
+import { applyReadOnlyContextMentions, mergeDuplicateAnalysisEvidence, PLAN_CONTEXT_MAX_FILES, PLAN_IMPLEMENT_MAX_FILES, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
 
 const SHA = "621b8415c52c87facc45b27c7f06a85b7fb3d27b";
 const requirement = [
@@ -374,4 +374,51 @@ test("Context Pack 밖 경로, changeCandidates, ready=false, contextPaths 예�
   const full = readyPlan(context, ["src/classics.js"], { testStrategy: ["test/web.test.js로 확인한다"] });
   const saturated = { ...full, implementationScope: { ...full.implementationScope, contextPaths: Array.from({ length: PLAN_IMPLEMENT_MAX_FILES }, (_, index) => `src/context-${index}.js`) } };
   assert.deepEqual(applyReadOnlyContextMentions(context, saturated), { plan: saturated, added: [] });
+});
+
+test("같은 evidenceId를 여러 번 쓴 analysis는 finding을 합쳐 하나로 만든다 (App #289 run 36982979475)", () => {
+  const { target, context } = appFixture();
+  const [first, second] = context.files;
+  const raw = readyPlan(context, ["src/classics.js"], {
+    analysis: [
+      { evidenceId: first!.evidenceId, finding: "첫 관찰" },
+      { evidenceId: second!.evidenceId, finding: "다른 근거" },
+      { evidenceId: first!.evidenceId, finding: "두 번째 관찰" },
+    ],
+  });
+  assert.throws(() => validatePlan(raw, target, context), /Duplicate PLAN evidence ID/);
+
+  const { plan, merged } = mergeDuplicateAnalysisEvidence(raw);
+  assert.deepEqual(merged, [first!.evidenceId]);
+  const analysis = validatePlan(plan, target, context).analysis as Array<{ evidenceId: string; finding: string }>;
+  assert.deepEqual(analysis.map((entry) => [entry.evidenceId, entry.finding]), [
+    [first!.evidenceId, "첫 관찰 / 두 번째 관찰"],
+    [second!.evidenceId, "다른 근거"],
+  ]);
+  assert.deepEqual(mergeDuplicateAnalysisEvidence(plan), { plan, merged: [] }, "이미 합친 PLAN은 그대로 둔다");
+
+  // 형식이 틀린 항목이 있으면 손대지 않고 validatePlan이 거부한다.
+  for (const analysis of [
+    [{ evidenceId: first!.evidenceId, finding: "a" }, { evidenceId: first!.evidenceId, finding: " " }],
+    [{ evidenceId: first!.evidenceId, finding: "a" }, { evidenceId: first!.evidenceId, finding: "b", path: "src/x.js" }],
+    [{ evidenceId: first!.evidenceId, finding: "a" }, "E1"],
+  ]) {
+    const malformed = { ...raw, analysis };
+    assert.deepEqual(mergeDuplicateAnalysisEvidence(malformed), { plan: malformed, merged: [] });
+    assert.throws(() => validatePlan(malformed, target, context));
+  }
+});
+
+test("changeCandidates가 읽기 전용 contextPaths 파일을 참조로 적어도 거부하지 않는다 (App #289 run 36982979475)", () => {
+  const { target, context } = appFixture();
+  assert.equal(context.files.some((file) => file.path === "test/web.test.js"), true);
+  const reference = readyPlan(context, ["src/classics.js"], {
+    changeCandidates: ["src/classics.js 변경", "test/web.test.js — 참조만 하며 수정하지 않습니다"],
+  });
+  const scope = reference.implementationScope;
+  const withContext = { ...reference, implementationScope: { ...scope, contextPaths: [...scope.contextPaths, "test/web.test.js"] } };
+  const validated = validatePlan(withContext, target, context).implementationScope as { allowedPaths: string[] };
+  assert.deepEqual(validated.allowedPaths, ["src/classics.js"], "쓰기 권한은 늘리지 않는다");
+  // contextPaths에도 없는 경로는 기존대로 거부한다.
+  assert.throws(() => validatePlan(reference, target, context), /change candidate path is outside allowedPaths: test\/web\.test\.js/);
 });
