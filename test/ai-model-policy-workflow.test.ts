@@ -43,11 +43,11 @@ test("LEARN은 subscription executor(sonnet)를 쓰고 provenance도 일치한�
   assert.match(learn, /LEARNER_REASONING_EFFORT: medium\n/);
 });
 
-test("Product Evaluation은 subscription executor(sonnet)를 쓰고 provenance도 일치한다", async () => {
+test("Product Discovery는 subscription executor(opus)를 쓰고 provenance도 일치한다", async () => {
   const product = await readFile(".github/workflows/product-evaluation.yml", "utf8");
   assert.doesNotMatch(product, /uses:\s*openai\/codex-action@|model: gpt-/);
   assert.match(product, /kind: PRODUCT_EVALUATION\n/);
   assert.match(product, /EVALUATOR_PROVIDER: claude-max-subscription\n/);
-  assert.match(product, /EVALUATOR_MODEL: sonnet\n/);
+  assert.match(product, /EVALUATOR_MODEL: opus\n/);
   assert.match(product, /EVALUATOR_REASONING_EFFORT: medium\n/);
 });

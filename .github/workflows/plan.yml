@@ -79,10 +79,11 @@ jobs:
             // Requirement source는 provenance다. 어디서 왔든 이후 lifecycle은 하나이며, 여기서는 기록만 한다.
             // - HUMAN: 사람이 만든 Issue (issues 이벤트는 workflow if의 author association gate를 통과한 뒤에만 도달한다)
             // - PRODUCT_EVALUATION: Trusted Product Evaluation이 남긴 PRODUCT_IMPROVEMENT marker가 있는 Issue
+            //   (Product Discovery marker와, 머지 후 자동 평가 시절의 cycle marker를 모두 읽는다)
             // - OTHER_TRUSTED_SOURCE: 그 외 자동화가 만든 Issue (trusted dispatch로만 PLAN에 도달한다)
             const ingressEvent = process.env.PLAN_INGRESS_EVENT;
             if (ingressEvent !== 'issues' && ingressEvent !== 'workflow_dispatch') throw new Error(`Unsupported PLAN ingress event: ${ingressEvent}`);
-            const marker = /<!-- ai-dev-framework:PRODUCT_IMPROVEMENT cycle-issue=([1-9]\d*) cycle-pr=([1-9]\d*) snapshot=([0-9a-f]{64}) -->/.exec(issue.body);
+            const marker = /<!-- ai-dev-framework:PRODUCT_IMPROVEMENT (?:cycle-issue=([1-9]\d*) cycle-pr=([1-9]\d*)|discovery-issue=([1-9]\d*) discovery-run=([1-9]\d*)) snapshot=([0-9a-f]{64}) -->/.exec(issue.body);
             const author = { login: issue.user?.login ?? null, id: issue.user?.id ?? null, type: issue.user?.type ?? null, association: issue.author_association ?? null };
             const source = {
               kind: marker ? 'PRODUCT_EVALUATION' : author.type === 'User' ? 'HUMAN' : 'OTHER_TRUSTED_SOURCE',
@@ -91,7 +92,11 @@ jobs:
                 ? { level: 'VERIFIED', by: 'issue-author-association', association: author.association }
                 : { level: 'VERIFIED', by: 'workflow-dispatch-authority', dispatchedBy: process.env.PLAN_INGRESS_ACTOR || null },
               author,
-              ...(marker ? { productImprovement: { cycleIssue: Number(marker[1]), cyclePullRequest: Number(marker[2]), snapshotDigest: marker[3] } } : {}),
+              ...(marker ? {
+                productImprovement: marker[1]
+                  ? { cycleIssue: Number(marker[1]), cyclePullRequest: Number(marker[2]), snapshotDigest: marker[5] }
+                  : { discoveryIssue: Number(marker[3]), discoveryRun: Number(marker[4]), snapshotDigest: marker[5] },
+              } : {}),
             };
             const { data: repo } = await github.rest.repos.get(context.repo);
             const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: repo.default_branch });
@@ -559,7 +564,7 @@ jobs:
               `Subscription request: \`${process.env.PLAN_REQUEST_ID}\``,
               `Repository: ${identity.repository}`,
               `Frozen target SHA: \`${identity.targetSha}\``,
-              `Requirement source: ${identity.source.kind} (ingress: ${identity.source.ingress}, trust: ${identity.source.trust.by}${identity.source.kind === 'PRODUCT_EVALUATION' ? `, from cycle #${identity.source.productImprovement.cycleIssue}` : ''}) — 출처는 provenance일 뿐이며 이후 lifecycle은 동일합니다.`,
+              `Requirement source: ${identity.source.kind} (ingress: ${identity.source.ingress}, trust: ${identity.source.trust.by}${identity.source.kind === 'PRODUCT_EVALUATION' ? (identity.source.productImprovement.discoveryRun ? `, from Product Discovery run ${identity.source.productImprovement.discoveryRun}` : `, from cycle #${identity.source.productImprovement.cycleIssue}`) : ''}) — 출처는 provenance일 뿐이며 이후 lifecycle은 동일합니다.`,
               `Requirement title/body SHA-256: \`${identity.requirement.digest}\``,
               `Workflow run: ${identity.workflow.runId} / attempt: ${identity.workflow.runAttempt}`,
               `PLAN artifact ID: ${process.env.PLAN_ARTIFACT_ID}`,

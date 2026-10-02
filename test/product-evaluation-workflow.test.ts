@@ -8,7 +8,9 @@ const ownership = await readFile("policy/framework-distribution-ownership.v1.jso
 const moduleSource = await readFile("src/self-improvement/product-evaluation.ts", "utf8");
 
 test("Product Evaluation은 머지 후 자동으로 시작하지 않고 사람이 workflow_dispatch로만 실행한다", () => {
-  assert.match(workflow, /\non:\n  workflow_dispatch:\n/);
+  assert.match(workflow, /\non:\n  workflow_dispatch:\n\n/);
+  // 실행할 때 고를 입력이 없다. 평가 대상은 실행 시점의 기본 브랜치다.
+  assert.doesNotMatch(workflow, /\n {4}inputs:|human_merge_pr_number/);
   assert.doesNotMatch(workflow, /\n  pull_request:|pull_request_target/);
   assert.doesNotMatch(workflow, /\n  bootstrap:\n/);
   // 자기 자신을 dispatch하던 경로가 없다.
@@ -17,22 +19,49 @@ test("Product Evaluation은 머지 후 자동으로 시작하지 않고 사람�
   assert.doesNotMatch(workflow, /workflow_id: 'learn-source\.yml'|workflow_id: 'learn\.yml'/);
 });
 
-test("수동 실행도 exact MERGE_READY Human Merge PR만 평가 대상이다", () => {
-  assert.match(workflow, /ai-dev-framework:MERGE_READY issue=/);
-  assert.match(workflow, /new RegExp\(`\^ai-publish\/issue-\$\{issueNumber\}\(\?:-cycle-\[0-9a-f\]\{16\}\)\?\$`\)\.test\(pr\.head\.ref\)/);
-  assert.match(workflow, /pr\.head\.sha !== reviewedHeadSha/);
-});
-
-test("평가 대상은 지금 배포된 default branch이고 cycle 포함 여부를 exact하게 확인한다", () => {
+test("평가 대상은 실행 시점의 기본 브랜치 SHA이고 Human Merge PR에 묶이지 않는다", () => {
   assert.match(workflow, /github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
   assert.match(workflow, /Trusted Product Evaluation must execute at the exact current default branch SHA/);
-  assert.match(workflow, /Human Merge commit must be part of the currently deployed default branch/);
-  assert.match(workflow, /comparison\.status !== 'identical' && comparison\.status !== 'ahead'/);
-  assert.match(workflow, /Human Merge PR must be actually merged/);
-  assert.match(workflow, /Human Merge PR exact identity mismatch/);
+  assert.match(workflow, /context\.sha !== currentDefault\.commit\.sha/);
+  assert.match(workflow, /deployedSha: currentDefault\.commit\.sha,/);
+  assert.doesNotMatch(workflow, /MERGE_READY|pulls\.get\(|compareCommits|decideProductEvaluationNeed|\/changed-paths\.json/);
   // snapshot 내용은 배포된 SHA에서 읽는다.
-  assert.match(workflow, /const deployedSha = currentDefault\.commit\.sha;/);
   assert.match(workflow, /path: product-target/);
+  // 요청 식별 정보와 artifact 이름은 이 run과 평가한 SHA로 정한다.
+  assert.match(workflow, /request_artifact_name=product-discovery-request-\$\{GITHUB_SHA\}-\$\{GITHUB_RUN_ID\}-attempt-\$\{GITHUB_RUN_ATTEMPT\}/);
+  assert.match(workflow, /subscription_request_artifact_name=product-discovery-subscription-\$\{GITHUB_SHA\}-\$\{GITHUB_RUN_ID\}-attempt-\$\{GITHUB_RUN_ATTEMPT\}/);
+  assert.match(workflow, /name: product-improvement-decision-\$\{\{ github\.sha \}\}-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(workflow, /group: product-evaluation-\$\{\{ github\.repository \}\}\n/);
+});
+
+test("교환 comment와 결과는 Framework가 만든 Discovery 전용 Issue 하나에 계속 남긴다", () => {
+  const issueJob = workflow.slice(workflow.indexOf("\n  discovery_issue:\n"), workflow.indexOf("\n  prepare:\n"));
+  assert.match(issueJob, /permissions:\n {6}issues: write\n/);
+  assert.match(issueJob, /const title = '\[Product Discovery\] 실행 기록';/);
+  assert.match(issueJob, /const marker = '<!-- ai-dev-framework:PRODUCT_DISCOVERY_LOG v=1 -->';/);
+  // 사람이 같은 제목으로 만든 Issue는 쓰지 않는다. 여러 개면 fail-closed한다.
+  assert.match(issueJob, /issue\.user\?\.login === 'github-actions\[bot\]'/);
+  assert.match(issueJob, /\(issue\.body \|\| ''\)\.startsWith\(marker\)/);
+  assert.match(issueJob, /if \(found\.length > 1\) \{\n\s+throw new Error/);
+  assert.match(issueJob, /github\.rest\.issues\.create\(/);
+  // Discovery Issue 제목은 PLAN ingress나 Improvement Candidate 접두사가 아니다.
+  assert.doesNotMatch(issueJob, /\[업무 요구\]|\[Self-Improvement\]/);
+  assert.match(workflow, /needs: discovery_issue\n/);
+  assert.match(workflow, /DISCOVERY_ISSUE_NUMBER: \$\{\{ needs\.discovery_issue\.outputs\.issue_number \}\}/);
+  assert.match(workflow, /issue_number: \$\{\{ needs\.prepare\.outputs\.issue_number \}\}/);
+});
+
+test("prepare는 최근 이력(완료한 요구, 최근 변경 경로)을 읽기 전용으로 모아 snapshot에 넣는다", () => {
+  const prepare = workflow.slice(workflow.indexOf("\n  prepare:\n"), workflow.indexOf("\n  evaluator:\n"));
+  assert.match(prepare, /issue\.state_reason !== 'completed'/);
+  assert.match(prepare, /issue\.title === '\[Product Discovery\] 실행 기록'/);
+  assert.match(prepare, /\.filter\(\(pull\) => pull\.merged_at\)/);
+  assert.match(prepare, /\.slice\(0, recentPullRequests\)/);
+  assert.match(prepare, /github\.rest\.pulls\.listFiles\(/);
+  for (const name of ["PRODUCT_DISCOVERY_TARGET_JSON", "REJECTED_CANDIDATES_JSON", "COMPLETED_REQUIREMENTS_JSON", "RECENT_CHANGED_PATHS_JSON"]) {
+    assert.match(prepare, new RegExp(`${name}: \\$\\{\\{ runner\\.temp \\}\\}/product-evaluation/`), name);
+  }
+  assert.doesNotMatch(prepare, /issues\.update|issues\.create|issues\.createComment/);
 });
 
 const prepareJob = workflow.slice(workflow.indexOf("\n  prepare:\n"), workflow.indexOf("\n  evaluator:\n"));
@@ -44,8 +73,8 @@ test("Evaluator는 Private subscription executor에 exact snapshot만 담은 요
   assert.match(evaluatorJob, /^ {6}kind: PRODUCT_EVALUATION$/m);
   assert.match(evaluatorJob, /request_artifact_id: \$\{\{ needs\.prepare\.outputs\.subscription_request_artifact_id \}\}/);
   assert.match(evaluatorJob, /request_artifact_digest: \$\{\{ needs\.prepare\.outputs\.subscription_request_artifact_digest \}\}/);
-  // 결과 artifact 이름과 파일은 기존 Evaluator output 그대로라 finalize의 snapshot binding 검증은 바뀌지 않는다.
-  assert.match(evaluatorJob, /result_artifact_name: evaluator-output-issue-\$\{\{ needs\.prepare\.outputs\.issue_number \}\}-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
+  // 결과 artifact 이름은 이 run과 SHA로 정하고 파일은 evaluator.json 하나다.
+  assert.match(evaluatorJob, /result_artifact_name: evaluator-output-\$\{\{ github\.sha \}\}-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
   assert.match(evaluatorJob, /result_file_name: evaluator\.json/);
   assert.deepEqual(workflow.match(/secrets\.[A-Za-z0-9_]+/g), ["secrets.EXECUTOR_DISPATCH_TOKEN"]);
   assert.match(prepareJob, /PRODUCT_EVALUATION_SUBSCRIPTION_DIR: \$\{\{ runner\.temp \}\}\/product-evaluation\/subscription-request/);
@@ -53,17 +82,17 @@ test("Evaluator는 Private subscription executor에 exact snapshot만 담은 요
   assert.match(workflow, /AI Cost Guardrail: 동일 Product Evaluation run의 AI 호출은 최대 1 attempt만 허용합니다\./);
   assert.match(workflow, /if \[ "\$GITHUB_RUN_ATTEMPT" -gt 1 \]; then/);
   assert.ok(prepareJob.indexOf("Product Evaluation AI 비용 상한 확인") < prepareJob.indexOf("PRODUCT_EVALUATION_REQUEST artifact 저장"));
-  for (const step of ["Product Evaluation AI 비용 상한 확인", "PRODUCT_EVALUATION_REQUEST artifact 저장"]) {
-    const block = prepareJob.slice(prepareJob.indexOf(`- name: ${step}`));
-    assert.match(block, /^ {8}if: steps\.prepare\.outputs\.should_evaluate == 'true'$/m, step);
-  }
+  // 사람이 실행한 Discovery는 매번 AI를 1회 부른다. 생략 조건은 없다.
+  assert.doesNotMatch(workflow, /should_evaluate/);
+  assert.match(evaluatorJob, /if: needs\.prepare\.result == 'success'\n/);
   assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
 });
 
-test("Evaluator provenance는 subscription executor와 sonnet을 기록한다", () => {
+test("Evaluator provenance는 subscription executor와 opus를 기록한다", () => {
   assert.match(workflow, /EVALUATOR_PROVIDER: claude-max-subscription\n/);
   assert.match(workflow, /EVALUATOR_ACTION: \$\{\{ vars\.AI_EXECUTOR_REPOSITORY \}\}\/product-evaluation-poller\.yml\n/);
-  assert.match(workflow, /EVALUATOR_MODEL: sonnet\n/);
+  assert.match(workflow, /EVALUATOR_MODEL: opus\n/);
+  assert.match(workflow, /EVALUATOR_REASONING_EFFORT: medium\n/);
 });
 
 test("Framework runtime은 App 배포본과 canonical 양쪽에서 해석된다", () => {
@@ -106,13 +135,19 @@ test("후보 Issue가 생성되면 read-only PLAN을 정확히 한 번 자동 �
   assert.equal(workflow.split("workflow_id: 'plan.yml'").length - 1, 1);
   assert.match(workflow, /if: steps\.decide\.outputs\.action == 'create' && steps\.create\.outputs\.issue_number != ''/);
   assert.match(workflow, /inputs: \{ issue_number: issueNumber \}/);
-  // 승인 댓글이나 IMPLEMENT는 어디에서도 만들지 않는다.
-  assert.doesNotMatch(workflow, /issues\.createComment|body: 'PLAN-승인'/);
+  // 승인 댓글이나 IMPLEMENT는 어디에서도 만들지 않는다. 남기는 댓글은 Discovery Issue의 결과 기록 하나뿐이다.
+  assert.doesNotMatch(workflow, /body: 'PLAN-승인'/);
+  assert.equal(workflow.split("issues.createComment(").length - 1, 1);
+  assert.match(workflow, /await github\.rest\.issues\.createComment\(\{ \.\.\.context\.repo, issue_number: Number\(issueNumber\), body \}\);/);
+  assert.match(workflow, /DISCOVERY_ISSUE_NUMBER: \$\{\{ needs\.prepare\.outputs\.issue_number \}\}\n {10}DISCOVERY_RESULT_COMMENT_MD/);
   assert.match(moduleSource, /PLAN-승인 이후에만 구현이 시작됩니다/);
 });
 
 test("가드레일은 계약 모듈에 구조적으로 박혀 있다", () => {
-  assert.match(moduleSource, /product evaluation allows at most one candidate per cycle/);
+  assert.match(moduleSource, /product discovery allows at most one candidate per run/);
+  assert.match(moduleSource, /product discovery must compare exactly/);
+  assert.match(moduleSource, /compared candidates must come from different areas/);
+  assert.match(moduleSource, /notSelected must give a reason for every candidate that was not selected/);
   assert.match(moduleSource, /must not target Framework-owned paths/);
   assert.match(moduleSource, /references a path outside the product snapshot/);
   assert.match(moduleSource, /이미 열린 Improvement Candidate Issue가 있습니다/);
@@ -135,23 +170,6 @@ test("prepare는 사람이 not_planned로 닫은 후보만 읽어 평가 입력�
   assert.match(workflow, /issue\.title\.startsWith\(prefix\)/);
   assert.match(workflow, /comment\.user\?\.login !== 'github-actions\[bot\]'/);
   assert.match(workflow, /REJECTED_CANDIDATES_JSON: \$\{\{ runner\.temp \}\}\/product-evaluation\/rejected-candidates\.json/);
-  // 기각 후보 수집은 읽기 전용이고 AI 호출을 늘리지 않는다.
-  assert.doesNotMatch(workflow, /issues\.update|issues\.createComment/);
   assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
 });
 
-test("제품 파일을 바꾸지 않은 cycle은 AI Evaluator를 호출하지 않고 사유를 남긴다", () => {
-  const prepare = workflow.slice(workflow.indexOf("\n  prepare:\n"), workflow.indexOf("\n  evaluator:\n"));
-  const evaluator = workflow.slice(workflow.indexOf("\n  evaluator:\n"), workflow.indexOf("\n  finalize:\n"));
-  // 변경 경로는 이 Human Merge PR에서만 읽고, 조회 실패나 상한 도달은 평가 쪽으로 기운다.
-  assert.match(prepare, /github\.paginate\(github\.rest\.pulls\.listFiles, \{\n\s+\.\.\.context\.repo,\n\s+pull_number: prNumber,/);
-  assert.match(prepare, /file\.previous_filename \? \[file\.filename, file\.previous_filename\]/);
-  assert.match(prepare, /complete: files\.length > 0 && files\.length < 3000/);
-  assert.match(prepare, /let changedPaths = \{ complete: false, paths: \[\] \};/);
-  assert.match(prepare, /PRODUCT_CHANGED_PATHS_JSON: \$\{\{ runner\.temp \}\}\/product-evaluation\/changed-paths\.json/);
-  assert.match(prepare, /should_evaluate: \$\{\{ steps\.prepare\.outputs\.should_evaluate \}\}/);
-  assert.match(evaluator, /if: needs\.prepare\.result == 'success' && needs\.prepare\.outputs\.should_evaluate == 'true'/);
-  // finalize는 evaluator 성공에만 묶여 있어 생략 시 Issue 생성이나 자동 PLAN도 일어나지 않는다.
-  assert.match(workflow, /if: needs\.prepare\.result == 'success' && needs\.evaluator\.result == 'success'/);
-  assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
-});

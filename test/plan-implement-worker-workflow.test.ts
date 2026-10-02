@@ -144,7 +144,9 @@ test("subscription exchange는 Private implement-poller 하나만 exact request_
   assert.ok(exchange.includes("REVIEW: { identityKind: 'trusted-review-request', model: 'opus', run: 'rail', poller: 'review-poller.yml' },"));
   assert.ok(exchange.includes("FIX: { identityKind: 'trusted-fix-request', model: 'sonnet', run: 'worker', poller: 'fix-poller.yml' },"));
   assert.ok(exchange.includes("LEARN: { identityKind: 'trusted-learn-request', model: 'sonnet', run: 'worker', poller: 'learn-poller.yml' },"));
-  assert.ok(exchange.includes("PRODUCT_EVALUATION: { identityKind: 'trusted-product-evaluation-request', model: 'sonnet', run: 'worker', poller: 'product-evaluation-poller.yml' },"));
+  // PRODUCT_EVALUATION은 사람이 실행하는 Product Discovery다 (Private product_evaluation_bridge의 discovery 계약).
+  assert.equal(exchange.split("PRODUCT_EVALUATION: { identityKind: 'trusted-product-discovery-request', model: 'opus', run: 'worker', poller: 'product-evaluation-poller.yml' },").length - 1, 2);
+  assert.doesNotMatch(exchange, /trusted-product-evaluation-request/);
   // Private poller는 이 repository에서만 request를 찾는다. 값은 Actions가 정한 github.repository다.
   assert.match(exchange, /-d "\{\\"ref\\":\\"main\\",\\"inputs\\":\{\\"request_id\\":\\"\$SUBSCRIPTION_REQUEST_ID\\",\\"repository\\":\\"\$SUBSCRIPTION_REPOSITORY\\"\}\}"/);
   assert.match(exchange, /SUBSCRIPTION_REPOSITORY: \$\{\{ github\.repository \}\}/);
