@@ -1,7 +1,8 @@
 name: Trusted Product Evaluation
 
-# Human Merge로 배포된 App을 제품 관점에서 한 번 평가하고, 명백한 개선이 있을 때만
+# 배포된 App을 제품 관점에서 한 번 평가하고, 명백한 개선이 있을 때만
 # App repository에 Improvement Candidate Issue를 만든다.
+# 머지 후 자동 실행은 하지 않는다. 사람이 workflow_dispatch로 실행할 때만 돈다.
 #
 # 경계:
 # - 한 cycle당 Improvement Candidate 최대 1개
@@ -11,8 +12,6 @@ name: Trusted Product Evaluation
 # - 생성한 Issue는 proposal이다. read-only AI PLAN은 자동으로 한 번 시작되지만 구현은 사람의 PLAN-승인 이후에만 진행된다
 # - Auto Merge를 사용하지 않고 최종 Merge는 Human-only다
 on:
-  pull_request:
-    types: [closed]
   workflow_dispatch:
     inputs:
       human_merge_pr_number:
@@ -23,75 +22,10 @@ on:
 permissions: {}
 
 concurrency:
-  group: product-evaluation-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.human_merge_pr_number }}
+  group: product-evaluation-${{ github.repository }}-${{ inputs.human_merge_pr_number }}
   cancel-in-progress: false
 
 jobs:
-  bootstrap:
-    name: Human Merge → Trusted Product Evaluation
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == github.event.repository.default_branch
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-      actions: write
-
-    steps:
-      - name: exact MERGE_READY 경계 확인
-        id: source
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = context.payload.pull_request;
-            const repository = context.payload.repository;
-            const body = pr.body || '';
-            const mergeReady = body.match(
-              /<!-- ai-dev-framework:MERGE_READY issue=([1-9]\d*) reviewed-sha=([0-9a-f]{40}) -->/,
-            );
-
-            if (!mergeReady) {
-              core.info('Framework MERGE_READY PR이 아니므로 Product Evaluation을 시작하지 않습니다');
-              core.setOutput('should_run', 'false');
-              return;
-            }
-
-            const issueNumber = Number(mergeReady[1]);
-            const reviewedSha = mergeReady[2];
-            if (
-              pr.base.ref !== repository.default_branch ||
-              pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-              // 이미 merge된 historical PR이다. 같은 Issue의 cycle 또는 legacy PUBLISH branch만 허용한다.
-              !new RegExp(`^ai-publish/issue-${issueNumber}(?:-cycle-[0-9a-f]{16})?$`).test(pr.head.ref) ||
-              pr.head.sha !== reviewedSha
-            ) {
-              core.setFailed('merged Human Merge PR exact identity mismatch');
-              return;
-            }
-
-            core.setOutput('should_run', 'true');
-            core.setOutput('human_merge_pr_number', String(pr.number));
-
-      - name: Trusted Product Evaluation 자동 시작
-        if: steps.source.outputs.should_run == 'true'
-        uses: actions/github-script@v7
-        env:
-          HUMAN_MERGE_PR_NUMBER: ${{ steps.source.outputs.human_merge_pr_number }}
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              ...context.repo,
-              workflow_id: 'product-evaluation.yml',
-              ref: context.payload.repository.default_branch,
-              inputs: {
-                human_merge_pr_number: process.env.HUMAN_MERGE_PR_NUMBER,
-              },
-            });
-            core.info('Trusted Product Evaluation을 자동 dispatch했습니다');
-
   prepare:
     name: trusted 제품 snapshot 생성
     if: >-

@@ -7,23 +7,20 @@ const plan = await readFile(".github/workflows/plan.yml", "utf8");
 const ownership = await readFile("policy/framework-distribution-ownership.v1.json", "utf8");
 const moduleSource = await readFile("src/self-improvement/product-evaluation.ts", "utf8");
 
-test("Human Merge된 default branch PR만 Product Evaluation bootstrap 대상이다", () => {
-  assert.match(workflow, /pull_request:\n {4}types: \[closed\]/);
-  assert.match(workflow, /github\.event\.pull_request\.merged == true/);
-  assert.match(workflow, /github\.event\.pull_request\.base\.ref == github\.event\.repository\.default_branch/);
-  assert.match(workflow, /ai-dev-framework:MERGE_READY issue=/);
-  assert.match(workflow, /new RegExp\(`\^ai-publish\/issue-\$\{issueNumber\}\(\?:-cycle-\[0-9a-f\]\{16\}\)\?\$`\)\.test\(pr\.head\.ref\)/);
-  assert.doesNotMatch(workflow, /pr\.head\.ref !== `ai-publish\/issue-\$\{issueNumber\}`/);
-  assert.match(workflow, /pr\.head\.sha !== reviewedSha/);
-});
-
-test("bootstrap은 자기 자신만 dispatch하고 IMPLEMENT나 LEARN을 시작하지 않는다", () => {
-  const bootstrap = workflow.slice(workflow.indexOf("\n  bootstrap:\n"), workflow.indexOf("\n  prepare:\n"));
-  assert.match(bootstrap, /workflow_id: 'product-evaluation\.yml'/);
-  assert.match(bootstrap, /human_merge_pr_number: process\.env\.HUMAN_MERGE_PR_NUMBER/);
-  assert.doesNotMatch(bootstrap, /workflow_id: 'plan\.yml'/);
+test("Product Evaluation은 머지 후 자동으로 시작하지 않고 사람이 workflow_dispatch로만 실행한다", () => {
+  assert.match(workflow, /\non:\n  workflow_dispatch:\n/);
+  assert.doesNotMatch(workflow, /\n  pull_request:|pull_request_target/);
+  assert.doesNotMatch(workflow, /\n  bootstrap:\n/);
+  // 자기 자신을 dispatch하던 경로가 없다.
+  assert.doesNotMatch(workflow, /workflow_id: 'product-evaluation\.yml'/);
   assert.doesNotMatch(workflow, /workflow_id: 'implement\.yml'|workflow_id: 'plan-implement-handoff\.yml'|workflow_id: 'trusted-rail\.yml'/);
   assert.doesNotMatch(workflow, /workflow_id: 'learn-source\.yml'|workflow_id: 'learn\.yml'/);
+});
+
+test("수동 실행도 exact MERGE_READY Human Merge PR만 평가 대상이다", () => {
+  assert.match(workflow, /ai-dev-framework:MERGE_READY issue=/);
+  assert.match(workflow, /new RegExp\(`\^ai-publish\/issue-\$\{issueNumber\}\(\?:-cycle-\[0-9a-f\]\{16\}\)\?\$`\)\.test\(pr\.head\.ref\)/);
+  assert.match(workflow, /pr\.head\.sha !== reviewedHeadSha/);
 });
 
 test("평가 대상은 지금 배포된 default branch이고 cycle 포함 여부를 exact하게 확인한다", () => {

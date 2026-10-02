@@ -289,7 +289,7 @@ LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candi
 
 LEARN은 "개발 cycle이 어떻게 흘렀는가"를 봅니다. Product Evaluation은 "배포된 App이 사용자에게 충분한가"를 봅니다.
 
-Human Merge PR이 닫히면 `Trusted Product Evaluation`이 자동으로 시작합니다. MERGE_READY marker가 없는 PR은 조용히 건너뜁니다.
+`Trusted Product Evaluation`은 머지 후 자동으로 시작하지 않습니다. 사람이 Actions에서 workflow_dispatch로 실행할 때만 돌며, 평가할 Human Merge PR(MERGE_READY marker 필수) 번호를 입력합니다.
 
 Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, sonnet)가 실행합니다. 요청·결과 댓글은 닫힌 요구사항 Issue에 남고, App repository는 자기 executor의 `EXECUTOR_ALLOWED_REPOSITORIES`에 있어야 합니다.
 

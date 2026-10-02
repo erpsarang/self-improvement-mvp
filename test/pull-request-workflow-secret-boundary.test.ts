@@ -34,7 +34,7 @@ test("PR이 열릴 때 실행되는 workflow는 secret을 참조하지 않는다
 });
 
 test("merge 시점 workflow는 closed 이벤트에서만 동작한다", () => {
-  for (const name of ["post-merge-learn.yml", "product-evaluation.yml"]) {
+  for (const name of ["post-merge-learn.yml"]) {
     const source = readFileSync(join(WORKFLOWS, name), "utf8");
     assert.match(source, /\n  pull_request:\n    types: \[closed\]/, name);
     assert.equal(pullRequestOpenTriggered(source), false, name);
