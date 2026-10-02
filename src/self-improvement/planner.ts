@@ -627,12 +627,47 @@ function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: 
     ...scope.requiredChanges,
   ];
 
+  // changeCandidates가 "참조만 한다"며 contextPaths의 읽기 전용 파일을 적는 것은 허용한다. 쓰기는 여전히 allowedPaths로만 제한된다
+  // (App #289 PLAN run 36982979475: "src/web-main.ts — 참조만 하며 수정하지 않습니다"로 PLAN 전체가 거부됨).
   for (const path of explicitPlanPaths(changeCandidates)) {
-    if (!allowed.has(path)) throw new Error(`PLAN change candidate path is outside allowedPaths: ${path}`);
+    if (!readable.has(path)) throw new Error(`PLAN change candidate path is outside allowedPaths: ${path}`);
   }
   for (const path of explicitPlanPaths(descriptiveSections)) {
     if (!readable.has(path)) throw new Error(`PLAN references exact path outside bounded implementation scope: ${path}`);
   }
+}
+
+/**
+ * analysis에 같은 evidenceId가 여러 번 나오면 finding을 나온 순서대로 합쳐 하나로 만든다. 근거 범위는 바뀌지 않는다.
+ * 형식이 틀린 항목이 하나라도 있으면 손대지 않아 validatePlan이 fail-closed 한다
+ * (App #289 PLAN run 36982979475: 같은 evidenceId 두 번으로 PLAN 전체가 거부됨).
+ */
+export function mergeDuplicateAnalysisEvidence(rawPlan: unknown): { readonly plan: unknown; readonly merged: readonly string[] } {
+  const untouched = { plan: rawPlan, merged: [] as string[] };
+  if (!rawPlan || typeof rawPlan !== "object" || Array.isArray(rawPlan)) return untouched;
+  const plan = rawPlan as Record<string, unknown>;
+  if (!Array.isArray(plan.analysis)) return untouched;
+  const order: string[] = [];
+  const findings = new Map<string, string[]>();
+  for (const item of plan.analysis) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return untouched;
+    const entry = item as Record<string, unknown>;
+    const keys = Object.keys(entry).sort();
+    if (keys.length !== 2 || keys[0] !== "evidenceId" || keys[1] !== "finding") return untouched;
+    const { evidenceId, finding } = entry;
+    if (typeof evidenceId !== "string" || typeof finding !== "string" || !evidenceId.trim() || !finding.trim()) return untouched;
+    if (!findings.has(evidenceId)) {
+      order.push(evidenceId);
+      findings.set(evidenceId, []);
+    }
+    findings.get(evidenceId)!.push(finding);
+  }
+  const merged = order.filter((evidenceId) => findings.get(evidenceId)!.length > 1);
+  if (merged.length === 0) return untouched;
+  return {
+    plan: { ...plan, analysis: order.map((evidenceId) => ({ evidenceId, finding: findings.get(evidenceId)!.join(" / ") })) },
+    merged,
+  };
 }
 
 /**

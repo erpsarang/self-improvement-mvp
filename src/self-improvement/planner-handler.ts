@@ -4,6 +4,7 @@ import {
   applyReadOnlyContextMentions,
   assertOutsideTarget,
   createPlanPrompt,
+  mergeDuplicateAnalysisEvidence,
   PLAN_SCHEMA,
   selectPlanContext,
   snapshot,
@@ -80,7 +81,9 @@ if (command === "prepare") {
   if (JSON.stringify(snapshot(target)) !== JSON.stringify(input.files)) throw new Error("Target repository changed during planning");
 
   // 변경 대상 소스를 import하는 기존 테스트는 trusted 단계가 scope에 결정적으로 추가한 뒤 검증한다.
-  const companionResult = applyImpactedTestCompanions(target, context, JSON.parse(readFileSync(file("raw-plan.json"), "utf8")));
+  // 같은 evidenceId를 여러 번 쓴 analysis는 finding을 합쳐 하나로 만든다(근거 범위는 그대로).
+  const evidenceResult = mergeDuplicateAnalysisEvidence(JSON.parse(readFileSync(file("raw-plan.json"), "utf8")));
+  const companionResult = applyImpactedTestCompanions(target, context, evidenceResult.plan);
   // ready PLAN이 Context Pack 안의 읽기 전용 파일을 언급만 하고 contextPaths에 빠뜨린 경우도 결정적으로 보강한다.
   const mentionResult = applyReadOnlyContextMentions(context, companionResult.plan);
   const plan = validatePlan(mentionResult.plan, target, context);
