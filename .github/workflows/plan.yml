@@ -265,11 +265,17 @@ jobs:
           EXECUTOR_DISPATCH_TOKEN: ${{ secrets.EXECUTOR_DISPATCH_TOKEN }}
           PLAN_REQUEST_ID: ${{ steps.request.outputs.request_id }}
           PLAN_REPOSITORY: ${{ github.repository }}
+          # 이 repository의 AI 호출을 처리할 executor. 팀마다 자기 구독 runner로 도는 executor repo를 변수로 정한다.
+          AI_EXECUTOR_REPOSITORY: ${{ vars.AI_EXECUTOR_REPOSITORY }}
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${EXECUTOR_DISPATCH_TOKEN:-}" ]; then
-            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: subscription-ai-executor / Actions: write)." >&2
+            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: AI_EXECUTOR_REPOSITORY / Actions: write)." >&2
+            exit 1
+          fi
+          if [[ ! "${AI_EXECUTOR_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Missing or invalid AI_EXECUTOR_REPOSITORY variable (owner/repo of this repository's subscription executor)." >&2
             exit 1
           fi
           if [[ ! "$PLAN_REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]; then
@@ -284,7 +290,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/plan-poller.yml/dispatches \
+            "https://api.github.com/repos/${AI_EXECUTOR_REPOSITORY}/actions/workflows/plan-poller.yml/dispatches" \
             -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$PLAN_REQUEST_ID\",\"repository\":\"$PLAN_REPOSITORY\"}}"
 
   resolve:

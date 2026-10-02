@@ -331,7 +331,7 @@ jobs:
           LEARN_INPUT_ARTIFACT_ID: ${{ steps.source.outputs.input_artifact_id }}
           LEARN_INPUT_ARTIFACT_DIGEST: ${{ steps.source.outputs.input_artifact_digest }}
           LEARNER_PROVIDER: claude-max-subscription
-          LEARNER_ACTION: erpsarang/subscription-ai-executor/learn-poller.yml
+          LEARNER_ACTION: ${{ vars.AI_EXECUTOR_REPOSITORY }}/learn-poller.yml
           LEARNER_MODEL: sonnet
           # Private executor poller가 claude -p --effort medium으로 호출한다.
           LEARNER_REASONING_EFFORT: medium

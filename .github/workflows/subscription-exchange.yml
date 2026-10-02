@@ -195,12 +195,6 @@ jobs:
               return identity;
             }
             // END subscription-exchange
-            // Private Executor의 repository allowlist(plan_bridge.ALLOWED_REPOSITORIES)와 같다. 밖이면 요청을 남기기 전에 멈춘다.
-            const SUBSCRIPTION_REPOSITORIES = ['erpsarang/self-improvement-mvp', 'erpsarang/sales-order-exception-analyzer'];
-            if (!SUBSCRIPTION_REPOSITORIES.includes(`${context.repo.owner}/${context.repo.repo}`)) {
-              core.setFailed('subscription executor does not accept this repository');
-              return;
-            }
             const kind = process.env.SUBSCRIPTION_KIND;
             const spec = subscriptionKind(kind);
             const issueNumber = Number(process.env.SUBSCRIPTION_ISSUE_NUMBER);
@@ -247,11 +241,17 @@ jobs:
           SUBSCRIPTION_REQUEST_ID: ${{ steps.marker.outputs.request_id }}
           SUBSCRIPTION_POLLER: ${{ steps.marker.outputs.poller }}
           SUBSCRIPTION_REPOSITORY: ${{ github.repository }}
+          # 이 repository의 AI 호출을 처리할 executor. 팀마다 자기 구독 runner로 도는 executor repo를 변수로 정한다.
+          AI_EXECUTOR_REPOSITORY: ${{ vars.AI_EXECUTOR_REPOSITORY }}
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${EXECUTOR_DISPATCH_TOKEN:-}" ]; then
-            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: subscription-ai-executor / Actions: write)." >&2
+            echo "Missing EXECUTOR_DISPATCH_TOKEN (fine-grained token: AI_EXECUTOR_REPOSITORY / Actions: write)." >&2
+            exit 1
+          fi
+          if [[ ! "${AI_EXECUTOR_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Missing or invalid AI_EXECUTOR_REPOSITORY variable (owner/repo of this repository's subscription executor)." >&2
             exit 1
           fi
           if [[ ! "$SUBSCRIPTION_REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]; then
@@ -270,7 +270,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $EXECUTOR_DISPATCH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches" \
+            "https://api.github.com/repos/${AI_EXECUTOR_REPOSITORY}/actions/workflows/${SUBSCRIPTION_POLLER}/dispatches" \
             -d "{\"ref\":\"main\",\"inputs\":{\"request_id\":\"$SUBSCRIPTION_REQUEST_ID\",\"repository\":\"$SUBSCRIPTION_REPOSITORY\"}}"
 
   wait:

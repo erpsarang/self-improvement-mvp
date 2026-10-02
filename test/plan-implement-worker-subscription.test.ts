@@ -126,12 +126,12 @@ test("request_id는 Private canonical_request_id test vector와 같다 (#346)", 
   assert.equal(api.canonicalJson({ b: 1, a: [{ d: 2, c: 3 }] }), '{"a":[{"c":3,"d":2}],"b":1}');
 });
 
-test("identity는 Private allowlist repository와 sha256 Handoff digest, 일치하는 Handoff manifest에서만 만든다", () => {
+test("identity는 sha256 Handoff digest와 일치하는 Handoff manifest에서만 만든다", () => {
   const otherRepository = (repository: string) => () =>
     api.buildImplementIdentity({ handoff: handoff({ repository }), repository, baseSha: BASE_SHA, source: { runId: 1, runAttempt: 1, name: "h", id: 1, digest: `sha256:${"b".repeat(64)}` }, worker: { runId: 1, runAttempt: 1 } });
-  assert.throws(otherRepository("erpsarang/app"), /does not accept this repository/);
-  // Private allowlist의 App은 같은 identity 규칙으로 만든다.
-  assert.equal(otherRepository("erpsarang/sales-order-exception-analyzer")().repository, "erpsarang/sales-order-exception-analyzer");
+  // 어느 repository를 받을지는 그 repository의 executor allowlist(EXECUTOR_ALLOWED_REPOSITORIES)가 정한다. Public에는 목록이 없다.
+  assert.equal(otherRepository("blueward/other-team-app")().repository, "blueward/other-team-app");
+  assert.doesNotMatch(workflow, /erpsarang\//);
   assert.throws(() => identity({}, { digest: "b".repeat(64) }), /sha256:<64hex>/);
   assert.throws(() => identity({}, { digest: "" }), /sha256:<64hex>/);
   assert.throws(() => identity({ baseSha: "0".repeat(40) }), /Handoff manifest identity mismatch/);

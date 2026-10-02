@@ -226,7 +226,7 @@ test("aiCallStepWindow는 subscription exchange job과 Private poller dispatch s
     "      - name: Wake private subscription executor",
     "        run: |",
     "          curl -fsS -X POST \\",
-    "            https://api.github.com/repos/erpsarang/subscription-ai-executor/actions/workflows/plan-poller.yml/dispatches \\",
+    "            \"https://api.github.com/repos/${AI_EXECUTOR_REPOSITORY}/actions/workflows/plan-poller.yml/dispatches\" \\",
     "            -d '{}'",
   ]);
   const step = aiCallStepWindow(dispatch, AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES);
@@ -451,7 +451,7 @@ test("실제 canonical repo에서 #244 요구는 subscription executor AI 호출
   for (const file of candidates) {
     assert.match(
       file.content,
-      /uses: \.\/\.github\/workflows\/subscription-exchange\.yml|const SUBSCRIPTION_KINDS = \{|subscription-ai-executor\/actions\/workflows\//,
+      /uses: \.\/\.github\/workflows\/subscription-exchange\.yml|const SUBSCRIPTION_KINDS = \{|repos\/\$\{AI_EXECUTOR_REPOSITORY\}\/actions\/workflows\//,
       file.path,
     );
     assert.ok(file.byteLength <= AI_CALL_SITE_CONTEXT_MAX_FILE_BYTES, file.path);

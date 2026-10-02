@@ -425,7 +425,7 @@ jobs:
           SNAPSHOT_ARTIFACT_ID: ${{ needs.prepare.outputs.request_artifact_id }}
           SNAPSHOT_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.request_artifact_digest }}
           EVALUATOR_PROVIDER: claude-max-subscription
-          EVALUATOR_ACTION: erpsarang/subscription-ai-executor/product-evaluation-poller.yml
+          EVALUATOR_ACTION: ${{ vars.AI_EXECUTOR_REPOSITORY }}/product-evaluation-poller.yml
           EVALUATOR_MODEL: sonnet
           # Private executor poller가 claude -p --effort medium으로 호출한다.
           EVALUATOR_REASONING_EFFORT: medium
