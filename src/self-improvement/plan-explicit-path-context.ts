@@ -147,7 +147,8 @@ function requirementPathAnchors(requirement: string): string[] {
   return anchors;
 }
 
-function prioritizedRequirementPaths(requirement: string): string[] {
+/** 요구에 exact path로 적힌 파일. 과거 참고/범위 밖으로 표시된 경로는 제외한다. */
+export function prioritizedRequirementPaths(requirement: string): string[] {
   const hints = structuredPlanContextHints(requirement);
   const priority = [
     ...hints.changeTargets,

@@ -533,12 +533,16 @@ export function augmentPlanContextWithBusinessRelations(
 export function augmentPlanContextWithDirectTestEvidence(
   target: string,
   context: PlanContextPack,
+  requirementPaths: readonly string[] = [],
 ): PlanContextPack {
   verifyPlanContextPack(context);
+  // 요구에 exact path로 적힌 문서/설정 파일(README.md 등)은 직접 테스트 보강이 예산을 위해 밀어내지 않는다.
+  // source/test는 기존 관계 보호와 source 탈락 규칙을 그대로 따른다 (App #284 PLAN run 36961359658: README.md 탈락).
+  const pinned = new Set(requirementPaths.filter((path) => !isTestLike(path) && !isRuntimeSource(path)));
   let current = context;
   for (;;) {
-    const fitted = fitDirectTestEvidence(target, current);
-    if (fitted.pack) return withSourceHarnessTests(target, fitted.pack);
+    const fitted = fitDirectTestEvidence(target, current, pinned);
+    if (fitted.pack) return withSourceHarnessTests(target, fitted.pack, pinned);
     // 보호 evidence가 예산을 넘으면 PLAN 전체를 멈추지 않고, 직접 테스트가 Context에 없는 App source를
     // 뒤(낮은 우선순위)부터 뺀다. source가 빠지면 그 테스트도 필요 없으므로 "Context의 App source에는
     // 직접 테스트가 함께 있다"는 경계는 유지된다 (App #266 PLAN run 36448765210: 요구와 무관한
@@ -565,7 +569,7 @@ export function augmentPlanContextWithDirectTestEvidence(
  * (App #266 FIX run 36452224539: allowedPaths 밖 test/exception-stock-display.test.ts 16건 실패).
  * best-effort다. 보호되지 않은 뒤쪽 파일만 밀어내며, 들어가지 않으면 그 harness를 생략한다.
  */
-function withSourceHarnessTests(target: string, context: PlanContextPack): PlanContextPack {
+function withSourceHarnessTests(target: string, context: PlanContextPack, pinned: ReadonlySet<string>): PlanContextPack {
   const sourcePaths = walkFiles(target, "src").filter(isRuntimeSource);
   const contextPaths = new Set(context.files.map((file) => file.path));
   const appSources = new Set(
@@ -584,7 +588,7 @@ function withSourceHarnessTests(target: string, context: PlanContextPack): PlanC
     .sort((a, b) => a.localeCompare(b));
   if (harnesses.length === 0) return context;
 
-  const protectedPaths = selectedRelationProtection(target, context);
+  const protectedPaths = new Set([...selectedRelationProtection(target, context), ...pinned]);
   let files = [...context.files];
   const added = new Set<string>();
   for (const path of harnesses) {
@@ -615,9 +619,13 @@ function withSourceHarnessTests(target: string, context: PlanContextPack): PlanC
 function fitDirectTestEvidence(
   target: string,
   context: PlanContextPack,
+  pinned: ReadonlySet<string>,
 ): { readonly pack: PlanContextPack | null; readonly missingDirectTests: readonly string[] } {
-  const protectedPaths = selectedRelationProtection(target, context);
   const existingPaths = new Set(context.files.map((file) => file.path));
+  const protectedPaths = new Set([
+    ...selectedRelationProtection(target, context),
+    ...[...pinned].filter((path) => existingPaths.has(path)),
+  ]);
   const missingDirectTests = [...protectedPaths]
     .filter((path) => isTestLike(path) && !isFrameworkTest(path) && !existingPaths.has(path))
     .sort((a, b) => a.localeCompare(b));

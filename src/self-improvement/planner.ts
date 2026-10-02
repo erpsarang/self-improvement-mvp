@@ -635,6 +635,46 @@ function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: 
   }
 }
 
+/**
+ * ready PLAN이 approach/testStrategy/requiredChanges에서 읽기만 할 기존 파일을 언급하고 contextPaths에 빠뜨리면,
+ * Planner가 실제로 본 PLAN Context Pack 안의 파일만 trusted 단계가 contextPaths에 결정적으로 더한다.
+ * Context Pack 밖 경로, changeCandidates 경로, 예산 초과는 그대로 두어 validatePlan이 fail-closed 한다
+ * (App #284 PLAN run 36964414949: testStrategy의 기존 테스트 언급 한 줄로 ready PLAN 전체가 거부됨).
+ */
+export function applyReadOnlyContextMentions(
+  context: PlanContextPack,
+  rawPlan: unknown,
+): { readonly plan: unknown; readonly added: readonly string[] } {
+  const untouched = { plan: rawPlan, added: [] as string[] };
+  if (!rawPlan || typeof rawPlan !== "object" || Array.isArray(rawPlan)) return untouched;
+  const plan = rawPlan as Record<string, unknown>;
+  const scope = plan.implementationScope;
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return untouched;
+  const scopeRecord = scope as Record<string, unknown>;
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (
+    scopeRecord.ready !== true ||
+    !isStringArray(scopeRecord.allowedPaths) ||
+    !isStringArray(scopeRecord.contextPaths) ||
+    !isStringArray(scopeRecord.requiredChanges) ||
+    !isStringArray(plan.approach) ||
+    !isStringArray(plan.testStrategy)
+  ) {
+    return untouched;
+  }
+  const allowedPaths = scopeRecord.allowedPaths;
+  const contextPaths = scopeRecord.contextPaths;
+  const packPaths = new Set(context.files.map((file) => file.path));
+  const added = explicitPlanPaths([...plan.approach, ...plan.testStrategy, ...scopeRecord.requiredChanges])
+    .filter((path) => packPaths.has(path) && !allowedPaths.includes(path) && !contextPaths.includes(path));
+  if (added.length === 0 || contextPaths.length + added.length > PLAN_IMPLEMENT_MAX_FILES) return untouched;
+  return {
+    plan: { ...plan, implementationScope: { ...scopeRecord, contextPaths: [...contextPaths, ...added] } },
+    added,
+  };
+}
+
 function estimatedImplementContextBytes(
   allowedPaths: readonly string[],
   contextPaths: readonly string[],
