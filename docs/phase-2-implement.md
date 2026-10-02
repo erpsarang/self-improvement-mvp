@@ -1,5 +1,7 @@
 # Phase 2 — Untrusted IMPLEMENT
 
+> **역사 기록.** 이 문서는 v0.1의 `SI-승인 → AUTHORIZE → IMPLEMENT` slice를 설명한다. 그 입구는 PR #355에서 삭제됐고, 현재 IMPLEMENT는 `PLAN-승인` 이후 `plan-implement-worker.yml`이 팀 소유 Private subscription executor(Claude Max, sonnet)에 1회 요청해 edit JSON을 받는 구조다(`docs/usage.md` 6절). 아래의 Codex 서술은 당시 adapter이며 현재 코드에 없다. Trust Boundary의 원칙(Worker에 write credential 없음, candidate만 생성)은 그대로다.
+
 Phase 2의 첫 vertical slice는 Trusted `AUTHORIZE` 성공 이후 AI Implementer가 candidate 변경을 만들되 repository 공개 권한과 분리되는 것을 증명한다.
 
 ```text

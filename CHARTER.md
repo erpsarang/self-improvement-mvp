@@ -211,8 +211,8 @@ effort     medium, 호출당 max-turns 1, 도구 전부 차단
 | IMPLEMENT Context byte budget(96KB) 초과 시 참고 파일만 줄이는 임시 조치 | 제5장 1항 "관측된 실패"에 대한 최소 수정. 근본 해법은 제5장 7항 | Framework PR #363, App #289에서 106,198B > 96,000B 관측 |
 | Framework 자체 Product Discovery 1회 timeout | 제5장 "관측된 실패" 1건. 구조 변경 전에 원인 확인 | Framework #362 run 37011992131. executor의 REVIEW·FIX·LEARN·PRODUCT_EVALUATION poller는 PLAN·IMPLEMENT와 달리 cron 백업이 없어 dispatch 1회 유실이 곧 timeout이 된다 |
 | 프레임워크 소유 경로 정의가 두 곳 | 제6장 2항 위반 | `policy/framework-distribution-ownership.v1.json`(78 entry)과 `product-evaluation.ts`의 `FRAMEWORK_OWNED_PREFIXES`가 서로 다른 범위를 가리킨다 |
-| 문서가 코드보다 늦음 | 제8장 8항 | `docs/architecture.md` 원칙 10(OpenAI key 분리), `docs/trust-model.md`와 `docs/phase-5-review.md`의 Codex 서술, `docs/ai-cost-policy.md` baseline, `docs/roadmap.md` Phase 3-E의 "Human Merge →" trigger, App `docs/phase-1-plan.md`의 `CODEX_API_KEY` |
-| 오래 열린 Issue의 bookkeeping | 제5장 매몰 신호 점검 대상 | 이미 달성: #337(PR #340 계열), #332(PR #333), #313(PR #315), #343. legacy: #9, #19, #22, #116, #117. 전제 소멸: #201. 큰 설계 제안으로 남음: #311, #180, #191, #192 |
+| 문서가 코드보다 늦었음 (채택일에 현행화) | 제8장 8항 | `docs/architecture.md` 원칙 10과 4장(OpenAI key → 팀별 executor), `docs/trust-model.md`·`docs/phase-5-review.md`·`docs/phase-1-plan.md`·`docs/phase-2-implement.md`·`docs/usage.md`의 Codex 서술, `docs/ai-cost-policy.md`·`docs/ai-usage-record.md`의 Codex 시대 표식, `docs/roadmap.md` Phase 3-E의 "Human Merge →" trigger, App `docs/phase-1-plan.md`·`docs/framework-v0.1-usage.md`. `trusted-rail.yml`의 `workflow_run: "Untrusted IMPLEMENT"` 트리거는 존재하지 않는 workflow를 가리키는 legacy로 남아 있다 |
+| 오래 열린 Issue의 bookkeeping (채택일에 정리) | 제5장 매몰 신호 점검 대상 | 달성으로 닫음: #337, #332, #313, #343, #303, #299, #286, #281, #237, #236, #204~#207, 그리고 v0.1 smoke #9, #19, #22. not_planned: #201(전제 소멸), #116, #117. 열어 둠: #344, #311, #239(STOPPED 댓글은 됐고 stale SHA 자동 재PLAN은 미완), #223(신규 App bootstrap 증명 미완), #180, #191, #192(v0.3 설계), #362(Discovery 기록) |
 | executor 저장소에 README가 없음 | 제6장 6항 (가져다 쓰는 사람의 식별 가능성) | `subscription-ai-executor`는 workflow·scripts만 있고 문서가 없다 |
 
 ## 부록 B. 관련 문서 지도

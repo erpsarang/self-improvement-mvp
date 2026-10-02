@@ -74,7 +74,7 @@ PLAN
 - approved scope → ImplementContract deterministic handoff
 - exact-SHA Context Pack
 - bounded single-pass Worker
-- known-good exact Codex Action pin과 timeout budget
+- known-good exact AI adapter pin(당시 Codex Action, 현재 subscription executor)과 timeout budget
 - candidate trusted validation
 - deterministic CI
 - canonical PLAN Bridge
@@ -123,12 +123,14 @@ AI output은 evidence ID에 grounding되어야 하며 trusted finalize를 통과
 
 여기까지는 개선 후보를 사람이 직접 발견해 Issue로 옮겨야 했습니다. Phase 3-E는 그 한 칸만 자동화합니다.
 
+처음에는 Human Merge마다 자동으로 평가했지만, 비용과 폭주 방지를 위해 2026-10-02(PR #360, #361)부터 사람이 Actions에서 실행할 때만 돌고, 후보 3개를 비교해 1위만 제안하는 Product Discovery로 바꿨습니다.
+
 ```text
-Human Merge
-→ bounded Product Snapshot (배포된 merge commit의 제품 파일만)
-→ read-only AI Product Evaluation
+사람이 Trusted Product Evaluation 실행
+→ bounded Product Snapshot (실행 시점 기본 브랜치의 제품 source 전체 + 최근 이력)
+→ read-only AI Product Discovery (서로 다른 영역의 후보 3개 비교, 1위 또는 NONE)
 → trusted 결정적 중복 판단
-→ 사이클당 최대 1개의 [Self-Improvement] Issue
+→ 실행당 최대 1개의 [Self-Improvement] Issue
 → Human 판단
 ```
 
@@ -138,8 +140,9 @@ Phase 3-C가 "Issue 생성을 하지 않는다"고 고정한 것은 LEARN hypoth
 - read-only PLAN은 후보 1개당 정확히 한 번 자동 제안되지만, IMPLEMENT는 사람의 `PLAN-승인` 이후에만 시작됩니다
 - Auto Merge 없음, 최종 Merge는 Human-only
 - Framework 자체 개선 후보 금지 (snapshot 제외 + scope fail-closed)
-- 한 cycle당 후보 1개, 중복이면 생성 금지
-- AI 호출은 cycle당 1회, 재시도 없음
+- 한 실행당 후보 1개, 중복이면 생성 금지
+- AI 호출은 실행당 1회, 재시도 없음
+- 사람이 사유를 남기고 기각한 후보는 다음 평가에 금지 목록으로 전달
 
 즉 자동화된 것은 **후보를 발견해 사람 앞에 올려놓는 일**까지이고, 무엇을 만들지 결정하는 authority는 여전히 사람에게 있습니다.
 
