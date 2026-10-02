@@ -638,6 +638,73 @@ function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: 
 }
 
 /**
+ * ready PLAN의 IMPLEMENT Context가 예산을 넘으면, PLAN 문장이 언급하지 않은 읽기 전용 contextPaths를 큰 것부터 빼서 예산에 맞춘다.
+ * 쓰기 범위(allowedPaths)와 PLAN이 언급한 참고 파일은 줄이지 않는다. 그렇게 해도 넘으면 손대지 않아 validatePlan이 fail-closed 한다
+ * (App #289 PLAN run 37018711973: 참고용 src/web-main.ts 발췌 19,998B 때문에 105,276B > 96,000B로 ready PLAN 전체가 거부됨).
+ */
+export function trimReadOnlyContextToBudget(
+  target: string,
+  context: PlanContextPack,
+  rawPlan: unknown,
+): { readonly plan: unknown; readonly removed: readonly string[] } {
+  const untouched = { plan: rawPlan, removed: [] as string[] };
+  if (!rawPlan || typeof rawPlan !== "object" || Array.isArray(rawPlan)) return untouched;
+  const plan = rawPlan as Record<string, unknown>;
+  const scope = plan.implementationScope;
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return untouched;
+  const scopeRecord = scope as Record<string, unknown>;
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (
+    scopeRecord.ready !== true ||
+    !isStringArray(scopeRecord.allowedPaths) ||
+    !isStringArray(scopeRecord.contextPaths) ||
+    !isStringArray(scopeRecord.requiredChanges) ||
+    !isStringArray(plan.approach) ||
+    !isStringArray(plan.changeCandidates) ||
+    !isStringArray(plan.testStrategy)
+  ) {
+    return untouched;
+  }
+  // 경로 형식이나 존재 여부가 틀린 scope는 validatePlan이 먼저 거부하도록 그대로 둔다.
+  const paths = [...scopeRecord.allowedPaths, ...scopeRecord.contextPaths];
+  try {
+    paths.forEach(assertSafePlanPath);
+  } catch {
+    return untouched;
+  }
+  if (scopeRecord.contextPaths.some((path) => !existsSync(join(target, path)))) return untouched;
+
+  const allowedPaths = scopeRecord.allowedPaths;
+  let contextPaths = [...scopeRecord.contextPaths];
+  let total = estimatedImplementContextBytes(allowedPaths, contextPaths, target, context);
+  if (total <= PLAN_IMPLEMENT_MAX_CONTEXT_BYTES) return untouched;
+
+  const mentioned = new Set(explicitPlanPaths([
+    ...plan.approach,
+    ...plan.changeCandidates,
+    ...plan.testStrategy,
+    ...scopeRecord.requiredChanges,
+  ]));
+  const evidenceBytes = new Map(context.files.map((file) => [file.path, file.byteLength]));
+  const contribution = (path: string): number =>
+    evidenceBytes.get(path) ?? Buffer.byteLength(readFileSync(join(target, path)), "utf8");
+  const removable = contextPaths
+    .filter((path) => !allowedPaths.includes(path) && !mentioned.has(path))
+    .sort((left, right) => contribution(right) - contribution(left) || left.localeCompare(right));
+
+  const removed: string[] = [];
+  for (const path of removable) {
+    if (total <= PLAN_IMPLEMENT_MAX_CONTEXT_BYTES) break;
+    contextPaths = contextPaths.filter((entry) => entry !== path);
+    removed.push(path);
+    total = estimatedImplementContextBytes(allowedPaths, contextPaths, target, context);
+  }
+  if (total > PLAN_IMPLEMENT_MAX_CONTEXT_BYTES) return untouched;
+  return { plan: { ...plan, implementationScope: { ...scopeRecord, contextPaths } }, removed };
+}
+
+/**
  * analysis에 같은 evidenceId가 여러 번 나오면 finding을 나온 순서대로 합쳐 하나로 만든다. 근거 범위는 바뀌지 않는다.
  * 형식이 틀린 항목이 하나라도 있으면 손대지 않아 validatePlan이 fail-closed 한다
  * (App #289 PLAN run 36982979475: 같은 evidenceId 두 번으로 PLAN 전체가 거부됨).
