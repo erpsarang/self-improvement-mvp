@@ -158,10 +158,26 @@ executor repo (Private, 팀 소유)
 - Framework와 App, App과 App이 같은 executor나 같은 구독 계정을 공유하지 않는다.
 - executor는 allowlist에 없는 repository의 요청을 Claude 호출 전에 거부한다.
 - 동일 Requirement/Handoff/Context/Prompt/실행정책의 성공 AI call은 artifact 재사용을 우선한다.
-- retry/repair는 단계별 bounded budget을 가진다. 모든 호출은 1 turn이며 도구를 쓰지 않는다.
+- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker 하나뿐이고, 아래 "IMPLEMENT Worker의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. 이 예외가 구현되기 전까지는 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368).
 - 구독 사용 한도는 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
 - Framework 내부 Cost Gate가 호출 횟수·중복 호출을 별도로 통제한다. 요청 모델·effort·실제 모델 ID·토큰은 executor job log와 runner journal에 남는다.
 - 비용 경계 위반 또는 정해진 budget 초과는 fail-open하지 않고 STOP/ON_HOLD 후보가 된다.
+
+### IMPLEMENT Worker의 격리된 읽기 도구
+
+도구 없이 1 turn으로 고정된 Context Pack만 보는 IMPLEMENT Worker는 App이 커지면 입력 한도에 걸리고(App #289, 106,198B > 96,000B) 파일을 다시 볼 수 없어 edit anchor를 틀린다. 그래서 IMPLEMENT Worker에 한해 다음 조건을 **모두** 만족할 때 읽기 도구를 허용한다. 하나라도 확인할 수 없으면 executor는 AI 호출 전에 멈춘다(fail-closed).
+
+1. **읽기 도구만 쓴다.** 허용하는 도구는 `Read`, `Glob`, `Grep`뿐이다. 쓰기·실행·네트워크 도구(`Edit`, `Write`, `Bash`, `WebFetch`, `WebSearch` 등)는 계속 막는다.
+2. **도구가 닿는 범위는 exact base SHA checkout 하나다.** 격리는 두 겹으로 걸고, 한 겹이 뚫려도 다른 한 겹이 막아야 한다.
+   - 실행 환경 격리: 컨테이너나 bubblewrap 같은 OS 수준 격리로 checkout만 보이게 한다. runner의 home 디렉터리, 다른 저장소, 자격 증명 파일은 보이지 않는다. 네트워크는 AI provider 접속만 허용한다.
+   - agent 설정 격리: Claude Code의 권한·sandbox 설정으로도 같은 범위만 허용한다.
+3. **AI provider 자격 증명은 agent 프로세스의 인증에만 쓰이고, 도구로는 읽을 수 없어야 한다.** Worker 결과는 Public 댓글로 게시되므로, 도구로 읽을 수 있는 것은 모두 공개될 수 있다고 가정한다. 격리 밖 경로와 자격 증명 위치를 읽으려는 시도가 실패한다는 테스트가 구현의 완료 조건이다.
+4. **turn 수와 실행 시간에 상한을 둔다.** 상한은 executor가 고정한다. 실제 turn 수·토큰·모델 ID는 executor job log에 남는다. 상한을 넘으면 결과 없이 실패하고, 기존 repair budget 밖의 재시도는 하지 않는다.
+5. **AI 호출 수는 늘리지 않는다.** 같은 호출 안에서 turn만 는다.
+6. **출력 계약과 Public 검증은 바꾸지 않는다.** Worker는 지금과 같은 edit JSON(`changes[]`)을 낸다. allowedPaths·base digest·anchor 검증, exact-base deterministic CI, Trusted Rail, Human Merge는 그대로다.
+7. **PLAN·REVIEW·FIX·LEARN·Product Discovery는 이 예외에 들어가지 않는다.** 이들은 계속 1 turn·도구 없음이다.
+
+쓰기·실행 도구(sandbox 안에서 수정하고 테스트를 돌리는 Worker)는 이 조항의 범위가 아니다. 허용하려면 이 문서를 다시 바꾸는 별도 결정이 필요하다.
 
 ## 5. STOP은 실패가 아니라 정상 상태다
 
