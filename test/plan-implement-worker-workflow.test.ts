@@ -92,11 +92,12 @@ test("검증 job 권한은 read-only이고, Issue write는 checkout 없는 subsc
   assert.match(finalize, /permissions:\n\s+actions: read\n\s+issues: write\n/);
   assert.doesNotMatch(finalize, /actions\/checkout@|openai\/codex-action@|npm |node --import/);
 
-  // exchange workflow에서 write는 checkout도 대상 코드도 없는 request job 하나뿐이다.
+  // exchange workflow에서 write는 checkout도 대상 코드도 없는 request job과 timeout_notice job뿐이다.
   assert.match(exchange, /permissions: \{\}/);
-  assert.equal((exchange.match(/issues: write/g) ?? []).length, 1);
+  assert.equal((exchange.match(/issues: write/g) ?? []).length, 2);
   assert.match(exchange, /\n  request:\n\s+permissions:\n\s+actions: read\n\s+issues: write\n/);
   assert.match(exchange, /\n  wait:\n\s+needs: request\n\s+permissions:\n\s+actions: read\n\s+issues: read\n/);
+  assert.match(exchange, /\n  timeout_notice:\n\s+needs: \[request, wait\]\n[\s\S]*?\n\s+permissions:\n\s+issues: write\n\s+runs-on: ubuntu-latest\n/);
   assert.doesNotMatch(exchange, /actions\/checkout@|npm |tsx |node -e|contents: /);
 });
 
@@ -400,4 +401,63 @@ test("edit 적용 실패는 candidate 없이도 attempt state에 evidence로 남
   const attempt0Result = jobBlock("attempt0_result");
   assert.match(attempt0Result, /elif \[ "\$ATTEMPT0_RESULT" != "success" \]; then\n\s+infrastructure_failed=true/);
   assert.doesNotMatch(attempt0Result, /edit-failure|EDIT_APPLICATION/);
+});
+
+test("executor 결과 대기가 timeout이면 timeout_notice가 요청 Issue에 STOPPED 댓글 하나를 남긴다", async () => {
+  // 결과 대기 timeout이 Issue에 흔적 없이 끝났다 (self-improvement-mvp #362 run 37011992131).
+  const wait = exchange.slice(exchange.indexOf("\n  wait:\n"), exchange.indexOf("\n  timeout_notice:\n"));
+  assert.match(wait, /outputs:\n\s+timed_out: \$\{\{ steps\.wait\.outputs\.timed_out \}\}\n/);
+  assert.match(wait, /core\.setOutput\('timed_out', 'true'\);\n\s+throw new Error\(`Timed out waiting for private subscription executor \$\{kind\}_RESULT`\);/);
+  // 검증 실패(identity mismatch 등)는 timed_out을 남기지 않는다. setOutput은 timeout throw 바로 앞 한 곳뿐이다.
+  assert.equal((exchange.match(/core\.setOutput\('timed_out'/g) ?? []).length, 1);
+
+  const notice = exchange.slice(exchange.indexOf("\n  timeout_notice:\n"));
+  assert.match(notice, /if: >-\n\s+!cancelled\(\) &&\n\s+needs\.wait\.result == 'failure' &&\n\s+needs\.wait\.outputs\.timed_out == 'true'\n/);
+  assert.doesNotMatch(notice, /actions\/checkout@|secrets\.|curl |dispatches/);
+
+  const script = notice.match(/          script: \|\n((?:            .*\n|\n)+)/)![1]!
+    .split("\n").map((line) => line.slice(12)).join("\n");
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const requestId = "a".repeat(64);
+  const run = async (env: Record<string, string>, comments: { body: string }[]) => {
+    const created: { issue_number: number; body: string }[] = [];
+    await new AsyncFunction("process", "github", "context", "core", script)(
+      { env: { GITHUB_RUN_ATTEMPT: "1", ...env } },
+      {
+        paginate: async () => comments,
+        rest: { issues: { listComments: {}, createComment: async (input: { issue_number: number; body: string }) => { created.push(input); } } },
+      },
+      { repo: { owner: "example", repo: "app" }, runId: 4321, serverUrl: "https://github.com" },
+      { info() {} },
+    );
+    return created;
+  };
+  const env = {
+    SUBSCRIPTION_KIND: "REVIEW",
+    SUBSCRIPTION_LABEL: "Semantic REVIEW",
+    SUBSCRIPTION_ISSUE_NUMBER: "77",
+    SUBSCRIPTION_REQUEST_ID: requestId,
+    AI_EXECUTOR_REPOSITORY: "team/executor",
+  };
+
+  const [comment, ...rest] = await run(env, []);
+  assert.equal(rest.length, 0);
+  assert.equal(comment!.issue_number, 77);
+  assert.ok(comment!.body.startsWith(`<!-- self-improvement:SUBSCRIPTION_TIMEOUT kind=REVIEW request=${requestId} run-id=4321 run-attempt=1 -->\n`));
+  assert.match(comment!.body, /## Semantic REVIEW: executor 결과를 받지 못해 멈춤/);
+  assert.match(comment!.body, /REVIEW_RESULT를 돌려주지 않아/);
+  assert.match(comment!.body, /### HumanStatus: STOPPED/);
+  assert.match(comment!.body, /executor 저장소 `team\/executor`의 Actions/);
+  assert.match(comment!.body, /https:\/\/github\.com\/example\/app\/actions\/runs\/4321/);
+  // Private executor bridge의 REQUEST/RESULT marker와 겹치지 않는다.
+  assert.doesNotMatch(comment!.body, /ai-dev-framework:/);
+
+  // 같은 request에 이미 남겼으면 다시 남기지 않는다.
+  assert.deepEqual(await run(env, [{ body: comment!.body }]), []);
+  // executor 변수가 없거나 형식이 틀려도 댓글은 남기되 저장소 이름을 꾸며내지 않는다.
+  const [fallback] = await run({ ...env, AI_EXECUTOR_REPOSITORY: "" }, []);
+  assert.match(fallback!.body, /executor 저장소\(이 저장소 변수 `AI_EXECUTOR_REPOSITORY`\)의 Actions/);
+  // identity가 깨졌으면 댓글 없이 실패한다.
+  await assert.rejects(run({ ...env, SUBSCRIPTION_REQUEST_ID: "not-a-request" }, []), /invalid subscription identity/);
+  await assert.rejects(run({ ...env, SUBSCRIPTION_ISSUE_NUMBER: "0" }, []), /invalid subscription identity/);
 });
