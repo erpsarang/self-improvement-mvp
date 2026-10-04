@@ -209,7 +209,7 @@ effort     medium, 호출당 max-turns 1, 도구 전부 차단
 | --- | --- | --- |
 | PLAN 모델 정책 미완 (기본 sonnet, 명시적 고난도만 opus) | 제2장 4순위, 제5장 7항 | Framework Issue #344. 10-02 App #293 PLAN도 opus로 요청됨 |
 | IMPLEMENT Context byte budget(96KB) 초과 시 참고 파일만 줄이는 임시 조치 | 제5장 1항 "관측된 실패"에 대한 최소 수정. 근본 해법은 제5장 7항 | Framework PR #363, App #289에서 106,198B > 96,000B 관측 |
-| Framework 자체 Product Discovery 1회 timeout | 제5장 "관측된 실패" 1건. 구조 변경 전에 원인 확인 | Framework #362 run 37011992131. executor의 REVIEW·FIX·LEARN·PRODUCT_EVALUATION poller는 PLAN·IMPLEMENT와 달리 cron 백업이 없어 dispatch 1회 유실이 곧 timeout이 된다 |
+| Framework 자체 Product Discovery 1회 timeout | 제5장 "관측된 실패" 1건. 구조 변경 전에 원인 확인 | Framework #362 run 37011992131. 채택 시점에는 "REVIEW·FIX·LEARN·PRODUCT_EVALUATION poller에 cron 백업이 없어 dispatch 1회 유실이 곧 timeout이 된다"고 추정했다. **2026-10-04 정정:** dispatch는 즉시 도착했고, 원인은 executor self-hosted runner(WSL2)가 약 23분 job을 받지 못한 것이었다. 같은 날 App REVIEW도 같은 모양이었다. 근거는 #362 댓글(GitHub run 기록과 runner `_diag` 로그 대조) |
 | 프레임워크 소유 경로 정의가 두 곳 | 제6장 2항 위반 | `policy/framework-distribution-ownership.v1.json`(78 entry)과 `product-evaluation.ts`의 `FRAMEWORK_OWNED_PREFIXES`가 서로 다른 범위를 가리킨다 |
 | 문서가 코드보다 늦었음 (채택일에 현행화) | 제8장 8항 | `docs/architecture.md` 원칙 10과 4장(OpenAI key → 팀별 executor), `docs/trust-model.md`·`docs/phase-5-review.md`·`docs/phase-1-plan.md`·`docs/phase-2-implement.md`·`docs/usage.md`의 Codex 서술, `docs/ai-cost-policy.md`·`docs/ai-usage-record.md`의 Codex 시대 표식, `docs/roadmap.md` Phase 3-E의 "Human Merge →" trigger, App `docs/phase-1-plan.md`·`docs/framework-v0.1-usage.md`. `trusted-rail.yml`의 `workflow_run: "Untrusted IMPLEMENT"` 트리거는 존재하지 않는 workflow를 가리키는 legacy로 남아 있다 |
 | 오래 열린 Issue의 bookkeeping (채택일에 정리) | 제5장 매몰 신호 점검 대상 | 달성으로 닫음: #337, #332, #313, #343, #303, #299, #286, #281, #237, #236, #204~#207, 그리고 v0.1 smoke #9, #19, #22. not_planned: #201(전제 소멸), #116, #117. 열어 둠: #344, #311, #239(STOPPED 댓글은 됐고 stale SHA 자동 재PLAN은 미완), #223(신규 App bootstrap 증명 미완), #180, #191, #192(v0.3 설계), #362(Discovery 기록) |
@@ -233,3 +233,4 @@ effort     medium, 호출당 max-turns 1, 도구 전부 차단
 | 날짜 | 개정 | 이유 |
 | --- | --- | --- |
 | 2026-10-02 | 최초 채택 | 한 달의 개발과 첫 E2E 증명 뒤, 프레임워크 고도화를 계속하면서 목적을 잃지 않기 위한 기준을 고정 |
+| 2026-10-04 | 부록 A의 #362 행 정정 (본문 변경 없음) | 채택 시점의 원인 추정(poller cron 백업 부재로 인한 dispatch 유실)이 기록과 맞지 않았다. 원인은 executor runner 가용성이었고, 잘못된 추정이 사실처럼 남아 있으면 관측되지 않은 실패에 대한 방어(cron 백업)를 부를 수 있다. 부록 A는 시점 기록이므로 원래 추정을 지우지 않고 정정을 덧붙인다 |
