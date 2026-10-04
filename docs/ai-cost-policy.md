@@ -1,6 +1,6 @@
 # AI 설정 기준선과 로컬 비용 비교
 
-> **현행 상태(2026-10-02).** 아래 기준선 표는 `src/ai-execution-baseline.ts`가 기록한 과거 SHA `7d8a4fd5`의 Codex 시대 설정이며 그대로 보존한다. 현재 실행 정책은 모든 stage가 팀 소유 Private subscription executor(Claude Max)로 가고, 모델은 PLAN opus(Product Improvement 후보는 sonnet), IMPLEMENT/FIX/LEARN sonnet, REVIEW/Product Discovery opus, effort는 모두 medium이다. 근거는 `.github/workflows/subscription-exchange.yml`의 kind별 모델 표와 `plan.yml`이다. 작업 난이도에 따른 PLAN 모델 선택은 #344에서 진행 중이다.
+> **현행 상태(2026-10-04).** 아래 기준선 표는 `src/ai-execution-baseline.ts`가 기록한 과거 SHA `7d8a4fd5`의 Codex 시대 설정이며 그대로 보존한다. 현재 실행 정책은 모든 stage가 팀 소유 Private subscription executor(Claude Max)로 가고, 모델은 PLAN sonnet(사람이 Issue 템플릿에서 `복잡한 요구입니다`를 체크한 요구만 opus, #344), IMPLEMENT/FIX/LEARN sonnet, REVIEW/Product Discovery opus, effort는 모두 medium이다. 근거는 `.github/workflows/subscription-exchange.yml`의 kind별 모델 표와 `plan.yml`이다.
 
 이번 slice는 호출 설정의 관측 목록과 로컬 비교 계산만 제공합니다. 실행 정책을 적용하거나 workflow에 모듈을 연결하지 않습니다. 추가 AI 호출, 네트워크 호출, 사용량 수집, 모델 변경 및 자동 fallback은 없습니다.
 

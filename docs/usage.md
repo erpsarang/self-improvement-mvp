@@ -140,6 +140,8 @@ Planner는 다음을 제안합니다.
 
 Planner는 repository를 수정하지 않으며 PLAN 자체도 authority가 아닙니다.
 
+PLAN은 Private subscription executor가 1회 실행하며 모델은 기본 sonnet(effort medium)입니다. 사람이 Issue 템플릿의 `- [x] 복잡한 요구입니다`를 체크한 요구만 opus로 실행합니다. 체크 여부는 본문에 있으므로 requirement digest와 PLAN_REQUEST marker의 `model=`에 그대로 남습니다. Product Discovery 후보처럼 사람이 쓰지 않은 본문은 체크박스가 있어도 opus로 올리지 않습니다. 체크를 바꾸려면 본문을 고친 뒤 PLAN을 다시 실행합니다.
+
 `ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
 
 ### 변경 대상 소스를 import하는 기존 테스트
