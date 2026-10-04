@@ -121,15 +121,11 @@ jobs:
             fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify(identity, null, 2));
             core.setOutput('identity', JSON.stringify(identity));
             core.setOutput('sha', commit.sha);
-            // Product Evaluation이 만든 [Self-Improvement] 후보의 자동 PLAN은 Max 구독 사용량을 아끼도록 sonnet을 쓴다.
-            // 사람이 만든 [업무 요구] 등 그 밖의 PLAN은 고레버리지 요구 해석 단계이므로 opus를 명시한다.
-            // 판별은 위에서 기록한 provenance(marker·dispatch ingress·작성자·제목)만 쓴다.
-            const productImprovementCandidate =
-              source.kind === 'PRODUCT_EVALUATION' &&
-              ingressEvent === 'workflow_dispatch' &&
-              author.login === 'github-actions[bot]' &&
-              issue.title.startsWith('[Self-Improvement]');
-            core.setOutput('planner_model', productImprovementCandidate ? 'sonnet' : 'opus');
+            // PLAN 기본 모델은 sonnet이다 (#344). 사람이 Issue 템플릿의 "복잡한 요구" 체크박스를 체크한
+            // 요구만 opus를 쓴다. 체크 여부는 본문에 있으므로 requirement digest와 provenance에 그대로 남는다.
+            // Product Evaluation 후보처럼 사람이 쓰지 않은 본문(source.kind !== 'HUMAN')은 체크박스가 있어도 올리지 않는다.
+            const complexRequirement = /^[ \t]*[-*][ \t]+\[[xX]\][ \t]+복잡한 요구입니다/m.test(issue.body);
+            core.setOutput('planner_model', source.kind === 'HUMAN' && complexRequirement ? 'opus' : 'sonnet');
 
       - name: Target checkout at frozen SHA
         uses: actions/checkout@v4

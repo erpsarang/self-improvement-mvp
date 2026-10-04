@@ -365,7 +365,7 @@ test("PLAN workflow는 subscription credential 없이 bounded request를 만들�
   assert.match(workflow, /Fresh Target checkout at frozen SHA for validation/);
   assert.match(workflow, /Validate bounded PLAN against fresh exact SHA/);
   assert.match(workflow, /Store PLAN only/);
-  assert.match(workflow, /productImprovementCandidate \? 'sonnet' : 'opus'/);
+  assert.match(workflow, /source\.kind === 'HUMAN' && complexRequirement \? 'opus' : 'sonnet'/);
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action|openai\/codex-action/);
   assert.doesNotMatch(workflow, /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/);
   assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 4);

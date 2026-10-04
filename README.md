@@ -201,7 +201,7 @@ v0.2는 신뢰 가능한 **수직 개발 루프**를 증명한 MVP입니다. 다
 - durable / append-only 장기 provenance store
 - 운영 UI와 관측성 개선
 - 비용·시간 최적화
-- 전 stage 공통 AI call dedup / budget guardrail (Product Discovery는 실행당 1회 호출 상한과 Issue 중복 차단을 이미 적용). 팀별 executor 분리는 적용됐고, 작업 난이도에 따른 PLAN 모델 선택은 미완(#344)
+- 전 stage 공통 AI call dedup / budget guardrail (Product Discovery는 실행당 1회 호출 상한과 Issue 중복 차단을 이미 적용). 팀별 executor 분리와 PLAN 모델 선택(기본 sonnet, 사람이 복잡한 요구로 체크한 요구만 opus, #344)은 적용됨
 
 Auto Merge는 향후 목표가 아니며, 최종 Merge는 계속 Human-only입니다.
 

@@ -66,8 +66,8 @@ test("source는 identity/provenance/pointer 댓글에만 기록되고 PLAN 이�
   }
 });
 
-// PLAN provider 전환 후에도 Requirement source 판별과 호출 수는 그대로 둔다.
-// Product Evaluation 후보는 Claude sonnet, 그 밖의 사람이 만든 고레버리지 PLAN은 Claude opus를 명시한다.
+// PLAN 기본 모델은 sonnet이다 (#344). 사람이 템플릿의 "복잡한 요구" 체크박스를 체크한 요구만 opus를 쓴다.
+// 별도 AI 라우터 없이 freeze step이 본문만 보고 결정한다. PLAN당 호출 수는 그대로다.
 async function plannerModel(title: string, body: string, options: Parameters<typeof freeze>[2] & object) {
   const outputs: Record<string, string> = {};
   await freeze(title, body, { ...options, outputs });
@@ -79,6 +79,8 @@ const productEvaluationDispatch = {
   event: "workflow_dispatch", actor: "github-actions[bot]",
   user: { login: "github-actions[bot]", id: 41898282, type: "Bot" }, association: "CONTRIBUTOR",
 } as const;
+const complexChecked = "## 복잡한 요구인가요? (선택)\n\n- [x] 복잡한 요구입니다\n";
+const complexUnchecked = "## 복잡한 요구인가요? (선택)\n\n- [ ] 복잡한 요구입니다\n";
 
 test("Product Evaluation이 만든 [Self-Improvement] 후보의 자동 PLAN은 sonnet을 쓴다", async () => {
   assert.equal(await plannerModel("[Self-Improvement] 후보", `${marker}\n\n본문`, productEvaluationDispatch), "sonnet");
@@ -89,23 +91,42 @@ test("Product Discovery가 만든 Issue도 source=PRODUCT_EVALUATION이고 Disco
   const identity = await freeze("[Self-Improvement] 후보", `${discoveryMarker}\n\n## 어떤 업무가 불편한가요?\n\n본문`, productEvaluationDispatch);
   assert.equal(identity.source.kind, "PRODUCT_EVALUATION");
   assert.deepEqual(identity.source.productImprovement, { discoveryIssue: 40, discoveryRun: 36121809205, snapshotDigest: "1".repeat(64) });
-  // 자동 PLAN 모델 판별도 기존 후보와 같다.
   assert.equal(await plannerModel("[Self-Improvement] 후보", `${discoveryMarker}\n\n본문`, productEvaluationDispatch), "sonnet");
 });
 
-test("사람이 만든 [업무 요구] PLAN은 opus를 명시한다", async () => {
-  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "issues", association: "OWNER" }), "opus");
-  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "workflow_dispatch", actor: "member" }), "opus");
-  // 사람이 marker를 본문에 붙여도 Product Evaluation 후보가 아니므로 Sol을 쓴다.
-  assert.equal(await plannerModel("[Self-Improvement] 사람이 흉내 낸 제목", `${marker}\n\n본문`, { event: "workflow_dispatch", actor: "member" }), "opus");
-  assert.equal(await plannerModel("[업무 요구] 요구", `${marker}\n\n본문`, { event: "issues", association: "OWNER" }), "opus");
+test("사람이 만든 [업무 요구] PLAN의 기본 모델은 sonnet이다", async () => {
+  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "issues", association: "OWNER" }), "sonnet");
+  assert.equal(await plannerModel("[업무 요구] 사람이 쓴 요구", "본문", { event: "workflow_dispatch", actor: "member" }), "sonnet");
+  // 템플릿 그대로 체크하지 않은 체크박스는 sonnet이다.
+  assert.equal(await plannerModel("[업무 요구] 요구", `본문\n\n${complexUnchecked}`, { event: "issues", association: "OWNER" }), "sonnet");
+  // 체크박스 문구를 문장 안에서 언급만 한 경우도 sonnet이다.
+  assert.equal(await plannerModel("[업무 요구] 요구", "본문에서 [x] 복잡한 요구입니다 라고 썼다", { event: "issues", association: "OWNER" }), "sonnet");
 });
 
-test("후보 판별 조건이 하나라도 어긋나면 sonnet 대신 opus를 쓴다", async () => {
-  const body = `${marker}\n\n본문`;
-  assert.equal(await plannerModel("[업무 요구] 후보", body, productEvaluationDispatch), "opus", "title prefix");
-  assert.equal(await plannerModel("[Self-Improvement] 후보", "marker 없음", productEvaluationDispatch), "opus", "marker");
-  assert.equal(await plannerModel("[Self-Improvement] 후보", body, { ...productEvaluationDispatch, user: { login: "other-app[bot]", id: 1, type: "Bot" } }), "opus", "author");
+test("사람이 복잡한 요구 체크박스를 체크한 PLAN만 opus를 쓴다", async () => {
+  assert.equal(await plannerModel("[업무 요구] 요구", `본문\n\n${complexChecked}`, { event: "issues", association: "OWNER" }), "opus");
+  assert.equal(await plannerModel("[업무 요구] 요구", `본문\n\n${complexChecked}`, { event: "workflow_dispatch", actor: "member" }), "opus");
+  assert.equal(await plannerModel("[업무 요구] 요구", "본문\n\n* [X] 복잡한 요구입니다 (구조 변경)", { event: "issues", association: "OWNER" }), "opus");
+  // 체크 여부는 본문이므로 requirement digest에 포함된다. 체크를 바꾸면 다른 requirement다.
+  const checked = await freeze("[업무 요구] 요구", `본문\n\n${complexChecked}`, { event: "issues", association: "OWNER" });
+  const unchecked = await freeze("[업무 요구] 요구", `본문\n\n${complexUnchecked}`, { event: "issues", association: "OWNER" });
+  assert.notEqual(checked.requirement.digest, unchecked.requirement.digest);
+});
+
+test("사람이 쓰지 않은 본문은 체크박스가 있어도 opus로 올리지 않는다", async () => {
+  // Product Evaluation 후보 본문은 AI가 쓴 것이다.
+  assert.equal(await plannerModel("[Self-Improvement] 후보", `${marker}\n\n${complexChecked}`, productEvaluationDispatch), "sonnet");
+  // 사람이 marker를 붙이면 source=PRODUCT_EVALUATION이 되어 체크박스를 보지 않는다.
+  assert.equal(await plannerModel("[업무 요구] 요구", `${marker}\n\n${complexChecked}`, { event: "issues", association: "OWNER" }), "sonnet");
+  // 그 밖의 자동화가 만든 Issue(OTHER_TRUSTED_SOURCE)도 올리지 않는다.
+  assert.equal(await plannerModel("[업무 요구] 요구", `본문\n\n${complexChecked}`, { ...productEvaluationDispatch, user: { login: "other-app[bot]", id: 1, type: "Bot" } }), "sonnet");
+});
+
+test("Issue 템플릿의 체크박스 문구는 PLAN 모델 판별 문구와 같고 기본은 체크되지 않은 상태다", () => {
+  const template = readFileSync(".github/ISSUE_TEMPLATE/user-requirement.md", "utf8");
+  assert.match(template, /\n- \[ \] 복잡한 요구입니다\n/);
+  assert.doesNotMatch(template, /\[[xX]\] 복잡한 요구입니다/);
+  assert.ok(workflow.includes("[ \\t]+복잡한 요구입니다/m.test(issue.body)"));
 });
 
 test("planner model은 private subscription request marker에만 연결되고 public PLAN은 AI를 직접 호출하지 않는다", () => {
@@ -113,7 +134,7 @@ test("planner model은 private subscription request marker에만 연결되고 pu
   assert.match(workflow, /model=\$\{model\} -->/);
   assert.equal((workflow.match(/uses:\s*anthropics\/claude-code-action/g) ?? []).length, 0);
   assert.equal((workflow.match(/uses:\s*openai\/codex-action/g) ?? []).length, 0);
-  assert.match(workflow, /core\.setOutput\('planner_model', productImprovementCandidate \? 'sonnet' : 'opus'\);/);
+  assert.match(workflow, /core\.setOutput\('planner_model', source\.kind === 'HUMAN' && complexRequirement \? 'opus' : 'sonnet'\);/);
 });
 
 test("PLAN result는 OWNER comment + gzip-base64 payload만 trusted validation으로 넘긴다", () => {

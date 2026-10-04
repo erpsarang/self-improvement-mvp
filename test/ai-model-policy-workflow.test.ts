@@ -15,9 +15,9 @@ test("PLAN model은 subscription request에 명시하고 Framework에는 직접 
   }
 });
 
-test("고레버리지 PLAN은 Opus, PLAN Worker·REVIEW·FIX는 subscription executor를 쓴다", async () => {
+test("PLAN은 기본 sonnet이고 복잡한 요구만 Opus, PLAN Worker·REVIEW·FIX는 subscription executor를 쓴다", async () => {
   const plan = await readFile(".github/workflows/plan.yml", "utf8");
-  assert.match(plan, /productImprovementCandidate \? 'sonnet' : 'opus'/);
+  assert.match(plan, /source\.kind === 'HUMAN' && complexRequirement \? 'opus' : 'sonnet'/);
 
   const worker = await readFile(".github/workflows/plan-implement-worker.yml", "utf8");
   // 최초 IMPLEMENT와 repair 1/2는 Private subscription executor(sonnet)로 옮겨 Codex model을 쓰지 않는다.
