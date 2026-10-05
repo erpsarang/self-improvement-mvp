@@ -33,6 +33,9 @@ interface SubscriptionApi {
   subscriptionRequestMarker(kind: string, identity: unknown, requestId: string, artifactId: number, artifactDigest: string): string;
   subscriptionResultMarker(kind: string, identity: unknown, requestId: string, artifactId: number, artifactDigest: string): string;
   selectSubscriptionResult(kind: string, comments: unknown[], expected: Record<string, unknown>): { commentId: number; raw: string } | null;
+  subscriptionMarkerFields(kind: string, identity: unknown, requestId: string, artifactId: number, artifactDigest: string): string;
+  subscriptionFailureMarker(kind: string, identity: unknown, requestId: string, artifactId: number, artifactDigest: string, reason: string): string;
+  selectSubscriptionFailure(kind: string, comments: unknown[], expected: Record<string, unknown>): { commentId: number; reason: string } | null;
   loadSubscriptionRequest(input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
@@ -49,6 +52,9 @@ const api = new Function(
     subscriptionRequestMarker,
     subscriptionResultMarker,
     selectSubscriptionResult,
+    subscriptionMarkerFields,
+    subscriptionFailureMarker,
+    selectSubscriptionFailure,
     loadSubscriptionRequest,
   };`,
 )(createRequire(import.meta.url)) as SubscriptionApi;
@@ -460,4 +466,37 @@ test("LEARN marker는 LEARN run과 sonnet을 담고 FIX·IMPLEMENT 결과와 섞
     else process.env.GITHUB_RUN_ATTEMPT = previousAttempt;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("executor FAILED marker는 RESULT와 같은 identity로만 받고 실패 사유만 돌려준다 (App #300)", () => {
+  // App #300 1차 IMPLEMENT: executor는 바로 실패했지만 Public은 15분 timeout까지 기다렸다.
+  const value = identity();
+  const requestId = api.implementRequestId(value, ARTIFACT_ID, ARTIFACT_DIGEST);
+  const resultMarker = api.implementResultMarker(value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
+  // Private failure_notice.failure_marker와 같은 형식: RESULT marker의 identity 필드 + reason.
+  const failed = api.subscriptionFailureMarker("IMPLEMENT", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST, "EXECUTION_FAILED");
+  assert.equal(failed, resultMarker.replace("IMPLEMENT_RESULT v=1 ", "IMPLEMENT_FAILED v=1 ").replace(" encoding=gzip-base64 -->", " reason=EXECUTION_FAILED -->"));
+  assert.throws(() => api.subscriptionFailureMarker("IMPLEMENT", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST, "OTHER"), /failure reason is invalid/);
+
+  const expectedFields = api.subscriptionMarkerFields("IMPLEMENT", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST);
+  const expected = { requestId, requestCommentId: 10, owner: "erpsarang", expectedFields };
+  const comment = (reason: string, overrides: Record<string, unknown> = {}) =>
+    resultComment(`${api.subscriptionFailureMarker("IMPLEMENT", value, requestId, ARTIFACT_ID, ARTIFACT_DIGEST, reason)}\n## IMPLEMENT: executor가 요청을 처리하지 못함`, overrides);
+
+  assert.equal(api.selectSubscriptionFailure("IMPLEMENT", [], expected), null);
+  for (const reason of ["REQUEST_REJECTED", "EXECUTION_FAILED", "RESULT_POST_FAILED"]) {
+    assert.deepEqual(api.selectSubscriptionFailure("IMPLEMENT", [comment(reason)], expected), { commentId: 20, reason });
+  }
+  // 누구나 댓글을 달 수 있으므로 owner 댓글만, request 댓글 뒤의 것만 본다.
+  assert.equal(api.selectSubscriptionFailure("IMPLEMENT", [comment("EXECUTION_FAILED", { author_association: "CONTRIBUTOR", user: { type: "User", login: "someone" } })], expected), null);
+  assert.equal(api.selectSubscriptionFailure("IMPLEMENT", [comment("EXECUTION_FAILED", { id: 9 })], expected), null);
+  // 다른 kind의 FAILED는 이 교환의 실패가 아니다.
+  assert.equal(api.selectSubscriptionFailure("REVIEW", [comment("EXECUTION_FAILED")], { ...expected, expectedFields: "x" }), null);
+  // executor job 재실행으로 같은 실패가 두 번 올라와도 멈추는 것은 같다.
+  assert.deepEqual(api.selectSubscriptionFailure("IMPLEMENT", [comment("EXECUTION_FAILED"), comment("REQUEST_REJECTED", { id: 21 })], expected), { commentId: 20, reason: "EXECUTION_FAILED" });
+  // 같은 request인데 identity나 사유가 어긋나면 받아들이지 않는다.
+  const tampered = resultComment(failed.replace(` model=sonnet `, ` model=opus `));
+  assert.throws(() => api.selectSubscriptionFailure("IMPLEMENT", [tampered], expected), /IMPLEMENT_FAILED identity mismatch/);
+  const unknownReason = resultComment(failed.replace("reason=EXECUTION_FAILED", "reason=OTHER"));
+  assert.throws(() => api.selectSubscriptionFailure("IMPLEMENT", [unknownReason], expected), /IMPLEMENT_FAILED identity mismatch/);
 });

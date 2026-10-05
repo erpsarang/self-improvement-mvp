@@ -92,12 +92,12 @@ test("검증 job 권한은 read-only이고, Issue write는 checkout 없는 subsc
   assert.match(finalize, /permissions:\n\s+actions: read\n\s+issues: write\n/);
   assert.doesNotMatch(finalize, /actions\/checkout@|openai\/codex-action@|npm |node --import/);
 
-  // exchange workflow에서 write는 checkout도 대상 코드도 없는 request job과 timeout_notice job뿐이다.
+  // exchange workflow에서 write는 checkout도 대상 코드도 없는 request job과 stopped_notice job뿐이다.
   assert.match(exchange, /permissions: \{\}/);
   assert.equal((exchange.match(/issues: write/g) ?? []).length, 2);
   assert.match(exchange, /\n  request:\n\s+permissions:\n\s+actions: read\n\s+issues: write\n/);
   assert.match(exchange, /\n  wait:\n\s+needs: request\n\s+permissions:\n\s+actions: read\n\s+issues: read\n/);
-  assert.match(exchange, /\n  timeout_notice:\n\s+needs: \[request, wait\]\n[\s\S]*?\n\s+permissions:\n\s+issues: write\n\s+runs-on: ubuntu-latest\n/);
+  assert.match(exchange, /\n  stopped_notice:\n\s+needs: \[request, wait\]\n[\s\S]*?\n\s+permissions:\n\s+issues: write\n\s+runs-on: ubuntu-latest\n/);
   assert.doesNotMatch(exchange, /actions\/checkout@|npm |tsx |node -e|contents: /);
 });
 
@@ -403,16 +403,16 @@ test("edit 적용 실패는 candidate 없이도 attempt state에 evidence로 남
   assert.doesNotMatch(attempt0Result, /edit-failure|EDIT_APPLICATION/);
 });
 
-test("executor 결과 대기가 timeout이면 timeout_notice가 요청 Issue에 STOPPED 댓글 하나를 남긴다", async () => {
+test("executor 결과 대기가 timeout이면 stopped_notice가 요청 Issue에 STOPPED 댓글 하나를 남긴다", async () => {
   // 결과 대기 timeout이 Issue에 흔적 없이 끝났다 (self-improvement-mvp #362 run 37011992131).
-  const wait = exchange.slice(exchange.indexOf("\n  wait:\n"), exchange.indexOf("\n  timeout_notice:\n"));
+  const wait = exchange.slice(exchange.indexOf("\n  wait:\n"), exchange.indexOf("\n  stopped_notice:\n"));
   assert.match(wait, /outputs:\n\s+timed_out: \$\{\{ steps\.wait\.outputs\.timed_out \}\}\n/);
   assert.match(wait, /core\.setOutput\('timed_out', 'true'\);\n\s+throw new Error\(`Timed out waiting for private subscription executor \$\{kind\}_RESULT`\);/);
   // 검증 실패(identity mismatch 등)는 timed_out을 남기지 않는다. setOutput은 timeout throw 바로 앞 한 곳뿐이다.
   assert.equal((exchange.match(/core\.setOutput\('timed_out'/g) ?? []).length, 1);
 
-  const notice = exchange.slice(exchange.indexOf("\n  timeout_notice:\n"));
-  assert.match(notice, /if: >-\n\s+!cancelled\(\) &&\n\s+needs\.wait\.result == 'failure' &&\n\s+needs\.wait\.outputs\.timed_out == 'true'\n/);
+  const notice = exchange.slice(exchange.indexOf("\n  stopped_notice:\n"));
+  assert.match(notice, /if: >-\n\s+!cancelled\(\) &&\n\s+needs\.wait\.result == 'failure' &&\n\s+\(needs\.wait\.outputs\.timed_out == 'true' \|\| needs\.wait\.outputs\.executor_failed == 'true'\)\n/);
   assert.doesNotMatch(notice, /actions\/checkout@|secrets\.|curl |dispatches/);
 
   const script = notice.match(/          script: \|\n((?:            .*\n|\n)+)/)![1]!
@@ -460,4 +460,63 @@ test("executor 결과 대기가 timeout이면 timeout_notice가 요청 Issue에 
   // identity가 깨졌으면 댓글 없이 실패한다.
   await assert.rejects(run({ ...env, SUBSCRIPTION_REQUEST_ID: "not-a-request" }, []), /invalid subscription identity/);
   await assert.rejects(run({ ...env, SUBSCRIPTION_ISSUE_NUMBER: "0" }, []), /invalid subscription identity/);
+});
+
+test("executor가 FAILED marker를 남기면 wait는 바로 멈추고 stopped_notice가 실제 사유로 STOPPED를 남긴다 (App #300)", async () => {
+  const wait = exchange.slice(exchange.indexOf("\n  wait:\n"), exchange.indexOf("\n  stopped_notice:\n"));
+  assert.match(wait, /outputs:\n\s+timed_out: \$\{\{ steps\.wait\.outputs\.timed_out \}\}\n\s+executor_failed: \$\{\{ steps\.wait\.outputs\.executor_failed \}\}\n\s+failure_reason: \$\{\{ steps\.wait\.outputs\.failure_reason \}\}\n/);
+  // 매 poll마다 RESULT보다 FAILED를 먼저 본다. 둘 다 있으면 멈추는 쪽(fail-closed)을 고른다.
+  const loop = wait.slice(wait.indexOf("for (let poll = 0;"));
+  assert.ok(loop.indexOf("selectSubscriptionFailure(kind, comments") > 0);
+  assert.ok(loop.indexOf("selectSubscriptionFailure(kind, comments") < loop.indexOf("selectSubscriptionResult(kind, comments"));
+  assert.match(loop, /core\.setOutput\('executor_failed', 'true'\);\n\s+core\.setOutput\('failure_reason', failure\.reason\);\n\s+throw new Error\(/);
+  assert.equal((exchange.match(/core\.setOutput\('executor_failed'/g) ?? []).length, 1);
+
+  const notice = exchange.slice(exchange.indexOf("\n  stopped_notice:\n"));
+  assert.match(notice, /EXECUTOR_FAILURE_REASON: \$\{\{ needs\.wait\.outputs\.failure_reason \}\}/);
+  const script = notice.match(/          script: \|\n((?:            .*\n|\n)+)/)![1]!
+    .split("\n").map((line) => line.slice(12)).join("\n");
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const requestId = "a".repeat(64);
+  const run = async (env: Record<string, string>, comments: { body: string }[]) => {
+    const created: { issue_number: number; body: string }[] = [];
+    await new AsyncFunction("process", "github", "context", "core", script)(
+      { env: { GITHUB_RUN_ATTEMPT: "1", ...env } },
+      {
+        paginate: async () => comments,
+        rest: { issues: { listComments: {}, createComment: async (input: { issue_number: number; body: string }) => { created.push(input); } } },
+      },
+      { repo: { owner: "example", repo: "app" }, runId: 4321, serverUrl: "https://github.com" },
+      { info() {} },
+    );
+    return created;
+  };
+  const env = {
+    SUBSCRIPTION_KIND: "IMPLEMENT",
+    SUBSCRIPTION_LABEL: "IMPLEMENT",
+    SUBSCRIPTION_ISSUE_NUMBER: "300",
+    SUBSCRIPTION_REQUEST_ID: requestId,
+    AI_EXECUTOR_REPOSITORY: "team/executor",
+    EXECUTOR_FAILURE_REASON: "EXECUTION_FAILED",
+  };
+  const [comment, ...rest] = await run(env, []);
+  assert.equal(rest.length, 0);
+  assert.equal(comment!.issue_number, 300);
+  assert.ok(comment!.body.startsWith(`<!-- self-improvement:SUBSCRIPTION_EXECUTOR_FAILED kind=IMPLEMENT request=${requestId} reason=EXECUTION_FAILED run-id=4321 run-attempt=1 -->\n`));
+  assert.match(comment!.body, /## IMPLEMENT: executor가 요청을 처리하지 못해 멈춤/);
+  assert.match(comment!.body, /### HumanStatus: STOPPED/);
+  assert.match(comment!.body, /Claude 호출 또는 결과 형식 검증/);
+  assert.match(comment!.body, /executor 저장소 `team\/executor`의 Actions/);
+  // timeout 안내(runner offline)와 섞지 않는다.
+  assert.doesNotMatch(comment!.body, /offline|timeout/);
+  assert.doesNotMatch(comment!.body, /ai-dev-framework:/);
+  // 사유마다 다음 행동이 다르다.
+  const [rejected] = await run({ ...env, EXECUTOR_FAILURE_REASON: "REQUEST_REJECTED" }, []);
+  assert.match(rejected!.body, /request artifact를 받거나 검증하지 못했습니다/);
+  const [postFailed] = await run({ ...env, EXECUTOR_FAILURE_REASON: "RESULT_POST_FAILED" }, []);
+  assert.match(postFailed!.body, /결과를 Issue에 올리지 못했습니다/);
+  // 같은 request에 이미 남겼으면 다시 남기지 않는다.
+  assert.deepEqual(await run(env, [{ body: comment!.body }]), []);
+  // 알 수 없는 사유는 꾸며내지 않고 실패한다.
+  await assert.rejects(run({ ...env, EXECUTOR_FAILURE_REASON: "OTHER" }, []), /invalid executor failure reason/);
 });
