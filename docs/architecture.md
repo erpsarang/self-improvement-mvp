@@ -158,7 +158,7 @@ executor repo (Private, 팀 소유)
 - Framework와 App, App과 App이 같은 executor나 같은 구독 계정을 공유하지 않는다.
 - executor는 allowlist에 없는 repository의 요청을 Claude 호출 전에 거부한다.
 - 동일 Requirement/Handoff/Context/Prompt/실행정책의 성공 AI call은 artifact 재사용을 우선한다.
-- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker 하나뿐이고, 아래 "IMPLEMENT Worker의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. 이 예외가 구현되기 전까지는 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368).
+- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker 하나뿐이고, 아래 "IMPLEMENT Worker의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. 이 예외는 executor에 구현되어 있고(`erpsarang/subscription-ai-executor#27`), executor 저장소 변수 `EXECUTOR_IMPLEMENT_READ_TOOLS=on`일 때만 켜진다. 변수가 비어 있으면 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368).
 - 구독 사용 한도는 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
 - Framework 내부 Cost Gate가 호출 횟수·중복 호출을 별도로 통제한다. 요청 모델·effort·실제 모델 ID·토큰은 executor job log와 runner journal에 남는다.
 - 비용 경계 위반 또는 정해진 budget 초과는 fail-open하지 않고 STOP/ON_HOLD 후보가 된다.

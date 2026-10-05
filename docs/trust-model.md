@@ -4,7 +4,7 @@
 
 `IMPLEMENT`와 `FIX`는 untrusted 영역이다. 이 영역에는 GitHub write credential을 제공하지 않으며, 산출한 candidate patch를 직접 PUBLISH할 수 없다.
 
-IMPLEMENT Worker가 읽기 도구를 쓰는 경우에도 untrusted다. 허용 조건은 `docs/architecture.md` 4장 "IMPLEMENT Worker의 격리된 읽기 도구"를 따른다. Worker가 읽은 내용은 결과 JSON을 거쳐 Public 댓글로 나갈 수 있으므로, 도구가 닿는 범위는 exact base SHA checkout 하나로 제한하고(OS 수준 격리와 agent 설정 격리를 함께 쓴다) runner의 자격 증명과 다른 저장소는 그 범위 밖에 둔다. 도구를 쓰더라도 Worker의 산출물은 candidate일 뿐이고, 승격 경로(allowedPaths 검증 → deterministic CI → SEAL → PUBLISH → VERIFY → REVIEW → Human Merge)는 바뀌지 않는다. 이 예외는 아직 구현 전이며, 현재 IMPLEMENT는 1 turn·도구 없음이다(#368).
+IMPLEMENT Worker가 읽기 도구를 쓰는 경우에도 untrusted다. 허용 조건은 `docs/architecture.md` 4장 "IMPLEMENT Worker의 격리된 읽기 도구"를 따른다. Worker가 읽은 내용은 결과 JSON을 거쳐 Public 댓글로 나갈 수 있으므로, 도구가 닿는 범위는 exact base SHA checkout 하나로 제한하고(OS 수준 격리와 agent 설정 격리를 함께 쓴다) runner의 자격 증명과 다른 저장소는 그 범위 밖에 둔다. 도구를 쓰더라도 Worker의 산출물은 candidate일 뿐이고, 승격 경로(allowedPaths 검증 → deterministic CI → SEAL → PUBLISH → VERIFY → REVIEW → Human Merge)는 바뀌지 않는다. 이 예외는 executor에 구현되어 있으며(`erpsarang/subscription-ai-executor#27`), executor 저장소 변수 `EXECUTOR_IMPLEMENT_READ_TOOLS=on`일 때만 켜진다. 꺼져 있으면 IMPLEMENT는 1 turn·도구 없음이다(#368).
 
 Semantic `REVIEW`의 AI Reviewer도 **untrusted reasoning worker**로 취급한다. Reviewer는 trusted provenance를 직접 만들 수 없고, 구조화된 raw `reviewer.json`만 candidate output으로 남긴다. 현재 GitHub adapter는 Reviewer를 팀 소유 Private subscription executor(Claude Max, opus)에 1회 요청으로 위임하지만 core의 Reviewer output 계약은 provider-neutral하다.
 
