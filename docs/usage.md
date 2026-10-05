@@ -145,6 +145,15 @@ PLAN은 Private subscription executor가 1회 실행하며 모델은 기본 sonn
 
 `ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
 
+### PLAN이 보는 Context
+
+Planner는 도구 없이 trusted 단계가 고른 Context Pack(최대 12개 파일, 80KB)만 봅니다. Issue 본문을 이렇게 쓰면 필요한 파일이 Context에 들어갈 가능성이 높아집니다.
+
+- 고칠 파일이나 근거 파일은 `` `src/web-main.ts` ``처럼 backtick 경로로 적습니다. 이 경로가 우선 들어갑니다.
+- 손대지 않을 파일은 "`` `src/old.ts` `` 정리는 이 Issue 밖입니다"처럼 범위 밖이라고 적습니다. "이 Issue 밖", "범위 밖", "별도 Issue로 다룬다", "out of scope"가 있는 문장이나 그런 제목 아래 목록에만 나오는 경로는 우선 경로가 되지 않고 단어 점수도 올리지 않습니다. "바꾸지 않는다" 같은 금지 문장은 범위 밖 표시가 아닙니다.
+
+Context의 App source에는 그 source를 import하는 직접 테스트가 함께 들어갑니다. 둘을 같이 넣을 자리가 없으면 그 source를 뺍니다. 그 뒤 남은 예산으로 source와 테스트를 함께 다시 넣습니다. 이때 둘을 줄여서 넣을 수 있지만, 줄인 파일이 4,000B보다 작아지면 넣지 않습니다.
+
 ### 변경 대상 소스를 import하는 기존 테스트
 
 Planner가 Context Pack에서 기존 테스트를 봤더라도 "수정이 필요할 때만 포함" 판단을 틀리면, Worker는 scope 밖 테스트를 고칠 수 없어 deterministic CI가 fail-closed 됩니다. 그래서 trusted validation 단계가 변경 대상 App 소스를 import하는 Context Pack 안의 기존 테스트를 `allowedPaths`에 결정적으로 추가합니다. `package-lock.json` companion과 같은 원칙입니다.

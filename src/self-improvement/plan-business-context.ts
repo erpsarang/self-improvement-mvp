@@ -14,6 +14,7 @@ import {
   type PlanContextPackPayload,
 } from "./planner.js";
 import { isCanonicalFrameworkTarget } from "./plan-ai-call-site-context.js";
+import { requirementOutOfScopePaths } from "./plan-context-policy.js";
 
 interface BusinessContextBudget {
   readonly maxFiles?: number;
@@ -80,10 +81,11 @@ function requirementTerms(requirement: string): string[] {
 
 function requirementRuntimePathHints(requirement: string, sourcePaths: readonly string[], contextPaths: ReadonlySet<string>): string[] {
   const sourceSet = new Set(sourcePaths);
+  const outOfScope = requirementOutOfScopePaths(requirement);
   const result: string[] = [];
   for (const match of requirement.matchAll(/`([A-Za-z0-9._/-]{3,500})`/g)) {
     const path = match[1]!;
-    if (!path.startsWith("src/") || isFrameworkSource(path) || !sourceSet.has(path) || !contextPaths.has(path)) continue;
+    if (outOfScope.has(path) || !path.startsWith("src/") || isFrameworkSource(path) || !sourceSet.has(path) || !contextPaths.has(path)) continue;
     if (!result.includes(path)) result.push(path);
   }
   return result;
@@ -540,9 +542,10 @@ export function augmentPlanContextWithDirectTestEvidence(
   // source/test는 기존 관계 보호와 source 탈락 규칙을 그대로 따른다 (App #284 PLAN run 36961359658: README.md 탈락).
   const pinned = new Set(requirementPaths.filter((path) => !isTestLike(path) && !isRuntimeSource(path)));
   let current = context;
+  const dropped: PlanContextFile[] = [];
   for (;;) {
     const fitted = fitDirectTestEvidence(target, current, pinned);
-    if (fitted.pack) return withSourceHarnessTests(target, fitted.pack, pinned);
+    if (fitted.pack) return withSourceHarnessTests(target, refillDroppedSources(target, fitted.pack, dropped), pinned);
     // 보호 evidence가 예산을 넘으면 PLAN 전체를 멈추지 않고, 직접 테스트가 Context에 없는 App source를
     // 뒤(낮은 우선순위)부터 뺀다. source가 빠지면 그 테스트도 필요 없으므로 "Context의 App source에는
     // 직접 테스트가 함께 있다"는 경계는 유지된다 (App #266 PLAN run 36448765210: 요구와 무관한
@@ -558,8 +561,41 @@ export function augmentPlanContextWithDirectTestEvidence(
         `PLAN Context cannot fit direct impacted test evidence within trusted budget: ${fitted.missingDirectTests.join(", ")}`,
       );
     }
+    dropped.push(droppable);
     current = rebind(current.repository, current.sha, current.files.filter((file) => file.path !== droppable.path));
   }
+}
+
+const REFILL_MIN_FILE_BYTES = 4_000;
+
+/**
+ * 직접 테스트를 함께 넣지 못해 뺀 App source를, 남은 예산 안에서 그 직접 테스트와 함께 다시 넣는다.
+ * 예산은 둘에 반씩 나누고, 한쪽이 작으면 남는 몫을 다른 쪽에 준다. source는 원래 excerpt의 앞부분을
+ * 그대로 줄여 쓰므로 초점 위치가 바뀌지 않는다. 줄인 쪽이 REFILL_MIN_FILE_BYTES보다 작아지면 넣지 않는다.
+ * 기존 파일은 줄이거나 빼지 않는다 (App #310 PLAN run 37265738573: src/web-main.ts를 뺀 뒤 20,000B가 비어 있었다).
+ */
+function refillDroppedSources(target: string, context: PlanContextPack, dropped: readonly PlanContextFile[]): PlanContextPack {
+  let files = [...context.files];
+  for (const source of [...dropped].reverse()) {
+    const testPath = strongestDirectTest(target, source.path);
+    if (!testPath || files.some((file) => file.path === source.path || file.path === testPath)) continue;
+    if (files.length + 2 > PLAN_CONTEXT_MAX_FILES) break;
+    const free = PLAN_CONTEXT_MAX_BYTES - files.reduce((sum, file) => sum + file.byteLength, 0);
+    const testBudget = Math.min(PLAN_CONTEXT_MAX_FILE_BYTES, Math.max(Math.floor(free / 2), free - source.byteLength));
+    if (testBudget < 1) break;
+    const test = contextFile(target, testPath, [], testBudget);
+    if (!test || (test.byteLength < lstatSync(join(target, testPath)).size && test.byteLength < REFILL_MIN_FILE_BYTES)) continue;
+    const content = trimUtf8(source.content, free - test.byteLength);
+    const byteLength = Buffer.byteLength(content, "utf8");
+    if (byteLength < 1 || (content !== source.content && byteLength < REFILL_MIN_FILE_BYTES)) continue;
+    files = [...files, {
+      ...source,
+      byteLength,
+      contentDigest: createHash("sha256").update(content, "utf8").digest("hex"),
+      content,
+    }, test];
+  }
+  return files.length === context.files.length ? context : rebind(context.repository, context.sha, files);
 }
 
 /**

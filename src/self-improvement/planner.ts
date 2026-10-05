@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { TextDecoder } from "node:util";
 import { isFrameworkOwnedPath } from "./product-evaluation.js";
+import { requirementOutOfScopePaths, withoutOutOfScopePathMentions } from "./plan-context-policy.js";
 
 // PLAN read evidence 파일 수. IMPLEMENT write 범위(PLAN_IMPLEMENT_MAX_FILES)와 의미가 다르다.
 // 3~8개 변경 범위를 정하려면 더 많은 파일을 읽어야 하므로 분리한다. byte 한도(80KB)는 그대로다(#312).
@@ -133,8 +134,10 @@ function requirementAnchors(requirement: string): string[] {
 
 function requirementPathAnchors(requirement: string): string[] {
   const anchors: string[] = [];
+  const outOfScope = requirementOutOfScopePaths(requirement);
   for (const match of requirement.matchAll(/`([A-Za-z0-9._/-]{3,500})`/g)) {
     const path = match[1]!;
+    if (outOfScope.has(path)) continue;
     if (!path.includes("/") || isAbsolute(path) || path.includes("\\") || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) continue;
     if (!anchors.includes(path)) anchors.push(path);
   }
@@ -491,7 +494,7 @@ export function selectPlanContext(
     throw new Error("Invalid PLAN context budget");
   }
 
-  const terms = requirementTerms(requirement);
+  const terms = requirementTerms(withoutOutOfScopePathMentions(requirement));
   const anchors = requirementAnchors(requirement);
   const pathAnchors = requirementPathAnchors(requirement);
   const frameworkApplicationTarget = isFrameworkApplicationTarget(target, repository);
