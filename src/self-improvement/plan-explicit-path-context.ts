@@ -12,6 +12,7 @@ import {
   type PlanContextPackPayload,
 } from "./planner.js";
 import { strongestDirectTest } from "./plan-business-context.js";
+import { requirementOutOfScopePaths } from "./plan-context-policy.js";
 
 interface ExplicitPathContextBudget {
   readonly maxFiles?: number;
@@ -147,7 +148,7 @@ function requirementPathAnchors(requirement: string): string[] {
   return anchors;
 }
 
-/** 요구에 exact path로 적힌 파일. 과거 참고/범위 밖으로 표시된 경로는 제외한다. */
+/** 요구에 exact path로 적힌 파일. 과거 참고/범위 밖으로 표시된 경로(yaml 역할 또는 문장)는 제외한다. */
 export function prioritizedRequirementPaths(requirement: string): string[] {
   const hints = structuredPlanContextHints(requirement);
   const priority = [
@@ -155,7 +156,7 @@ export function prioritizedRequirementPaths(requirement: string): string[] {
     ...hints.requiredEvidence,
     ...hints.validationEvidence,
   ];
-  const deferred = new Set([...hints.historicalReferences, ...hints.outOfScope]);
+  const deferred = new Set([...hints.historicalReferences, ...hints.outOfScope, ...requirementOutOfScopePaths(requirement)]);
   for (const path of requirementPathAnchors(requirement)) {
     if (deferred.has(path) || priority.includes(path)) continue;
     priority.push(path);

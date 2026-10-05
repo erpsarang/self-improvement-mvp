@@ -191,8 +191,10 @@ test("요구에 exact path로 적힌 문서는 direct test 보강이 예산 때�
 
     const pinned = augmentPlanContextWithDirectTestEvidence(root, explicit, prioritizedRequirementPaths(requirement));
     verifyPlanContextPack(pinned);
-    assert.deepEqual(pinned.files.map((file) => file.path), ["README.md", "src/a.ts", "src/b.ts", "test/a.test.ts", "test/b.test.ts"]);
+    assert.deepEqual(pinned.files.map((file) => file.path), ["README.md", "src/a.ts", "src/b.ts", "test/a.test.ts", "test/b.test.ts", "src/c.ts", "test/c.test.ts"]);
     // source/test는 기존 규칙대로 직접 테스트가 없는 뒤쪽 source부터 빠지고, 남은 source에는 직접 테스트가 함께 있다.
+    // 뺀 source는 남은 예산으로 직접 테스트와 함께 줄여서 다시 들어온다 (App #310 PLAN run 37265738573).
+    assert.ok(pinned.totalBytes <= 80_000);
     assert.deepEqual(augmentPlanContextWithDirectTestEvidence(root, explicit, prioritizedRequirementPaths(requirement)), pinned, "같은 입력이면 같은 결과");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
