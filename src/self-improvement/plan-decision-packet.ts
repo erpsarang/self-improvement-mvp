@@ -25,6 +25,8 @@ export interface PlanDecisionScope {
 
 export interface PlanDecisionInput {
   readonly summary: string;
+  /** 격리 읽기 도구로 실행한 PLAN이 Context Pack 밖에서 근거로 삼고 trusted가 target SHA에서 다시 확인한 파일(#375). */
+  readonly additionalEvidence?: readonly { readonly evidenceId: string; readonly path: string }[];
   readonly acceptanceCriteria: readonly string[];
   readonly testStrategy: readonly string[];
   readonly questions: readonly string[];
@@ -109,6 +111,14 @@ export function renderPlanDecisionPacket(plan: PlanDecisionInput, options: { max
     },
     { key: "acceptanceCriteria", dropOrder: 2, text: `**완료조건 (acceptanceCriteria):**\n${bullets(plan.acceptanceCriteria, "없음")}` },
     { key: "testStrategy", dropOrder: 1, text: `**테스트 계획 (testStrategy):**\n${bullets(plan.testStrategy, "없음")}` },
+    ...(plan.additionalEvidence && plan.additionalEvidence.length > 0
+      ? [{
+          key: "additionalEvidence",
+          text: `**AI가 Context Pack 밖에서 근거로 삼은 파일 (읽기 도구로 읽음, trusted가 target SHA에서 다시 확인):**\n${plan.additionalEvidence
+            .map((entry) => `- ${entry.evidenceId} \`${entry.path}\``)
+            .join("\n")}`,
+        }]
+      : []),
     {
       key: "validationCommands",
       text: `**검증 명령 (validationCommands, trusted CI가 실행):**\n${codeList(scope.validationCommands, scope.ready ? "없음" : "미확정 (ready=false)")}`,

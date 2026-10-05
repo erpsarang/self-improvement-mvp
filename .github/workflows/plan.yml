@@ -297,7 +297,8 @@ jobs:
   resolve:
     needs: [plan, request]
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # executor의 격리 읽기 도구 PLAN(step 상한 10분, #375)까지 기다린다. 대기 loop는 15분이다.
+    timeout-minutes: 18
     permissions:
       contents: read
       actions: read
@@ -313,6 +314,7 @@ jobs:
       failure_reason: ${{ steps.validate.outputs.failure_reason }}
     steps:
       - name: Wait for subscription PLAN result
+        id: wait
         uses: actions/github-script@v7
         env:
           PLAN_IDENTITY: ${{ needs.plan.outputs.identity }}
@@ -341,8 +343,8 @@ jobs:
               `target=${identity.targetSha}`,
               `requirement=${identity.requirement.digest}`,
             ].join(' ');
-            const resultPattern = /<!-- ai-dev-framework:PLAN_RESULT v=1 request=([0-9a-f]{64}) issue=([1-9]\d*) repository=([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) target=([0-9a-f]{40}) requirement=([0-9a-f]{64}) run=([1-9]\d*) attempt=([1-9]\d*) artifact=([1-9]\d*) digest=([0-9a-f]{64}) model=(opus|sonnet) encoding=gzip-base64 -->/;
-            for (let poll = 0; poll < 60; poll += 1) {
+            const resultPattern = /<!-- ai-dev-framework:PLAN_RESULT v=1 request=([0-9a-f]{64}) issue=([1-9]\d*) repository=([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) target=([0-9a-f]{40}) requirement=([0-9a-f]{64}) run=([1-9]\d*) attempt=([1-9]\d*) artifact=([1-9]\d*) digest=([0-9a-f]{64}) model=(opus|sonnet)(?: tools=(read))? encoding=gzip-base64 -->/;
+            for (let poll = 0; poll < 90; poll += 1) {
               const comments = await github.paginate(github.rest.issues.listComments, {
                 ...context.repo,
                 issue_number: identity.requirement.issueNumber,
@@ -378,7 +380,9 @@ jobs:
                 const output = path.join(process.env.RUNNER_TEMP, 'plan-result');
                 fs.mkdirSync(output, { recursive: true });
                 fs.writeFileSync(path.join(output, 'raw-plan.json'), raw);
-                core.info(`Received PLAN_RESULT comment ${result.id}`);
+                // executor가 격리 읽기 도구로 실행한 결과에만 tools=read를 붙인다. 이 값만 Pack 밖 근거를 허용한다(#375).
+                core.setOutput('read_tools', match[11] === 'read' ? 'true' : 'false');
+                core.info(`Received PLAN_RESULT comment ${result.id} (read tools: ${match[11] === 'read'})`);
                 return;
               }
               await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -478,6 +482,7 @@ jobs:
         env:
           PLAN_TARGET: ${{ github.workspace }}/plan-target-validation
           PLAN_OUTPUT: ${{ runner.temp }}/ai-plan
+          PLAN_EXECUTOR_READ_TOOLS: ${{ steps.wait.outputs.read_tools }}
 
       - name: Store PLAN only
         id: upload

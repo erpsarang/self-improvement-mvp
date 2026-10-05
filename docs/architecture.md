@@ -158,7 +158,7 @@ executor repo (Private, 팀 소유)
 - Framework와 App, App과 App이 같은 executor나 같은 구독 계정을 공유하지 않는다.
 - executor는 allowlist에 없는 repository의 요청을 Claude 호출 전에 거부한다.
 - 동일 Requirement/Handoff/Context/Prompt/실행정책의 성공 AI call은 artifact 재사용을 우선한다.
-- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker와 PLAN 둘뿐이고, 각각 아래 "IMPLEMENT Worker의 격리된 읽기 도구"와 "PLAN의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. IMPLEMENT 예외는 executor에 구현되어 있고(`erpsarang/subscription-ai-executor#27`), executor 저장소 변수 `EXECUTOR_IMPLEMENT_READ_TOOLS=on`일 때만 켜진다. 변수가 비어 있으면 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368). PLAN 예외는 아직 구현 전이며, 현재 PLAN은 1 turn·도구 없음이다(#375).
+- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker와 PLAN 둘뿐이고, 각각 아래 "IMPLEMENT Worker의 격리된 읽기 도구"와 "PLAN의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. IMPLEMENT 예외는 executor에 구현되어 있고(`erpsarang/subscription-ai-executor#27`), executor 저장소 변수 `EXECUTOR_IMPLEMENT_READ_TOOLS=on`일 때만 켜진다. 변수가 비어 있으면 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368). PLAN 예외는 executor(`erpsarang/subscription-ai-executor#29`)와 Framework에 구현되어 있다. executor 저장소 변수 `EXECUTOR_PLAN_READ_TOOLS=on`이고 PLAN request prompt 첫 줄에 Framework의 지원 표시가 있을 때만 켜진다. 그렇지 않으면 PLAN은 1 turn·도구 없음이다(#375).
 - 구독 사용 한도는 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
 - Framework 내부 Cost Gate가 호출 횟수·중복 호출을 별도로 통제한다. 요청 모델·effort·실제 모델 ID·토큰은 executor job log와 runner journal에 남는다.
 - 비용 경계 위반 또는 정해진 budget 초과는 fail-open하지 않고 STOP/ON_HOLD 후보가 된다.
@@ -194,6 +194,11 @@ Framework는 이 예외를 이렇게 쓴다.
 4. **근거 검증의 범위는 Pack과 확장 evidence의 합이다.** `analysis`의 근거와 `allowedPaths` 중 이미 있는 파일은 둘 중 하나에 있어야 한다. 근거는 파일 단위다. PLAN이 finding에 path나 원문 quote를 직접 적어 근거로 삼는 방식은 쓰지 않는다.
 5. **나머지 PLAN 계약과 승인 경로는 바꾸지 않는다.** `allowedPaths` 상한 8개, `questions`와 `ready`의 규칙, Human `PLAN-승인`, PLAN_AUTHORIZE의 exact artifact 재검증은 그대로다. 확장 evidence는 authority가 아니다. 무엇을 바꿀지 승인하는 것은 계속 사람이다.
 6. **켜는 스위치는 IMPLEMENT와 따로 둔다.** executor 저장소 변수로 PLAN 읽기 도구만 따로 켠다. 꺼져 있으면 PLAN은 지금처럼 1 turn·도구 없음이다. 읽기 도구 없이 실행한 PLAN이 확장 evidence를 밝히면 그 결과는 거부한다.
+
+Framework는 이 예외를 이렇게 쓴다.
+- PLAN prompt 첫 줄에 지원 표시를 붙이고, PLAN schema에 `additionalEvidence`(X1~X8)를 둔다. 표시는 권한을 주지 않는다.
+- executor는 격리 경로로 실행한 결과의 PLAN_RESULT marker에만 `tools=read`를 붙인다. trusted 검증은 이 표시가 있을 때만 Pack 밖 근거를 받는다.
+- 확장 evidence는 PLAN artifact의 `plan.additionalEvidence`(경로·byte 수·digest)에 남는다. PLAN artifact wrapper와 PLAN_AUTHORIZE·Handoff 검증은 바뀌지 않는다.
 
 쓰기·실행 도구는 PLAN에도 허용하지 않는다. Pack 밖 근거 파일 수의 상한을 바꾸거나 다른 근거 방식(path·quote 인용 뒤 재검증)으로 바꾸려면 이 문서를 다시 바꾸는 별도 결정이 필요하다.
 
