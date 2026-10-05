@@ -149,6 +149,42 @@ jobs:
               return { commentId: Number(results[0].id), raw };
             }
 
+            // executor가 request를 처리하지 못했다는 신호다(Private failure_notice.py). RESULT와 같은 identity 필드에 사유만 붙는다.
+            // FAILED는 결과가 아니다. Public은 이것을 보면 기다리지 않고 멈출 뿐 다음 단계를 시작하지 않는다.
+            const SUBSCRIPTION_FAILURE_REASONS = ['REQUEST_REJECTED', 'EXECUTION_FAILED', 'RESULT_POST_FAILED'];
+
+            function subscriptionFailureMarkerFromFields(kind, fields, reason) {
+              if (!SUBSCRIPTION_FAILURE_REASONS.includes(reason)) throw new Error('subscription failure reason is invalid');
+              return `<!-- ai-dev-framework:${kind}_FAILED v=1 ${fields} reason=${reason} -->`;
+            }
+
+            function subscriptionFailureMarker(kind, identity, requestId, artifactId, artifactDigest, reason) {
+              return subscriptionFailureMarkerFromFields(kind, subscriptionMarkerFields(kind, identity, requestId, artifactId, artifactDigest), reason);
+            }
+
+            // owner가 남긴 exact FAILED가 있으면 가장 먼저 남은 댓글의 사유를 돌려준다. 없으면 null, identity·사유가 어긋나면 throw.
+            // executor job 재실행으로 FAILED가 여러 번 올라와도 멈춘다는 뜻은 같으므로 중복은 받는다.
+            function selectSubscriptionFailure(kind, comments, { requestId, requestCommentId, owner, expectedFields }) {
+              subscriptionKind(kind);
+              const prefix = `<!-- ai-dev-framework:${kind}_FAILED v=1 request=${requestId} `;
+              const failures = comments
+                .filter((comment) => Number(comment.id) > requestCommentId)
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === owner
+                )
+                .filter((comment) => typeof comment.body === 'string' && comment.body.includes(prefix));
+              if (failures.length === 0) return null;
+              const reasons = failures.map((comment) => {
+                const marker = comment.body.split(/\r?\n/)[0];
+                const reason = SUBSCRIPTION_FAILURE_REASONS.find((value) => marker === subscriptionFailureMarkerFromFields(kind, expectedFields, value));
+                if (!reason) throw new Error(`${kind}_FAILED identity mismatch`);
+                return reason;
+              });
+              return { commentId: Number(failures[0].id), reason: reasons[0] };
+            }
+
             // 같은 run의 trusted job이 올린 request artifact를 id로 다시 받아 zip digest, 파일 집합, identity binding을 확인한다.
             async function loadSubscriptionRequest({ kind, github, context, artifactName, artifactId, artifactDigest, issueNumber, directory }) {
               const spec = subscriptionKind(kind);
@@ -283,6 +319,8 @@ jobs:
     timeout-minutes: 20
     outputs:
       timed_out: ${{ steps.wait.outputs.timed_out }}
+      executor_failed: ${{ steps.wait.outputs.executor_failed }}
+      failure_reason: ${{ steps.wait.outputs.failure_reason }}
 
     steps:
       - name: subscription result 대기 및 exact 검증
@@ -387,6 +425,42 @@ jobs:
               return { commentId: Number(results[0].id), raw };
             }
 
+            // executor가 request를 처리하지 못했다는 신호다(Private failure_notice.py). RESULT와 같은 identity 필드에 사유만 붙는다.
+            // FAILED는 결과가 아니다. Public은 이것을 보면 기다리지 않고 멈출 뿐 다음 단계를 시작하지 않는다.
+            const SUBSCRIPTION_FAILURE_REASONS = ['REQUEST_REJECTED', 'EXECUTION_FAILED', 'RESULT_POST_FAILED'];
+
+            function subscriptionFailureMarkerFromFields(kind, fields, reason) {
+              if (!SUBSCRIPTION_FAILURE_REASONS.includes(reason)) throw new Error('subscription failure reason is invalid');
+              return `<!-- ai-dev-framework:${kind}_FAILED v=1 ${fields} reason=${reason} -->`;
+            }
+
+            function subscriptionFailureMarker(kind, identity, requestId, artifactId, artifactDigest, reason) {
+              return subscriptionFailureMarkerFromFields(kind, subscriptionMarkerFields(kind, identity, requestId, artifactId, artifactDigest), reason);
+            }
+
+            // owner가 남긴 exact FAILED가 있으면 가장 먼저 남은 댓글의 사유를 돌려준다. 없으면 null, identity·사유가 어긋나면 throw.
+            // executor job 재실행으로 FAILED가 여러 번 올라와도 멈춘다는 뜻은 같으므로 중복은 받는다.
+            function selectSubscriptionFailure(kind, comments, { requestId, requestCommentId, owner, expectedFields }) {
+              subscriptionKind(kind);
+              const prefix = `<!-- ai-dev-framework:${kind}_FAILED v=1 request=${requestId} `;
+              const failures = comments
+                .filter((comment) => Number(comment.id) > requestCommentId)
+                .filter((comment) =>
+                  comment.author_association === 'OWNER' &&
+                  comment.user?.type === 'User' &&
+                  comment.user?.login === owner
+                )
+                .filter((comment) => typeof comment.body === 'string' && comment.body.includes(prefix));
+              if (failures.length === 0) return null;
+              const reasons = failures.map((comment) => {
+                const marker = comment.body.split(/\r?\n/)[0];
+                const reason = SUBSCRIPTION_FAILURE_REASONS.find((value) => marker === subscriptionFailureMarkerFromFields(kind, expectedFields, value));
+                if (!reason) throw new Error(`${kind}_FAILED identity mismatch`);
+                return reason;
+              });
+              return { commentId: Number(failures[0].id), reason: reasons[0] };
+            }
+
             // 같은 run의 trusted job이 올린 request artifact를 id로 다시 받아 zip digest, 파일 집합, identity binding을 확인한다.
             async function loadSubscriptionRequest({ kind, github, context, artifactName, artifactId, artifactDigest, issueNumber, directory }) {
               const spec = subscriptionKind(kind);
@@ -464,6 +538,7 @@ jobs:
               throw new Error('subscription request identity mismatch');
             }
             const expectedMarker = subscriptionResultMarker(kind, identity, requestId, artifactId, artifactDigest);
+            const expectedFields = subscriptionMarkerFields(kind, identity, requestId, artifactId, artifactDigest);
 
             for (let poll = 0; poll < 90; poll += 1) {
               const comments = await github.paginate(github.rest.issues.listComments, {
@@ -471,6 +546,18 @@ jobs:
                 issue_number: issueNumber,
                 per_page: 100,
               });
+              // executor가 실패를 알렸으면 timeout까지 기다리지 않는다(App #300). RESULT보다 먼저 봐서 둘 다 있으면 멈춘다.
+              const failure = selectSubscriptionFailure(kind, comments, {
+                requestId,
+                requestCommentId,
+                owner: context.repo.owner,
+                expectedFields,
+              });
+              if (failure) {
+                core.setOutput('executor_failed', 'true');
+                core.setOutput('failure_reason', failure.reason);
+                throw new Error(`Private subscription executor reported ${kind}_FAILED reason=${failure.reason} (comment ${failure.commentId})`);
+              }
               const result = selectSubscriptionResult(kind, comments, {
                 requestId,
                 requestCommentId,
@@ -486,7 +573,7 @@ jobs:
               }
               await new Promise((resolve) => setTimeout(resolve, 10_000));
             }
-            // 검증 실패와 구분해 timeout일 때만 timeout_notice가 요청 Issue에 STOPPED를 남긴다.
+            // 검증 실패와 구분해 timeout이거나 executor가 실패를 알렸을 때만 stopped_notice가 요청 Issue에 STOPPED를 남긴다.
             core.setOutput('timed_out', 'true');
             throw new Error(`Timed out waiting for private subscription executor ${kind}_RESULT`);
 
@@ -499,20 +586,21 @@ jobs:
 
   # 결과 대기가 timeout으로 끝나면 Actions 로그에만 남고 요청 Issue는 요청 댓글만 남긴 채 침묵했다
   # (self-improvement-mvp #362 run 37011992131, App REVIEW executor run 37024712926: 둘 다 executor runner가 약 23분 offline).
+  # executor가 FAILED marker로 실패를 알린 경우도 같은 자리에서 실제 사유로 알린다(App #300 1차 IMPLEMENT).
   # 사람이 Issue만 보고도 멈춘 이유와 다음 행동을 알 수 있게 STOPPED 댓글 하나를 남긴다. 결과·후속 단계는 만들지 않는다.
-  timeout_notice:
+  stopped_notice:
     needs: [request, wait]
     if: >-
       !cancelled() &&
       needs.wait.result == 'failure' &&
-      needs.wait.outputs.timed_out == 'true'
+      (needs.wait.outputs.timed_out == 'true' || needs.wait.outputs.executor_failed == 'true')
     permissions:
       issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
     steps:
-      - name: executor timeout을 요청 Issue에 STOPPED로 남김
+      - name: executor timeout 또는 실패를 요청 Issue에 STOPPED로 남김
         uses: actions/github-script@v7
         env:
           SUBSCRIPTION_KIND: ${{ inputs.kind }}
@@ -520,6 +608,7 @@ jobs:
           SUBSCRIPTION_ISSUE_NUMBER: ${{ inputs.issue_number }}
           SUBSCRIPTION_REQUEST_ID: ${{ needs.request.outputs.request_id }}
           AI_EXECUTOR_REPOSITORY: ${{ vars.AI_EXECUTOR_REPOSITORY }}
+          EXECUTOR_FAILURE_REASON: ${{ needs.wait.outputs.failure_reason }}
         with:
           script: |
             const kind = process.env.SUBSCRIPTION_KIND;
@@ -527,25 +616,46 @@ jobs:
             const requestId = process.env.SUBSCRIPTION_REQUEST_ID || '';
             // kind는 request job이 SUBSCRIPTION_KINDS로 이미 검증했다. 여기서는 marker에 넣을 형식만 본다.
             if (!/^[A-Z_]+$/.test(kind) || !Number.isSafeInteger(issueNumber) || issueNumber < 1 || !/^[0-9a-f]{64}$/.test(requestId)) {
-              throw new Error('invalid subscription identity for timeout notice');
+              throw new Error('invalid subscription identity for stop notice');
             }
             const label = (process.env.SUBSCRIPTION_LABEL || kind).replace(/[`\r\n]/g, ' ').trim().slice(0, 80);
             const executor = process.env.AI_EXECUTOR_REPOSITORY || '';
             const executorText = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(executor)
               ? `executor 저장소 \`${executor}\``
               : 'executor 저장소(이 저장소 변수 `AI_EXECUTOR_REPOSITORY`)';
-            const markerPrefix = `<!-- self-improvement:SUBSCRIPTION_TIMEOUT kind=${kind} request=${requestId} `;
+            // executor가 FAILED marker로 알린 실패면 실제 사유를, 아니면 timeout을 알린다. 사유는 wait job이 exact marker에서 읽은 값뿐이다.
+            const FAILURE_NEXT_ACTIONS = {
+              REQUEST_REJECTED: 'executor가 request artifact를 받거나 검증하지 못했습니다. 이 run이 끝난 뒤 늦게 처리된 요청이면 정상적인 거부입니다.',
+              EXECUTION_FAILED: 'executor의 Claude 호출 또는 결과 형식 검증이 실패했습니다. AI 출력이 계약을 지키지 못한 일시적 실패일 수 있습니다.',
+              RESULT_POST_FAILED: 'executor가 결과를 만들었지만 결과를 Issue에 올리지 못했습니다. executor의 bridge token 권한과 만료를 확인하세요.',
+            };
+            const failureReason = process.env.EXECUTOR_FAILURE_REASON || '';
+            if (failureReason && !Object.hasOwn(FAILURE_NEXT_ACTIONS, failureReason)) {
+              throw new Error('invalid executor failure reason');
+            }
+            const markerPrefix = failureReason
+              ? `<!-- self-improvement:SUBSCRIPTION_EXECUTOR_FAILED kind=${kind} request=${requestId} `
+              : `<!-- self-improvement:SUBSCRIPTION_TIMEOUT kind=${kind} request=${requestId} `;
             const existing = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
               issue_number: issueNumber,
               per_page: 100,
             });
             if (existing.some((comment) => typeof comment.body === 'string' && comment.body.includes(markerPrefix))) {
-              core.info('timeout already recorded for this subscription request');
+              core.info('stop already recorded for this subscription request');
               return;
             }
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = [
+            const body = (failureReason ? [
+              `${markerPrefix}reason=${failureReason} run-id=${context.runId} run-attempt=${process.env.GITHUB_RUN_ATTEMPT} -->`,
+              `## ${label}: executor가 요청을 처리하지 못해 멈춤`,
+              `Request: \`${requestId}\``,
+              `Workflow run: [${context.runId}](${runUrl}) / attempt: ${process.env.GITHUB_RUN_ATTEMPT}`,
+              `Private subscription executor가 이 요청에 ${kind}_RESULT 대신 실패(\`${failureReason}\`)를 알려 와서 이 run은 결과를 기다리지 않고 멈췄습니다. 결과 검증과 후속 단계는 실행되지 않았습니다.`,
+              '### HumanStatus: STOPPED',
+              `**현재 상황:** ${FAILURE_NEXT_ACTIONS[failureReason]}`,
+              `**다음 행동:** ${executorText}의 Actions에서 이 요청의 poller run 로그로 원인을 확인하세요. 일시적인 실패라면 이 단계를 다시 시작하세요. 다시 시작하면 새 요청이 만들어집니다.`,
+            ] : [
               `${markerPrefix}run-id=${context.runId} run-attempt=${process.env.GITHUB_RUN_ATTEMPT} -->`,
               `## ${label}: executor 결과를 받지 못해 멈춤`,
               `Request: \`${requestId}\``,
@@ -554,7 +664,7 @@ jobs:
               '### HumanStatus: STOPPED',
               '**현재 상황:** executor 응답 대기가 timeout으로 끝났습니다. AI 판단이나 trusted 검증이 실패한 것이 아닙니다. 지금까지 관측된 원인은 executor의 self-hosted runner가 offline이어서 poller job이 queued로 머문 경우입니다.',
               `**다음 행동:** ${executorText}의 Actions에서 이 요청의 poller run이 queued로 남아 있는지, Settings → Actions → Runners에서 runner가 online인지 확인하세요. runner를 되살린 뒤 이 단계를 다시 시작하세요. 이 run이 끝나면 executor는 이 요청을 stale로 거부하므로, 다시 시작하면 새 요청이 만들어집니다.`,
-            ].join('\n\n');
+            ]).join('\n\n');
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: issueNumber,

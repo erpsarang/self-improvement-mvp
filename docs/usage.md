@@ -47,9 +47,10 @@ App repo (Public)                        executor repo (Private, 팀 소유)
 
 주의:
 
-- 결과 댓글은 App repository 소유자 계정이 남긴 것만 받는다(`author_association` OWNER, login = repository owner). 그래서 지금은 `FRAMEWORK_BRIDGE_TOKEN` 계정이 App repository를 소유한 개인 계정이어야 하고, Organization 소유 App repository는 아직 지원하지 않는다.
+- 결과 댓글과 실패 댓글은 App repository 소유자 계정이 남긴 것만 받는다(`author_association` OWNER, login = repository owner). 그래서 지금은 `FRAMEWORK_BRIDGE_TOKEN` 계정이 App repository를 소유한 개인 계정이어야 하고, Organization 소유 App repository는 아직 지원하지 않는다.
 - secret 값은 repository나 문서에 기록하지 않는다.
 - self-hosted runner는 AI 단계가 돌 수 있는 동안 켜져 있어야 한다. App run은 executor 결과를 약 15분(PLAN은 약 10분)만 기다리고, 그 뒤에 runner가 job을 집으면 executor는 끝난 run의 요청을 stale로 거부한다. IMPLEMENT·REVIEW·FIX·LEARN·Product Discovery가 이렇게 timeout되면 요청 Issue에 `HumanStatus: STOPPED` 댓글이 남고, PLAN은 `HumanStatus: PLAN_FAILED` 댓글이 남는다. executor repository의 Actions에 poller run이 queued로 남아 있으면 runner가 offline인 것이다. runner를 되살린 뒤 그 단계를 다시 시작한다.
+- executor가 요청을 찾은 뒤 실패하면(request 검증 실패, Claude 호출이나 결과 형식 검증 실패, 결과 댓글 게시 실패) IMPLEMENT·REVIEW·FIX·LEARN·Product Discovery poller는 요청 Issue에 `{KIND}_FAILED` marker 댓글을 남긴다. App run은 이 댓글을 보면 timeout까지 기다리지 않고 바로 멈추고, 실제 사유와 함께 `HumanStatus: STOPPED` 댓글을 남긴다. 이 marker는 실패 신호일 뿐 결과가 아니어서 다음 단계를 시작하지 않는다. PLAN은 아직 이 경로가 없어 timeout까지 기다린다.
 
 ## 2-1. Merge-Ready PR 생성 identity (Framework 전용 GitHub App)
 
