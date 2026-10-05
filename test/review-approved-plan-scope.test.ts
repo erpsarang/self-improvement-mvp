@@ -133,6 +133,10 @@ test("PLAN 계보 Reviewer prompt는 승인된 slice만 심사 기준으로 주�
   // #310: 마지막 slice는 이전 slice 작업이 patch에 없다는 이유만으로 미완료가 되지 않는다(불필요한 continuation PLAN 방지).
   assert.match(prompt, /이전 slice는 이미 base SHA에 merge되어 있어 patch\.diff에 보이지 않습니다/);
   assert.match(prompt, /이전 slice 작업이 patch에 없다는 이유만으로 requirementComplete를 false로 반환하지 마세요/);
+  // App #300: Issue 본문이 "2단계는 이 Issue 밖(별도 요구)"이라고 적었는데도 approach의 후속 범위 때문에 false가 되어
+  // 머지 뒤 같은 Issue에 이미 구현된 일을 다시 다루는 continuation PLAN이 자동으로 돌았다.
+  assert.match(prompt, /Issue 본문이 이 Issue 밖\(별도 요구\)으로 명시한 후속 범위는 남은 Issue 요구가 아닙니다/);
+  assert.match(prompt, /그런 후속 범위만 남았고 이번 slice가 PASS이면 requirementComplete를 true로 반환하세요/);
   // 배경 절은 심사 기준 절 뒤에 온다.
   assert.ok(prompt.indexOf("## 승인된 PLAN slice") < prompt.indexOf("## Issue 요구"));
   // 기존 read-only 경계는 그대로다.
