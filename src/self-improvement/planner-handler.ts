@@ -6,11 +6,13 @@ import {
   createPlanPrompt,
   mergeDuplicateAnalysisEvidence,
   PLAN_SCHEMA,
+  rawAdditionalEvidencePaths,
   selectPlanContext,
   snapshot,
   trimReadOnlyContextToBudget,
   validatePlan,
   verifyPlanContextPack,
+  type PlanAdditionalEvidence,
   type PlanContextPack,
   type PlanImplementationScope,
 } from "./planner.js";
@@ -65,6 +67,11 @@ if (command === "prepare") {
   writeFileSync(file("prompt.md"), `${createPlanPrompt(requirement, context)}\n${planImpactTestScopeGuidance()}\n`);
   writeFileSync(file("schema.json"), JSON.stringify(PLAN_SCHEMA));
 } else if (command === "artifact") {
+  // executor가 PLAN_RESULT marker에 tools=read를 붙였는지(격리 읽기 도구로 실행했는지). plan.yml이 marker에서 읽어 넘긴다.
+  // 표시가 없으면 Pack 밖 근거를 거부한다(docs/architecture.md 4장 "PLAN의 격리된 읽기 도구" 6항).
+  const readToolsValue = process.env.PLAN_EXECUTOR_READ_TOOLS ?? "false";
+  if (readToolsValue !== "true" && readToolsValue !== "false") throw new Error("Invalid PLAN_EXECUTOR_READ_TOOLS");
+  const readTools = readToolsValue === "true";
   const input = JSON.parse(readFileSync(file("input.json"), "utf8"));
   const context = JSON.parse(readFileSync(file("PLAN-context.json"), "utf8")) as PlanContextPack;
   verifyPlanContextPack(context);
@@ -86,10 +93,15 @@ if (command === "prepare") {
   const evidenceResult = mergeDuplicateAnalysisEvidence(JSON.parse(readFileSync(file("raw-plan.json"), "utf8")));
   const companionResult = applyImpactedTestCompanions(target, context, evidenceResult.plan);
   // ready PLAN이 Context Pack 안의 읽기 전용 파일을 언급만 하고 contextPaths에 빠뜨린 경우도 결정적으로 보강한다.
-  const mentionResult = applyReadOnlyContextMentions(context, companionResult.plan);
+  const mentionResult = applyReadOnlyContextMentions(
+    context,
+    companionResult.plan,
+    readTools ? rawAdditionalEvidencePaths(companionResult.plan) : [],
+  );
   // IMPLEMENT 입력 한도를 넘으면 PLAN이 언급하지 않은 읽기 전용 참고 파일만 큰 것부터 뺀다. 쓰기 범위는 줄이지 않는다.
   const trimResult = trimReadOnlyContextToBudget(target, context, mentionResult.plan);
-  const plan = validatePlan(trimResult.plan, target, context);
+  const plan = validatePlan(trimResult.plan, target, context, { readTools });
+  const additionalEvidence = plan.additionalEvidence as PlanAdditionalEvidence[];
   writeFileSync(file("PLAN.json"), JSON.stringify({
     kind: "untrusted-plan",
     repository: input.repository,
@@ -106,6 +118,11 @@ if (command === "prepare") {
 
   const sections = [["구현 접근", "approach"], ["변경 후보", "changeCandidates"], ["완료조건", "acceptanceCriteria"], ["테스트 전략", "testStrategy"], ["확인할 사항", "questions"]];
   const contextLines = context.files.map((entry) => `- ${entry.evidenceId} → ${entry.path} (${entry.byteLength} bytes)`).join("\n");
+  const additionalLines = additionalEvidence.length > 0
+    ? `\n\n## AI가 Context Pack 밖에서 근거로 삼은 파일 (trusted가 target SHA에서 다시 확인)\n\n${additionalEvidence
+        .map((entry) => `- ${entry.evidenceId} → ${entry.path} (${entry.byteLength} bytes, sha256 ${entry.contentDigest})`)
+        .join("\n")}`
+    : "";
   const analysisLines = (plan.analysis as Array<{ evidenceId: string; path: string; contentDigest: string; finding: string }>)
     .map((entry) => `- [${entry.evidenceId}] ${entry.path}: ${entry.finding}`)
     .join("\n");
@@ -128,7 +145,7 @@ if (command === "prepare") {
         `- 검증 명령: ${scope.validationCommands.map((command) => `\`${command}\``).join(", ")}`,
       ].join("\n")
     : "- 준비 상태: **IMPLEMENT 보류**\n- 이유: PLAN의 blocking question 또는 exact scope 미확정. 이 PLAN은 자동 IMPLEMENT authority로 승격할 수 없습니다.";
-  writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${analysisLines}\n\n## IMPLEMENT 실행 범위\n\n${scopeLines}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
+  writeFileSync(file("PLAN.md"), `# PLAN (AI 제안)\n\nRepository: ${input.repository}\nSHA: ${input.sha}\nContext SHA-256: ${context.contextDigest}\n\n## AI가 본 제한된 문맥\n\n${contextLines}${additionalLines}\n\n## 업무 요구\n\n${input.requirement}\n\n## 요약\n\n${plan.summary}\n\n## 기존 코드/테스트 분석\n\n${analysisLines}\n\n## IMPLEMENT 실행 범위\n\n${scopeLines}\n\n${sections.map(([title, key]) => `## ${title}\n\n${(plan[key!] as string[]).map(item => `- ${item}`).join("\n")}`).join("\n\n")}\n`);
 
   // 사람이 PLAN 승인 여부를 판단할 재료. 검증된 PLAN 문서에서 결정적으로 렌더링하며 artifact 구성은 바꾸지 않는다.
   // provenance job이 Issue pointer 댓글에 그대로 싣고, 승인 authority는 여전히 exact artifact 재검증에 있다.

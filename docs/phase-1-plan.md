@@ -8,7 +8,7 @@
 
 workflow는 실행 시 Issue 제목/본문과 대상 저장소 기본 브랜치의 SHA를 고정합니다. AI가 해당 checkout의 코드, 테스트, 문서를 읽어 구현 접근, 변경 후보와 이유, 완료조건, 테스트 전략, 미확정 사항을 제안합니다. 분석 근거에는 실제 파일 경로와 원문 인용이 포함되며 artifact 생성 시 인용을 대조합니다. 인용 대조는 계획의 의미적 정확성을 보증하지 않으므로 사람이 가정과 제안을 확인해야 합니다.
 
-Planner는 Public workflow에서 bounded Context를 고정한 뒤 PLAN_REQUEST 1회로 executor에 넘기고, executor는 중립 디렉터리에서 도구를 모두 차단한 1 turn 호출로 실행합니다. checkout credential은 유지하지 않고 Planner job의 GitHub 권한은 contents/issues read만 부여합니다. 대상의 코드나 테스트를 실행하지 않습니다. 입력/출력 파일은 대상 밖 runner temp에 둡니다. 실행 전후 전체 대상 파일(.git 포함)의 SHA-256 목록이 다르면 artifact를 만들지 않습니다. 심볼릭 링크 등 일반 파일/디렉터리가 아닌 항목은 안전하게 실패시킵니다. 쓰기 차단은 sandbox가 담당하며 해시 비교는 추가 검사입니다.
+Planner는 Public workflow에서 bounded Context를 고정한 뒤 PLAN_REQUEST 1회로 executor에 넘기고, executor는 기본으로 중립 디렉터리에서 도구를 모두 차단한 1 turn 호출로 실행합니다. executor 변수 `EXECUTOR_PLAN_READ_TOOLS=on`이면 격리된 PLAN target SHA checkout 안에서 읽기 도구로 실행하고, Pack 밖 근거(최대 8개)는 trusted 검증이 target SHA에서 다시 확인합니다(`docs/architecture.md` 4장 "PLAN의 격리된 읽기 도구"). checkout credential은 유지하지 않고 Planner job의 GitHub 권한은 contents/issues read만 부여합니다. 대상의 코드나 테스트를 실행하지 않습니다. 입력/출력 파일은 대상 밖 runner temp에 둡니다. 실행 전후 전체 대상 파일(.git 포함)의 SHA-256 목록이 다르면 artifact를 만들지 않습니다. 심볼릭 링크 등 일반 파일/디렉터리가 아닌 항목은 안전하게 실패시킵니다. 쓰기 차단은 sandbox가 담당하며 해시 비교는 추가 검사입니다.
 
 이 workflow는 기본 브랜치에서의 수동 실행만 지원하고 PLAN artifact와 provenance 저장 및 Issue pointer 기록으로 종료합니다. 기존 v0.1 승인/구현 흐름 및 상태 모델과 연결하지 않습니다. PLAN을 생성해도 구현 승인이나 후속 단계 실행으로 이어지지 않습니다.
 

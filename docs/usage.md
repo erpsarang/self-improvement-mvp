@@ -147,7 +147,16 @@ PLAN은 Private subscription executor가 1회 실행하며 모델은 기본 sonn
 
 ### PLAN이 보는 Context
 
-Planner는 도구 없이 trusted 단계가 고른 Context Pack(최대 12개 파일, 80KB)만 봅니다. Issue 본문을 이렇게 쓰면 필요한 파일이 Context에 들어갈 가능성이 높아집니다.
+Planner는 trusted 단계가 고른 Context Pack(최대 12개 파일, 80KB)에서 시작합니다. 기본은 도구 없이 이 Pack만 봅니다.
+
+executor 저장소 변수 `EXECUTOR_PLAN_READ_TOOLS=on`이면 Planner는 격리된 PLAN target SHA checkout 안에서 읽기 도구(`Read`, `Glob`, `Grep`)로 Pack 밖 파일도 찾아 읽습니다(`docs/architecture.md` 4장 "PLAN의 격리된 읽기 도구").
+- Pack 밖에서 근거로 삼은 파일은 최대 8개까지 `additionalEvidence`(X1~X8)로 밝힙니다.
+- trusted 검증이 그 파일을 target SHA에서 다시 읽어 경로와 digest를 고정합니다. 이 파일은 `analysis` 근거와 기존 파일 `allowedPaths`에 쓸 수 있습니다.
+- 고정된 파일은 PLAN.md와 Decision Packet에 "AI가 Context Pack 밖에서 근거로 삼은 파일"로 표시됩니다.
+- 파일이 없거나, 일반 UTF-8 파일이 아니거나, 8개를 넘으면 PLAN 검증이 실패합니다.
+- executor가 결과에 `tools=read` 표시를 붙이지 않은 PLAN(도구 없이 실행된 PLAN)이 Pack 밖 근거를 밝혀도 검증이 실패합니다.
+
+변수가 켜져 있어도 Issue 본문을 이렇게 쓰면 Planner가 필요한 파일을 더 빨리 찾습니다. 변수가 꺼져 있으면 필요한 파일이 Context에 들어갈 가능성이 높아집니다.
 
 - 고칠 파일이나 근거 파일은 `` `src/web-main.ts` ``처럼 backtick 경로로 적습니다. 이 경로가 우선 들어갑니다.
 - 손대지 않을 파일은 "`` `src/old.ts` `` 정리는 이 Issue 밖입니다"처럼 범위 밖이라고 적습니다. "이 Issue 밖", "범위 밖", "별도 Issue로 다룬다", "out of scope"가 있는 문장이나 그런 제목 아래 목록에만 나오는 경로는 우선 경로가 되지 않고 단어 점수도 올리지 않습니다. "바꾸지 않는다" 같은 금지 문장은 범위 밖 표시가 아닙니다.
