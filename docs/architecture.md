@@ -158,7 +158,7 @@ executor repo (Private, 팀 소유)
 - Framework와 App, App과 App이 같은 executor나 같은 구독 계정을 공유하지 않는다.
 - executor는 allowlist에 없는 repository의 요청을 Claude 호출 전에 거부한다.
 - 동일 Requirement/Handoff/Context/Prompt/실행정책의 성공 AI call은 artifact 재사용을 우선한다.
-- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker 하나뿐이고, 아래 "IMPLEMENT Worker의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. 이 예외는 executor에 구현되어 있고(`erpsarang/subscription-ai-executor#27`), executor 저장소 변수 `EXECUTOR_IMPLEMENT_READ_TOOLS=on`일 때만 켜진다. 변수가 비어 있으면 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368).
+- retry/repair는 단계별 bounded budget을 가진다. AI 호출은 1 turn이며 도구를 쓰지 않는 것이 기본이다. 예외는 IMPLEMENT Worker와 PLAN 둘뿐이고, 각각 아래 "IMPLEMENT Worker의 격리된 읽기 도구"와 "PLAN의 격리된 읽기 도구" 조건을 모두 만족할 때만 허용한다. IMPLEMENT 예외는 executor에 구현되어 있고(`erpsarang/subscription-ai-executor#27`), executor 저장소 변수 `EXECUTOR_IMPLEMENT_READ_TOOLS=on`일 때만 켜진다. 변수가 비어 있으면 IMPLEMENT도 1 turn·도구 없음으로 실행한다(#368). PLAN 예외는 아직 구현 전이며, 현재 PLAN은 1 turn·도구 없음이다(#375).
 - 구독 사용 한도는 관측/알림 수단이며 hard execution cap으로 간주하지 않는다.
 - Framework 내부 Cost Gate가 호출 횟수·중복 호출을 별도로 통제한다. 요청 모델·effort·실제 모델 ID·토큰은 executor job log와 runner journal에 남는다.
 - 비용 경계 위반 또는 정해진 budget 초과는 fail-open하지 않고 STOP/ON_HOLD 후보가 된다.
@@ -175,7 +175,7 @@ executor repo (Private, 팀 소유)
 4. **turn 수와 실행 시간에 상한을 둔다.** 상한은 executor가 고정한다. 실제 turn 수·토큰·모델 ID는 executor job log에 남는다. 상한을 넘으면 결과 없이 실패하고, 기존 repair budget 밖의 재시도는 하지 않는다.
 5. **AI 호출 수는 늘리지 않는다.** 같은 호출 안에서 turn만 는다.
 6. **출력 계약과 Public 검증은 바꾸지 않는다.** Worker는 지금과 같은 edit JSON(`changes[]`)을 낸다. allowedPaths·base digest·anchor 검증, exact-base deterministic CI, Trusted Rail, Human Merge는 그대로다.
-7. **PLAN·REVIEW·FIX·LEARN·Product Discovery는 이 예외에 들어가지 않는다.** 이들은 계속 1 turn·도구 없음이다.
+7. **REVIEW·FIX·LEARN·Product Discovery는 이 예외에 들어가지 않는다.** 이들은 계속 1 turn·도구 없음이다. PLAN은 아래 "PLAN의 격리된 읽기 도구"의 조건으로 따로 허용한다.
 
 Framework는 이 예외를 이렇게 쓴다.
 - Context Pack 원문은 384KB까지 보관한다. Worker prompt에는 96KB까지만 싣고, 넘치는 큰 파일은 `/work` 참조로 바꾼다.
@@ -183,6 +183,19 @@ Framework는 이 예외를 이렇게 쓴다.
 - 표시는 권한을 주지 않는다. 출력 검증은 보관한 원문으로 한다.
 
 쓰기·실행 도구(sandbox 안에서 수정하고 테스트를 돌리는 Worker)는 이 조항의 범위가 아니다. 허용하려면 이 문서를 다시 바꾸는 별도 결정이 필요하다.
+
+### PLAN의 격리된 읽기 도구
+
+도구 없이 1 turn으로 trusted 단계가 고른 Context Pack(12개 파일, 80KB)만 보는 PLAN은, 필요한 파일이 Pack에 없으면 `ready=false`가 되거나 범위를 잘못 잡는다. 그러면 사람이 Issue에 경로를 적고 PLAN을 다시 돌려야 한다(App #310 run 37265738573, App #300). Context 선택 규칙을 고쳐 왔지만(#244, #251, #259, #303, #311) "무엇이 필요한지 미리 맞혀야 한다"는 구조는 그대로다. 그래서 PLAN에 다음 조건을 **모두** 만족할 때 읽기 도구를 허용한다. 하나라도 확인할 수 없으면 executor는 AI 호출 전에 멈추고, trusted 검증은 PLAN artifact를 만들지 않는다(fail-closed).
+
+1. **격리 조건은 IMPLEMENT와 같다.** 위 소절의 1~5항(읽기 도구만, 두 겹 격리, 자격 증명을 도구로 읽을 수 없음, turn·시간 상한, AI 호출 수 유지)을 그대로 적용한다. 도구가 닿는 범위는 PLAN target exact SHA checkout 하나다. PLAN 결과도 Public 댓글로 게시되므로, 도구로 읽을 수 있는 것은 모두 공개될 수 있다고 가정한다.
+2. **Context Pack은 그대로 준다.** Pack은 "어디부터 보라"는 시작점이고, Pack 안 파일의 근거는 지금처럼 Pack이 발급한 evidence ID로만 댄다.
+3. **Pack 밖 근거는 확장 evidence로만, 최대 8개까지 댄다.** PLAN은 도구로 읽고 근거로 삼은 Pack 밖 파일을 저장소 상대 경로로 최대 8개까지 밝힌다. trusted 단계는 그 파일들을 PLAN target exact SHA에서 다시 읽는다. Context Pack 후보와 같은 경로 규칙(`.git` 밖 저장소 안의 일반 UTF-8 파일이고, 경로가 안전한 문자로만 되어 있음)을 지키는지 확인하고, 경로와 digest를 확장 evidence로 고정해 PLAN artifact와 사람에게 보이는 Decision Packet에 남긴다. 하나라도 읽을 수 없거나 규칙에 어긋나거나 8개를 넘으면 PLAN artifact를 만들지 않는다.
+4. **근거 검증의 범위는 Pack과 확장 evidence의 합이다.** `analysis`의 근거와 `allowedPaths` 중 이미 있는 파일은 둘 중 하나에 있어야 한다. 근거는 파일 단위다. PLAN이 finding에 path나 원문 quote를 직접 적어 근거로 삼는 방식은 쓰지 않는다.
+5. **나머지 PLAN 계약과 승인 경로는 바꾸지 않는다.** `allowedPaths` 상한 8개, `questions`와 `ready`의 규칙, Human `PLAN-승인`, PLAN_AUTHORIZE의 exact artifact 재검증은 그대로다. 확장 evidence는 authority가 아니다. 무엇을 바꿀지 승인하는 것은 계속 사람이다.
+6. **켜는 스위치는 IMPLEMENT와 따로 둔다.** executor 저장소 변수로 PLAN 읽기 도구만 따로 켠다. 꺼져 있으면 PLAN은 지금처럼 1 turn·도구 없음이다. 읽기 도구 없이 실행한 PLAN이 확장 evidence를 밝히면 그 결과는 거부한다.
+
+쓰기·실행 도구는 PLAN에도 허용하지 않는다. Pack 밖 근거 파일 수의 상한을 바꾸거나 다른 근거 방식(path·quote 인용 뒤 재검증)으로 바꾸려면 이 문서를 다시 바꾸는 별도 결정이 필요하다.
 
 ## 5. STOP은 실패가 아니라 정상 상태다
 
