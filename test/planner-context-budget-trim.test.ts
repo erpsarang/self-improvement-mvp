@@ -13,18 +13,21 @@ import {
 
 const SHA = "a".repeat(40);
 
-/** 크기를 정확히 맞춘 파일로 App #289(run 37018711973)과 같은 모양을 만든다. */
+/**
+ * 크기를 정확히 맞춘 파일로 App #289(run 37018711973)과 같은 모양을 만든다.
+ * #368 3단계로 원문 보관 상한이 96KB에서 384KB가 되어, 같은 모양을 4배 크기로 재현한다.
+ */
 function fixture(): { target: string; context: PlanContextPack } {
   const root = mkdtempSync(join(tmpdir(), "planner-context-trim-"));
   mkdirSync(join(root, "src"));
   mkdirSync(join(root, "test"));
   const write = (path: string, head: string, bytes: number) =>
     writeFileSync(join(root, path), `${head}\n//${"x".repeat(bytes - head.length - 4)}\n`);
-  write("src/order-csv.ts", "export const csv = 1;", 40_000);
-  write("test/order-csv.test.ts", "import { csv } from '../src/order-csv.js'; void csv;", 30_000);
-  write("src/web-main.ts", "export const web = 1;", 30_000);
-  write("src/batch.ts", "export const batch = 1;", 10_000);
-  write("src/note.ts", "export const note = 1;", 5_000);
+  write("src/order-csv.ts", "export const csv = 1;", 160_000);
+  write("test/order-csv.test.ts", "import { csv } from '../src/order-csv.js'; void csv;", 120_000);
+  write("src/web-main.ts", "export const web = 1;", 120_000);
+  write("src/batch.ts", "export const batch = 1;", 40_000);
+  write("src/note.ts", "export const note = 1;", 20_000);
 
   const files = ["src/order-csv.ts", "test/order-csv.test.ts"].map((path, index) => {
     // 실제 Context Pack처럼 파일 앞부분 발췌만 담는다(파일당 20,000B 상한). 수정 대상은 IMPLEMENT에서 전체 크기로 계산된다.
@@ -65,12 +68,12 @@ function readyPlan(contextPaths: readonly string[], extra: Record<string, unknow
 
 test("예산을 넘으면 PLAN이 언급하지 않은 읽기 전용 참고 파일을 큰 것부터 빼서 맞춘다 (App #289 run 37018711973)", () => {
   const { target, context } = fixture();
-  // 40,000 + 30,000 (수정) + 30,000 + 10,000 + 5,000 (참고) = 115,000B > 96,000B
+  // 160,000 + 120,000 (수정) + 120,000 + 40,000 + 20,000 (참고) = 460,000B > 384,000B
   const raw = readyPlan(["src/batch.ts", "src/web-main.ts", "src/note.ts"]);
-  assert.throws(() => validatePlan(raw, target, context), /exceeds IMPLEMENT Context budget: 115000B > 96000B/);
+  assert.throws(() => validatePlan(raw, target, context), /exceeds IMPLEMENT Context budget: 460000B > 384000B/);
 
   const { plan, removed } = trimReadOnlyContextToBudget(target, context, raw);
-  assert.deepEqual(removed, ["src/web-main.ts"], "가장 큰 참고 파일 하나만 빼면 85,000B로 맞는다");
+  assert.deepEqual(removed, ["src/web-main.ts"], "가장 큰 참고 파일 하나만 빼면 340,000B로 맞는다");
   const scope = validatePlan(plan, target, context).implementationScope as { allowedPaths: string[]; contextPaths: string[] };
   assert.deepEqual(scope.allowedPaths, ["src/order-csv.ts", "test/order-csv.test.ts"], "쓰기 범위는 줄이지 않는다");
   assert.deepEqual(scope.contextPaths, ["src/batch.ts", "src/note.ts"], "나머지 참고 파일과 순서는 그대로다");
@@ -79,7 +82,7 @@ test("예산을 넘으면 PLAN이 언급하지 않은 읽기 전용 참고 파�
 
 test("PLAN이 언급한 참고 파일은 빼지 않고, 그래도 넘으면 손대지 않아 fail-closed를 유지한다", () => {
   const { target, context } = fixture();
-  // web-main.ts를 testStrategy에서 언급하므로 뺄 수 없다. batch.ts(10,000B)를 빼도 105,000B라 그대로 둔다.
+  // web-main.ts를 testStrategy에서 언급하므로 뺄 수 없다. batch.ts(40,000B)를 빼도 420,000B라 그대로 둔다.
   const raw = readyPlan(["src/batch.ts", "src/web-main.ts"], {
     testStrategy: ["test/order-csv.test.ts 기대값을 갱신하고 src/web-main.ts의 화면 정렬과 같은지 확인한다"],
   });
@@ -96,5 +99,5 @@ test("ready가 아니거나 모양이 틀린 PLAN, 없는 참고 경로는 건�
   const unsafe = readyPlan(["../outside.ts", "src/web-main.ts"]);
   assert.deepEqual(trimReadOnlyContextToBudget(target, context, unsafe), { plan: unsafe, removed: [] });
   assert.deepEqual(trimReadOnlyContextToBudget(target, context, null), { plan: null, removed: [] });
-  assert.equal(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, 96_000);
+  assert.equal(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, 384_000);
 });

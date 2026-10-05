@@ -12,7 +12,10 @@ export const PLAN_CONTEXT_MAX_FILE_BYTES = 20_000;
 export const PLAN_IMPLEMENT_MAX_FILES = 8;
 // PLAN은 80KB bounded evidence를 유지한다. IMPLEMENT는 수정 대상 기존 파일의 전체 내용이 필요하므로
 // 별도 full-file 경계를 둔다. #250 실증에서 올바른 4-file write scope가 80,719B였다.
-export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = 96_000;
+// IMPLEMENT가 trusted Context Pack에 보관하는 원문(수정 대상 전체 파일 + 참고 파일) 상한.
+// Worker prompt에는 이 중 IMPLEMENT_PROMPT_INLINE_MAX_BYTES(96KB)까지만 원문을 싣고, 넘치는 큰 파일은
+// 격리된 /work checkout에서 Read로 읽게 한다(#368 3단계, App #307 PLAN run 37259255800: 119,258B > 96,000B).
+export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = 384_000;
 // ready=false PLAN이 blocker를 한 번에 수렴시키도록 질문 수를 작게 제한한다.
 // 하나씩 새 질문을 드러내는 재PLAN 반복을 막되, 복잡한 요구의 독립 blocker는 함께 제시할 수 있다.
 export const PLAN_MAX_BLOCKING_QUESTIONS = 3;
