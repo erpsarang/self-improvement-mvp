@@ -3,6 +3,7 @@ import {
   verifyImplementContextPack,
   type ImplementContextPack,
   type ContextFile,
+  type PresentContextFile,
 } from "./context-pack.js";
 import {
   verifyImplementContract,
@@ -151,6 +152,61 @@ export const PLAN_WORKER_OUTPUT_SCHEMA = {
 const PLAN_WORKER_COMPLETION_RULE =
   "- CONTRACT의 requiredChanges 전체를 담은 완전한 변경안이면 complete=true를 반환하세요. 전체를 담지 못했다면 일부 변경을 완성본처럼 반환하지 말고 complete=false와 그 이유를 summary에 반환하세요.";
 
+/** Worker prompt에 원문으로 싣는 Context Pack 상한. 넘치면 큰 present 파일부터 /work 참조가 된다(#368 3단계). */
+export const IMPLEMENT_PROMPT_INLINE_MAX_BYTES = 96_000;
+
+/**
+ * prompt 첫 줄 표시. 원문을 다 싣지 못한 request라는 뜻이다. executor는 격리 읽기 도구가 꺼져 있으면
+ * 이 request를 Claude 호출 전에 거부한다(subscription-ai-executor READ_TOOLS_MARKER와 같은 문자열).
+ * 표시는 권한을 주지 않는다. 읽기 도구는 executor 변수로만 켜진다.
+ */
+export const IMPLEMENT_READ_TOOLS_MARKER = "<!-- ai-dev-framework:IMPLEMENT_READ_TOOLS required -->";
+
+const NO_EXPLORATION_RULE = "- repository, GitHub, 파일시스템, 네트워크를 탐색하거나 추가 파일을 요청하지 마세요.";
+const WORKSPACE_READ_RULE =
+  "- 작업 디렉터리 /work는 exact base SHA 시점의 저장소 checkout입니다. CONTEXT PACK에서 content가 null인 present 파일은 원문이 prompt에 없으므로 readWith 경로를 Read 도구로 직접 읽으세요. 그 밖에 필요한 파일도 /work 안에서 Read·Glob·Grep으로만 찾아 읽고, GitHub와 네트워크는 쓰지 마세요.";
+
+/**
+ * trusted Context Pack을 Worker prompt용으로 보여 준다. 원문 합이 IMPLEMENT_PROMPT_INLINE_MAX_BYTES 안이면
+ * pack을 그대로 쓴다(지금과 바이트 동일). 넘치면 큰 present 파일부터(같은 크기는 경로순) content를 null로 바꾸고
+ * readWith로 /work 경로를 준다. contentDigest는 그대로 두어 Worker가 baseContentDigest로 돌려준다.
+ * 검증(acceptPlanWorkerOutput)은 trusted pack의 원문으로 하므로 이 변환과 무관하다.
+ */
+export function promptContextPack(contextPack: ImplementContextPack): { readonly view: unknown; readonly referenced: readonly string[] } {
+  let inlineBytes = contextPack.files.reduce((sum, file) => sum + file.byteLength, 0);
+  if (inlineBytes <= IMPLEMENT_PROMPT_INLINE_MAX_BYTES) return { view: contextPack, referenced: [] };
+  const referenced = new Set<string>();
+  const candidates = contextPack.files
+    .filter((file): file is PresentContextFile => file.state === "present")
+    .sort((left, right) => right.byteLength - left.byteLength || left.path.localeCompare(right.path));
+  for (const file of candidates) {
+    if (inlineBytes <= IMPLEMENT_PROMPT_INLINE_MAX_BYTES) break;
+    referenced.add(file.path);
+    inlineBytes -= file.byteLength;
+  }
+  const files = contextPack.files.map((file) =>
+    file.state === "present" && referenced.has(file.path)
+      ? {
+          path: file.path,
+          state: file.state,
+          byteLength: file.byteLength,
+          digestAlgorithm: file.digestAlgorithm,
+          contentDigest: file.contentDigest,
+          content: null,
+          readWith: `/work/${file.path}`,
+        }
+      : file,
+  );
+  return { view: { ...contextPack, files }, referenced: contextPack.files.map((file) => file.path).filter((path) => referenced.has(path)) };
+}
+
+/** repair prompt가 원래 Worker prompt의 읽기 도구 표시를 이어받게 한다. 표시가 없으면 지금 문구 그대로다. */
+export function repairWorkspaceRule(originalPrompt: string): { readonly prefix: string; readonly rule: string } {
+  return originalPrompt.split("\n", 1)[0] === IMPLEMENT_READ_TOOLS_MARKER
+    ? { prefix: `${IMPLEMENT_READ_TOOLS_MARKER}\n`, rule: WORKSPACE_READ_RULE }
+    : { prefix: "", rule: NO_EXPLORATION_RULE };
+}
+
 export function createSinglePassPrompt(
   contract: ImplementContract,
   contextPack: ImplementContextPack,
@@ -159,13 +215,20 @@ export function createSinglePassPrompt(
   verifyImplementContract(contract);
   verifyImplementContextPack(contextPack, contract);
   const completionRule = options.requireCompletion ? `${PLAN_WORKER_COMPLETION_RULE}\n` : "";
+  const { view, referenced } = promptContextPack(contextPack);
+  const readTools = referenced.length > 0;
+  const prefix = readTools ? `${IMPLEMENT_READ_TOOLS_MARKER}\n` : "";
+  const scopeLine = readTools ? "아래 IMPLEMENT CONTRACT와 CONTEXT PACK, 그리고 /work에서 읽은 파일만 보고" : "아래 IMPLEMENT CONTRACT와 CONTEXT PACK만 보고";
+  const guessRule = readTools
+    ? "- 읽지 않은 파일 내용을 추측하지 마세요. modify의 oldText는 원문과 글자 그대로 같아야 하고, baseContentDigest는 CONTEXT PACK의 contentDigest를 그대로 쓰세요."
+    : "- 제공된 Context Pack 밖의 지식을 근거로 파일 내용을 추측하지 마세요.";
 
-  return `당신은 bounded IMPLEMENT Worker입니다. 아래 IMPLEMENT CONTRACT와 CONTEXT PACK만 보고 변경안을 한 번 생성하세요.
+  return `${prefix}당신은 bounded IMPLEMENT Worker입니다. ${scopeLine} 변경안을 한 번 생성하세요.
 
 중요 규칙:
-- repository, GitHub, 파일시스템, 네트워크를 탐색하거나 추가 파일을 요청하지 마세요.
+${readTools ? WORKSPACE_READ_RULE : NO_EXPLORATION_RULE}
 - 테스트, 빌드, 설치, commit, push, branch/PR 생성 명령을 실행하지 마세요.
-- 제공된 Context Pack 밖의 지식을 근거로 파일 내용을 추측하지 마세요.
+${guessRule}
 - allowedPaths 밖의 파일은 변경하지 마세요.
 - contextPaths는 읽기 전용 참고 문맥입니다. contextPaths에만 있는 파일은 절대 변경하지 마세요.
 - present 파일은 operation=modify와 해당 파일의 exact contentDigest를 baseContentDigest로 사용하세요. 전체 파일 content를 다시 출력하지 말고 content=null, edits=[{oldText,newText}]를 반환하세요.
@@ -182,7 +245,7 @@ IMPLEMENT CONTRACT:
 ${JSON.stringify(contract)}
 
 CONTEXT PACK:
-${JSON.stringify(contextPack)}
+${JSON.stringify(view)}
 `;
 }
 

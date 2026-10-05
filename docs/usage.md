@@ -176,6 +176,8 @@ Requirement나 target SHA가 PLAN 이후 바뀌었다면 silent substitution하�
 
 exact base SHA에서 `allowedPaths`에 필요한 최소 Context만 `Context Pack`으로 고정합니다.
 
+Context Pack은 수정 대상과 참고 파일의 원문을 384KB까지 보관합니다. 결과 검증은 이 원문으로 합니다. Worker prompt에는 원문을 96KB까지만 싣고, 넘치면 큰 파일부터 경로·크기·digest만 남긴 `/work` 참조로 바꿉니다. 이런 request는 prompt 첫 줄에 `IMPLEMENT_READ_TOOLS required` 표시가 붙습니다. executor의 격리 읽기 도구(`docs/architecture.md` 4장)가 꺼져 있으면 executor가 Claude 호출 전에 거부하고, Issue에는 STOPPED가 남습니다.
+
 IMPLEMENT Worker는 다음 제한을 가집니다.
 
 - untrusted

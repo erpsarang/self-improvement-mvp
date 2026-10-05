@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createImplementContextPack, verifyImplementContextPack } from "../src/self-improvement/context-pack.js";
 import { createImplementContract, type ApprovedPlanIdentity } from "../src/self-improvement/implement-contract.js";
 import { aiCallSiteCandidates } from "../src/self-improvement/plan-ai-call-site-context.js";
-import { PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, PLAN_IMPLEMENT_MAX_PATCH_BYTES } from "../src/self-improvement/plan-implement-handoff.js";
+import { PLAN_IMPLEMENT_MAX_PATCH_BYTES } from "../src/self-improvement/plan-implement-handoff.js";
 import { createSinglePassPrompt } from "../src/self-improvement/single-pass-worker.js";
 
 // self-improvement-mvp #244 (run 35976744079): 승인된 첫 slice는 새 파일 3개를 allowedPaths로, Planner가 본
@@ -38,6 +38,8 @@ const NEW_FILE_FIXTURE_PATHS = [
   "docs/__fixture-never-created__/plan-excerpt-policy.md",
 ] as const;
 
+const EXCERPT_REPRO_BUDGET = 96_000;
+
 test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인된 PLAN evidence 발췌로 80KB 안에 들어간다", () => {
   const target = process.cwd();
   for (const path of NEW_FILE_FIXTURE_PATHS) {
@@ -60,19 +62,20 @@ test("#244 모양: 새 파일 3개 + lifecycle workflow contextPaths는 승인�
     forbiddenChanges: ["기존 workflow 및 실제 AI 실행 경로 변경"],
     validationCommands: ["npm test"],
     maxFilesChanged: 3,
-    maxContextBytes: PLAN_IMPLEMENT_MAX_CONTEXT_BYTES,
+    // #244 당시 예산(96KB)으로 발췌 경로를 재현한다. 현재 PLAN 상한(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES)은 384KB다(#368 3단계).
+    maxContextBytes: EXCERPT_REPRO_BUDGET,
     maxPatchBytes: PLAN_IMPLEMENT_MAX_PATCH_BYTES,
   });
 
   // 전체 파일로는 예산을 넘는다 (workflow 원본 합계 ≫ 80KB): 이것이 run 35976744079의 실패다.
   const fullBytes = contextPaths.reduce((sum, path) => sum + Buffer.byteLength(readFileSync(join(target, path))), 0);
-  assert.ok(fullBytes > PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, `full contextPaths must exceed the budget to reproduce the failure (${fullBytes}B)`);
+  assert.ok(fullBytes > EXCERPT_REPRO_BUDGET, `full contextPaths must exceed the budget to reproduce the failure (${fullBytes}B)`);
   assert.throws(() => createImplementContextPack(contract, target, identity.targetSha), /exceeds maxContextBytes/);
 
   // 승인된 PLAN evidence를 넘기면 read-only contextPath는 Planner가 본 발췌가 되고 예산 안에 들어간다.
   const pack = createImplementContextPack(contract, target, identity.targetSha, { approvedPlanEvidence: evidence });
   assert.doesNotThrow(() => verifyImplementContextPack(pack, contract));
-  assert.ok(pack.totalContextBytes <= PLAN_IMPLEMENT_MAX_CONTEXT_BYTES);
+  assert.ok(pack.totalContextBytes <= EXCERPT_REPRO_BUDGET);
 
   for (const path of contract.scope.allowedPaths) {
     assert.equal(pack.files.find((file) => file.path === path)?.state, "missing", `${path} is a new file`);

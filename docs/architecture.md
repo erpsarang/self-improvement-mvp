@@ -177,6 +177,11 @@ executor repo (Private, 팀 소유)
 6. **출력 계약과 Public 검증은 바꾸지 않는다.** Worker는 지금과 같은 edit JSON(`changes[]`)을 낸다. allowedPaths·base digest·anchor 검증, exact-base deterministic CI, Trusted Rail, Human Merge는 그대로다.
 7. **PLAN·REVIEW·FIX·LEARN·Product Discovery는 이 예외에 들어가지 않는다.** 이들은 계속 1 turn·도구 없음이다.
 
+Framework는 이 예외를 이렇게 쓴다.
+- Context Pack 원문은 384KB까지 보관한다. Worker prompt에는 96KB까지만 싣고, 넘치는 큰 파일은 `/work` 참조로 바꾼다.
+- 이런 request의 prompt 첫 줄에는 표시가 붙는다. executor는 읽기 도구가 꺼져 있으면 이 request를 Claude 호출 전에 거부한다.
+- 표시는 권한을 주지 않는다. 출력 검증은 보관한 원문으로 한다.
+
 쓰기·실행 도구(sandbox 안에서 수정하고 테스트를 돌리는 Worker)는 이 조항의 범위가 아니다. 허용하려면 이 문서를 다시 바꾸는 별도 결정이 필요하다.
 
 ## 5. STOP은 실패가 아니라 정상 상태다

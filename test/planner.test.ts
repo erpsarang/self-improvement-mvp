@@ -237,14 +237,15 @@ test("ready PLAN은 PLAN 80KB와 별도 IMPLEMENT full-file budget을 함께 검
     mkdirSync(join(f.target, "src"));
     mkdirSync(join(f.target, "test"));
     const files: Array<[string, number]> = [
-      ["src/change.ts", 42_000],
-      ["test/change.test.ts", 42_000],
-      ["test/evidence.test.ts", 20_000],
+      ["src/change.ts", 170_000],
+      ["test/change.test.ts", 170_000],
+      ["test/evidence.test.ts", 80_000],
     ];
     for (const [path, bytes] of files) writeFileSync(join(f.target, path), "x".repeat(bytes));
 
     // PLAN은 파일당 20KB 발췌만 보므로 60KB로 기존 80KB evidence 경계를 유지한다.
-    // IMPLEMENT는 수정 대상 기존 파일의 전체 내용이 필요하므로 별도 96KB full-file 경계를 적용한다.
+    // IMPLEMENT는 수정 대상 기존 파일의 전체 내용을 trusted Context Pack에 보관하므로 별도 384KB full-file 경계를 적용한다.
+    // Worker prompt에는 그중 96KB까지만 원문을 싣고 나머지는 /work 참조가 된다(#368 3단계).
     const requirement = files.map(([path]) => path).join(" ");
     const context = selectPlanContext(requirement, f.target, "example/orders", "e".repeat(40), {
       maxFiles: 3,
@@ -253,7 +254,7 @@ test("ready PLAN은 PLAN 80KB와 별도 IMPLEMENT full-file budget을 함께 검
     });
     assert.deepEqual(new Set(context.files.map((file) => file.path)), new Set(files.map(([path]) => path)));
     assert.ok(context.totalBytes <= PLAN_CONTEXT_MAX_BYTES);
-    assert.equal(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, 96_000);
+    assert.equal(PLAN_IMPLEMENT_MAX_CONTEXT_BYTES, 384_000);
     // #312: PLAN read evidence 12개와 IMPLEMENT write 범위 8개는 별도 한도다. byte 한도는 80KB 그대로다.
     assert.equal(PLAN_CONTEXT_MAX_FILES, 12);
     assert.equal(PLAN_CONTEXT_MAX_BYTES, 80_000);
@@ -279,7 +280,7 @@ test("ready PLAN은 PLAN 80KB와 별도 IMPLEMENT full-file budget을 함께 검
       /exceeds IMPLEMENT Context budget/,
     );
 
-    // #250 실증처럼 editable full-file 합계가 80KB를 조금 넘더라도 96KB 이하면 허용한다.
+    // editable full-file 합계가 PLAN evidence 80KB를 크게 넘더라도 384KB 이하면 허용한다(#250 실증, #368 3단계).
     const twoEditable = {
       ...oversized,
       approach: ["구현과 직접 영향 테스트를 함께 수정한다"],
