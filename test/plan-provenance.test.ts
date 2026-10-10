@@ -158,3 +158,26 @@ test("PLAN 결과를 받거나 검증하지 못하면 failure notice job만 Issu
   assert.match(noticeJob, /### HumanStatus: PLAN_FAILED/);
   assert.match(noticeJob, /replace\(\/\[`\\r\\n\]\/g, ' '\)\.trim\(\)\.slice\(0, 300\)/);
 });
+
+test("PLAN_FAILED 안내는 본문을 고친 뒤 Actions에서 다시 실행해야 하고 본문 수정만으로는 시작되지 않음을 알린다", () => {
+  const noticeJob = workflow.split("\n  failure_notice:\n")[1] ?? "";
+  assert.match(noticeJob, /필요하면 Issue 본문을 보완한 뒤, Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행하세요/);
+  assert.match(noticeJob, /Issue 본문을 고치는 것만으로는 PLAN이 다시 시작되지 않습니다/);
+  // "보완하거나 … 다시 실행"은 둘 중 하나만 해도 되는 뜻으로 읽혀 사람이 본문 수정만 하고 기다렸다 (App #19).
+  assert.doesNotMatch(noticeJob, /본문을 보완하거나/);
+  // 안내가 사실이려면 PLAN 시작 조건에 본문 수정(edited)이 없어야 한다.
+  const triggers = workflow.split("\npermissions:", 1)[0] ?? "";
+  assert.match(triggers, /issues:\n    types: \[opened, reopened\]/);
+  assert.doesNotMatch(triggers, /edited/);
+});
+
+test("파일 수 한도 초과로 PLAN이 실패하면 사유 원문은 그대로 두고 쉬운 설명을 덧붙인다", () => {
+  const noticeJob = workflow.split("\n  failure_notice:\n")[1] ?? "";
+  assert.match(noticeJob, /const scopeTooLarge = \/PLAN scope cannot hold existing tests\/\.test\(reason\);/);
+  assert.match(noticeJob, /scopeTooLarge \? \['\*\*쉬운 설명:\*\* 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다\./);
+  // 사유 원문 줄은 그대로다.
+  assert.match(noticeJob, /reason \? `사유: \\`\$\{reason\}\\`` : '사유: 위 run 로그를 확인하세요\.'/);
+  // 한도 초과 문구가 실제 오류 문구와 같은 곳에서 나온다.
+  const source = readFileSync(new URL("../src/self-improvement/plan-business-context.ts", import.meta.url), "utf8");
+  assert.match(source, /PLAN scope cannot hold existing tests that import changed sources/);
+});
