@@ -87,6 +87,28 @@ Provenance:
 - `pull_request` 트리거로 PR이 열릴 때 실행되는 workflow는 secret을 참조하지 않는다(테스트로 고정). 그래서 후보 코드가 자동으로 CI에서 실행되어도 Trusted Rail VERIFY가 이미 감수하는 범위를 넘지 않는다.
 - Auto Merge는 없고 최종 Merge는 Human-only다.
 
+## 2-2. App이 지켜야 할 것
+
+Framework는 아래 모양의 App에서 검증됐다. 두 번째 App(`meeting-action-items`, Framework `5f24516`)이 빈 저장소에서 bootstrap한 뒤 첫 요구를 Merge와 LEARN까지 통과시켰다(self-improvement-mvp#223).
+
+코드가 요구하는 것:
+
+- 루트 `package.json`에 `test`와 `build` script가 있다. 승인된 PLAN의 검증 명령으로는 `npm test`와 `npm run build`만 허용된다(`planner.ts`, `plan-implement-handoff.ts`의 `TRUSTED_VALIDATION_COMMANDS`).
+- 루트 `package.json`과 `tsconfig.json`은 PLAN Context가 항상 읽는 bootstrap 파일이다(`PROJECT_BOOTSTRAP_PATHS`).
+- 런타임 코드는 `src/`, 테스트는 `test/` 또는 `*.test.*`·`*.spec.*`에 둔다. PLAN Context는 `src/` 아래 비테스트 파일을 가장 먼저 고른다(`fileRolePriority`).
+- App repository를 개인 계정이 소유한다(위 2장 주의).
+
+검증한 것이지 코드가 강제하지는 않는 것:
+
+- Node + TypeScript, Node 22 (`ci.yml`의 `node-version`).
+- 외부 API 호출과 App 자체 secret이 없다.
+
+배포 목록(`policy/framework-distribution-ownership.v1.json`) 밖이라 bootstrap할 때 직접 가져와야 하는 것:
+
+- `.github/ISSUE_TEMPLATE/user-requirement.md`: PLAN의 opus 승격에 쓰는 "복잡한 요구" 체크박스가 여기에만 있다.
+- `.github/workflows/ci.yml`: App 소유 파일이다. 위 경계를 지키는 검증(`npm ci`, `npm test`, `npm run build`)이 들어 있다.
+- `FRAMEWORK.md`: Framework repository에 원본이 없다. 다른 App의 사본을 가져와 source SHA를 확인한다.
+
 ## 3. v0.2 기본 흐름
 
 ```text
