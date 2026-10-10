@@ -483,6 +483,28 @@ test("trusted finalize는 snapshot 밖의 근거와 탈출 경로를 거부한�
   );
 });
 
+test("trusted finalize는 폴더 표기(끝의 /)를 받아들이되 안전하지 않은 경로는 계속 거부한다", () => {
+  const snapshot = createProductSnapshot(target, appFixture());
+  const report = reportWith(snapshot, {
+    candidates: [{ ...diversityCandidate, scopePaths: ["src/classics.js", "test/"] }],
+  });
+  assert.deepEqual(report.candidate?.scopePaths, ["src/classics.js", "test/"]);
+  for (const scopePath of ["test//", "/", "//", "../test/", "./test/", "/test/", "test\\"]) {
+    assert.throws(
+      () => reportWith(snapshot, { candidates: [{ ...diversityCandidate, scopePaths: [scopePath] }] }),
+      /unsafe path segment|repository-relative path/,
+      scopePath,
+    );
+  }
+  for (const scopePath of [".github/", "src/self-improvement/", "policy/"]) {
+    assert.throws(
+      () => reportWith(snapshot, { candidates: [{ ...diversityCandidate, scopePaths: [scopePath] }] }),
+      /must not target Framework-owned paths/,
+      scopePath,
+    );
+  }
+});
+
 test("trusted finalize는 스스로 태그를 붙인 제목과 알 수 없는 필드를 거부한다", () => {
   const snapshot = createProductSnapshot(target, appFixture());
   assert.throws(
