@@ -5,11 +5,13 @@ import {
   createProductEvaluationPrompt,
   createProductEvaluationReport,
   createProductSnapshot,
+  decideAutoDiscovery,
   decideImprovementIssue,
   productEvaluationReportArtifactName,
   renderDiscoveryResultComment,
   verifyProductEvaluationReport,
   verifyProductSnapshot,
+  type AutoDiscoveryInput,
   type CompletedRequirement,
   type ExistingIssue,
   type ProductDiscoveryTarget,
@@ -57,8 +59,22 @@ function normalizeExistingIssues(value: unknown): ExistingIssue[] {
 }
 
 const command = process.argv[2];
-if (command !== "prepare" && command !== "finalize" && command !== "decide") {
-  throw new Error("product-evaluation-handler command는 prepare, finalize 또는 decide여야 합니다");
+if (command !== "prepare" && command !== "finalize" && command !== "decide" && command !== "gate") {
+  throw new Error("product-evaluation-handler command는 prepare, finalize, decide 또는 gate여야 합니다");
+}
+
+// 머지 뒤 Product Discovery를 자동으로 시작할지 결정적으로 판단한다. snapshot도 AI도 쓰지 않는다.
+if (command === "gate") {
+  const decision = decideAutoDiscovery(parseJson<AutoDiscoveryInput>(requiredEnv("AUTO_DISCOVERY_INPUT_JSON")));
+  writeOutput("action", decision.action);
+  const reason = decision.action === "skip" ? decision.reason : "조건을 모두 만족했습니다";
+  writeOutput("reason", reason.replaceAll("\n", " "));
+  const line = decision.action === "dispatch"
+    ? "Product Discovery를 자동으로 시작합니다: 조건을 모두 만족했습니다"
+    : `Product Discovery를 자동으로 시작하지 않습니다: ${reason}`;
+  console.log(line);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`, "utf8");
+  process.exit(0);
 }
 
 if (command === "prepare") {

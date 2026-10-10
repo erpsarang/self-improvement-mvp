@@ -188,3 +188,30 @@ test("trusted 검증이나 결정이 실패하면 Discovery 전용 Issue에 단�
   // 이미 쓰던 권한(issues: write) 안에서만 동작한다.
   assert.match(finalize, /permissions:\n {6}contents: read\n {6}issues: write\n {6}actions: write\n/);
 });
+
+const candidateWorkflow = await readFile(".github/workflows/improvement-candidate.yml", "utf8");
+
+test("머지 뒤 자동 Discovery는 opt-in 변수와 결정적 조건이 맞을 때만 product-evaluation.yml을 dispatch한다 (#383)", () => {
+  const gate = candidateWorkflow.slice(candidateWorkflow.indexOf("\n  discovery_gate:\n"));
+  assert.match(candidateWorkflow, /\npermissions: \{\}\n/);
+  assert.match(gate, /needs: candidate\n/);
+  assert.match(gate, /vars\.AUTO_PRODUCT_DISCOVERY == 'on'/);
+  assert.match(gate, /needs\.candidate\.result == 'success'/);
+  // 기본 브랜치의 trusted 코드에서만 돈다.
+  assert.match(gate, /github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
+  assert.match(gate, /ref: \$\{\{ github\.sha \}\}\n\s+persist-credentials: false/);
+  // 쓰기 권한은 이 job의 dispatch용 actions: write뿐이고, candidate job은 읽기만 한다.
+  assert.match(gate, /permissions:\n {6}contents: read\n {6}issues: read\n {6}pull-requests: read\n {6}actions: write\n/);
+  const candidateJob = candidateWorkflow.slice(candidateWorkflow.indexOf("\n  candidate:\n"), candidateWorkflow.indexOf("\n  discovery_gate:\n"));
+  assert.doesNotMatch(candidateJob, /actions: write|issues: write|pull-requests: write/);
+  // 판단은 AI 없이 결정적 함수가 하고, 봇이 쓴 기록만 믿는다.
+  assert.match(gate, /product-evaluation-handler\.ts gate/);
+  assert.match(gate, /issue\.user\?\.login === BOT/);
+  assert.match(gate, /comment\.user\?\.login === BOT/);
+  assert.match(gate, /\^ai-publish\\\/issue-\[0-9\]\+/);
+  // dispatch는 Trusted Product Evaluation 하나뿐이고, 후보 Issue·PLAN·승인·Merge·secret·executor 호출은 없다.
+  assert.equal(gate.split("createWorkflowDispatch(").length - 1, 1);
+  assert.match(gate, /workflow_id: 'product-evaluation\.yml'/);
+  assert.doesNotMatch(gate, /workflow_id: 'plan\.yml'|workflow_id: 'implement\.yml'|plan-authorize/);
+  assert.doesNotMatch(gate, /issues\.create\(|issues\.createComment|pulls\.merge|git\s+push|secrets\.|EXECUTOR_DISPATCH_TOKEN/);
+});

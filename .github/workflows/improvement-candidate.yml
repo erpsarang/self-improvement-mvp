@@ -181,3 +181,131 @@ jobs:
           name: ${{ steps.candidate.outputs.candidate_artifact_name }}
           path: ${{ runner.temp }}/improvement-candidate/improvement-candidate-pack.json
           if-no-files-found: error
+
+  # 머지 뒤 Product Discovery를 사람이 실행하지 않아도 시작할지 AI 없이 결정적으로 판단한다 (self-improvement-mvp #383).
+  # 사람이 저장소 변수 AUTO_PRODUCT_DISCOVERY=on을 켠 저장소에서만 이 job이 돈다. 꺼져 있으면 job 자체가 건너뛰어진다.
+  # 비용·폭주 상한: 마지막 Discovery 이후 Human Merge 3건, 열린 [Self-Improvement] Issue 없음, 마지막 시작 후 24시간, 실행 중인 run 없음.
+  # 이 job은 product-evaluation.yml을 dispatch할 뿐이고 후보 Issue, PLAN-승인, Merge는 만들지 않는다.
+  discovery_gate:
+    name: Product Discovery 자동 시작 판단
+    needs: candidate
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      needs.candidate.result == 'success' &&
+      vars.AUTO_PRODUCT_DISCOVERY == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: write
+
+    steps:
+      - name: trusted control-plane checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: gate-control
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Framework runtime 의존성 설치
+        working-directory: gate-control
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .framework-runtime/package-lock.json ]; then
+            npm ci --ignore-scripts --prefix .framework-runtime
+            ln -sT .framework-runtime/node_modules node_modules
+          else
+            npm ci --ignore-scripts
+          fi
+
+      - name: 판단에 쓸 사실 수집
+        uses: actions/github-script@v7
+        env:
+          AUTO_DISCOVERY_INPUT_JSON: ${{ runner.temp }}/auto-discovery-input.json
+          AUTO_PRODUCT_DISCOVERY: ${{ vars.AUTO_PRODUCT_DISCOVERY }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const BOT = 'github-actions[bot]';
+            const paginate = async (fn, params, pages = 3) => {
+              const out = [];
+              for (let page = 1; page <= pages; page += 1) {
+                const { data } = await fn({ ...params, per_page: 100, page });
+                out.push(...data);
+                if (data.length < 100) break;
+              }
+              return out;
+            };
+            const defaultBranch = context.payload.repository.default_branch;
+
+            const issues = (await paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open' }))
+              .filter((issue) => !issue.pull_request);
+            const openCandidateCount = issues.filter((issue) => issue.title.startsWith('[Self-Improvement]')).length;
+
+            // Framework가 만든 Discovery 기록 Issue와 그 안의 요청 댓글만 믿는다(봇이 쓴 것만).
+            let lastDiscoveryAt = null;
+            const log = issues.find((issue) =>
+              issue.title === '[Product Discovery] 실행 기록' &&
+              issue.user?.login === BOT &&
+              (issue.body || '').includes('ai-dev-framework:PRODUCT_DISCOVERY_LOG v=1'));
+            if (log) {
+              const comments = await paginate(github.rest.issues.listComments, { ...context.repo, issue_number: log.number });
+              const requests = comments.filter((comment) =>
+                comment.user?.login === BOT && (comment.body || '').includes('ai-dev-framework:PRODUCT_EVALUATION_REQUEST'));
+              if (requests.length > 0) lastDiscoveryAt = requests[requests.length - 1].created_at;
+            }
+
+            const since = lastDiscoveryAt ? Date.parse(lastDiscoveryAt) : 0;
+            const pulls = await paginate(github.rest.pulls.list, {
+              ...context.repo, state: 'closed', base: defaultBranch, sort: 'updated', direction: 'desc',
+            });
+            const mergedSinceLast = pulls.filter((pull) =>
+              pull.merged_at && Date.parse(pull.merged_at) > since &&
+              pull.head.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              /^ai-publish\/issue-[0-9]+(?:-cycle-[0-9a-f]{16})?$/.test(pull.head.ref)).length;
+
+            let runInFlight = false;
+            for (const status of ['queued', 'in_progress']) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                ...context.repo, workflow_id: 'product-evaluation.yml', status, per_page: 5,
+              });
+              if (data.workflow_runs.length > 0) runInFlight = true;
+            }
+
+            const input = {
+              enabled: process.env.AUTO_PRODUCT_DISCOVERY === 'on',
+              mergedSinceLast,
+              openCandidateCount,
+              lastDiscoveryAt,
+              now: new Date().toISOString(),
+              runInFlight,
+            };
+            fs.writeFileSync(process.env.AUTO_DISCOVERY_INPUT_JSON, JSON.stringify(input, null, 2));
+            core.info(JSON.stringify(input));
+
+      - name: 자동 시작 여부를 결정적으로 판단
+        id: gate
+        working-directory: gate-control
+        run: node_modules/.bin/tsx src/self-improvement/product-evaluation-handler.ts gate
+        env:
+          AUTO_DISCOVERY_INPUT_JSON: ${{ runner.temp }}/auto-discovery-input.json
+
+      - name: Trusted Product Evaluation 시작
+        if: steps.gate.outputs.action == 'dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'product-evaluation.yml',
+              ref: context.payload.repository.default_branch,
+            });
+            core.info('Trusted Product Evaluation을 자동으로 dispatch했습니다');

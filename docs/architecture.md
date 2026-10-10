@@ -100,7 +100,7 @@ Self-Improvement가 직접 할 수 없는 일:
 - Auto Merge
 - Framework 결함을 발견했다는 이유로 연쇄 blocker를 자동 생성하며 자기 자신을 계속 수정
 
-Product Discovery(Trusted Product Evaluation)는 사람이 실행할 때만 배포된 App을 제품 관점으로 읽고 개선 후보 Issue를 실행당 하나까지 열 수 있다. 이는 위 경계를 넓히지 않는다. Issue는 proposal일 뿐이고, 평가 대상에서 Framework distribution이 제외되며, 개선 범위가 Framework 소유 경로면 fail-closed로 거부한다. 무엇을 구현할지 정하는 authority는 계속 사람에게 있다.
+Product Discovery(Trusted Product Evaluation)는 사람이 실행하거나, 사람이 저장소 변수로 켠 저장소에서 결정적 상한 조건(Human Merge 3건, 열린 후보 없음, 24시간)이 맞을 때만 배포된 App을 제품 관점으로 읽고 개선 후보 Issue를 실행당 하나까지 열 수 있다. 이는 위 경계를 넓히지 않는다. Issue는 proposal일 뿐이고, 평가 대상에서 Framework distribution이 제외되며, 개선 범위가 Framework 소유 경로면 fail-closed로 거부한다. 무엇을 구현할지 정하는 authority는 계속 사람에게 있다.
 
 즉 **Self-Improvement = autonomous self-modification이 아니라 evidence-grounded improvement proposal**이다.
 

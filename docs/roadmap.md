@@ -123,10 +123,10 @@ AI output은 evidence ID에 grounding되어야 하며 trusted finalize를 통과
 
 여기까지는 개선 후보를 사람이 직접 발견해 Issue로 옮겨야 했습니다. Phase 3-E는 그 한 칸만 자동화합니다.
 
-처음에는 Human Merge마다 자동으로 평가했지만, 비용과 폭주 방지를 위해 2026-10-02(PR #360, #361)부터 사람이 Actions에서 실행할 때만 돌고, 후보 3개를 비교해 1위만 제안하는 Product Discovery로 바꿨습니다.
+처음에는 Human Merge마다 자동으로 평가했지만, 비용과 폭주 방지를 위해 2026-10-02(PR #360, #361)부터 사람이 Actions에서 실행할 때만 돌고, 후보 3개를 비교해 1위만 제안하는 Product Discovery로 바꿨습니다. 사람의 손을 더 줄이기 위해 #383부터는 저장소 변수 `AUTO_PRODUCT_DISCOVERY=on`을 켠 저장소에 한해, 비용 상한 조건이 맞을 때 머지 뒤 자동으로 시작할 수 있습니다(기본은 꺼짐).
 
 ```text
-사람이 Trusted Product Evaluation 실행
+사람이 Trusted Product Evaluation 실행 (또는 opt-in 저장소에서 상한 조건이 맞으면 자동 시작)
 → bounded Product Snapshot (실행 시점 기본 브랜치의 제품 source 전체 + 최근 이력)
 → read-only AI Product Discovery (서로 다른 영역의 후보 3개 비교, 1위 또는 NONE)
 → trusted 결정적 중복 판단
