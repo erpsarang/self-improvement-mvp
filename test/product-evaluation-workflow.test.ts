@@ -135,9 +135,11 @@ test("후보 Issue가 생성되면 read-only PLAN을 정확히 한 번 자동 �
   assert.equal(workflow.split("workflow_id: 'plan.yml'").length - 1, 1);
   assert.match(workflow, /if: steps\.decide\.outputs\.action == 'create' && steps\.create\.outputs\.issue_number != ''/);
   assert.match(workflow, /inputs: \{ issue_number: issueNumber \}/);
-  // 승인 댓글이나 IMPLEMENT는 어디에서도 만들지 않는다. 남기는 댓글은 Discovery Issue의 결과 기록 하나뿐이다.
+  // 승인 댓글이나 IMPLEMENT는 어디에서도 만들지 않는다. 남기는 댓글은 Discovery Issue의 결과 기록과 검증 실패 알림(#381) 둘뿐이고
+  // 둘 다 Discovery 전용 Issue로만 간다.
   assert.doesNotMatch(workflow, /body: 'PLAN-승인'/);
-  assert.equal(workflow.split("issues.createComment(").length - 1, 1);
+  assert.equal(workflow.split("issues.createComment(").length - 1, 2);
+  assert.equal(workflow.split("issue_number: Number(issueNumber), body });").length - 1, 2);
   assert.match(workflow, /await github\.rest\.issues\.createComment\(\{ \.\.\.context\.repo, issue_number: Number\(issueNumber\), body \}\);/);
   assert.match(workflow, /DISCOVERY_ISSUE_NUMBER: \$\{\{ needs\.prepare\.outputs\.issue_number \}\}\n {10}DISCOVERY_RESULT_COMMENT_MD/);
   assert.match(moduleSource, /PLAN-승인 이후에만 구현이 시작됩니다/);
@@ -173,3 +175,16 @@ test("prepare는 사람이 not_planned로 닫은 후보만 읽어 평가 입력�
   assert.equal(workflow.split("uses: ./.github/workflows/subscription-exchange.yml").length - 1, 1);
 });
 
+
+test("trusted 검증이나 결정이 실패하면 Discovery 전용 Issue에 단계와 로그를 알리고 AI를 다시 부르지 않는다 (#381)", () => {
+  const finalize = workflow.slice(workflow.indexOf("\n  finalize:\n"));
+  const notice = finalize.slice(finalize.indexOf("- name: 검증 실패를 Discovery 전용 Issue에 알림"));
+  assert.match(notice, /if: failure\(\)\n/);
+  assert.match(notice, /DISCOVERY_ISSUE_NUMBER: \$\{\{ needs\.prepare\.outputs\.issue_number \}\}/);
+  assert.match(notice, /steps\.finalize\.outcome/);
+  assert.match(notice, /issues\.createComment\(/);
+  // 알림은 댓글 하나뿐이다. 후보 Issue, PLAN, executor 호출은 만들지 않는다.
+  assert.doesNotMatch(notice, /issues\.create\(|createWorkflowDispatch|EXECUTOR_DISPATCH_TOKEN|secrets\./);
+  // 이미 쓰던 권한(issues: write) 안에서만 동작한다.
+  assert.match(finalize, /permissions:\n {6}contents: read\n {6}issues: write\n {6}actions: write\n/);
+});

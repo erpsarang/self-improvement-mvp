@@ -636,7 +636,11 @@ function normalizeScopePaths(value: unknown): readonly string[] {
   }
   const paths = value.map((entry) => {
     if (typeof entry !== "string") throw new Error("candidate scopePaths must contain strings");
-    const path = assertSafeRelativePath("candidate scopePaths", entry.trim());
+    // 폴더는 끝에 `/` 하나를 붙여 쓸 수 있다(`test/`). 그 밖의 검증은 같다.
+    const trimmed = entry.trim();
+    const directory = trimmed.length > 1 && trimmed.endsWith("/");
+    const checked = assertSafeRelativePath("candidate scopePaths", directory ? trimmed.slice(0, -1) : trimmed);
+    const path = directory ? `${checked}/` : checked;
     if (isFrameworkOwnedPath(path)) {
       throw new Error(`candidate scopePaths must not target Framework-owned paths: ${path}`);
     }

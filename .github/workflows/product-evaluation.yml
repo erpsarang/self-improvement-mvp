@@ -535,3 +535,37 @@ jobs:
           name: product-improvement-decision-${{ github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/product-evaluation-final/issue-decision.json
           if-no-files-found: error
+
+      # trusted 검증이나 결정 단계가 실패하면 사유가 Actions 로그에만 남아 Discovery Issue는 요청·결과 댓글만 남긴 채 침묵했다
+      # (meeting-action-items run 38042323905: candidate scopePaths의 폴더 표기 `test/`가 거부됨, self-improvement-mvp #381).
+      # 사람이 Issue만 보고도 멈춘 단계와 다음 행동을 알 수 있게 댓글 하나를 남긴다. 후보 Issue와 AI 호출은 만들지 않는다.
+      - name: 검증 실패를 Discovery 전용 Issue에 알림
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          DISCOVERY_ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
+          FINALIZE_OUTCOME: ${{ steps.finalize.outcome }}
+          DECIDE_OUTCOME: ${{ steps.decide.outcome }}
+          CREATE_OUTCOME: ${{ steps.create.outcome }}
+        with:
+          script: |
+            const issueNumber = process.env.DISCOVERY_ISSUE_NUMBER || '';
+            if (!/^[1-9]\d*$/.test(issueNumber)) throw new Error('Discovery Issue number is required');
+            const failedStep = process.env.FINALIZE_OUTCOME === 'failure'
+              ? 'Evaluator 결과의 trusted 검증'
+              : process.env.DECIDE_OUTCOME === 'failure'
+                ? '중복·후보 없음 판단'
+                : process.env.CREATE_OUTCOME === 'failure'
+                  ? 'Improvement Candidate Issue 생성'
+                  : '결과 정리';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## Product Discovery 중단',
+              '',
+              `${failedStep} 단계가 실패해 Improvement Candidate Issue를 만들지 못했습니다. 위 Evaluator 결과 댓글은 검증을 통과하지 못한 원문입니다.`,
+              '',
+              `실패 로그: ${runUrl}`,
+              '',
+              '같은 입력으로 AI를 다시 부르지 않았습니다. 다시 시도하려면 Actions에서 `Trusted Product Evaluation`을 다시 실행하세요(opus 호출 1회가 듭니다).',
+            ].join('\n');
+            await github.rest.issues.createComment({ ...context.repo, issue_number: Number(issueNumber), body });
