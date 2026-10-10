@@ -174,7 +174,10 @@ test("PLAN_FAILED 안내는 본문을 고친 뒤 Actions에서 다시 실행해�
 test("파일 수 한도 초과로 PLAN이 실패하면 사유 원문은 그대로 두고 쉬운 설명을 덧붙인다", () => {
   const noticeJob = workflow.split("\n  failure_notice:\n")[1] ?? "";
   assert.match(noticeJob, /const scopeTooLarge = \/PLAN scope cannot hold existing tests\/\.test\(reason\);/);
-  assert.match(noticeJob, /scopeTooLarge \? \['\*\*쉬운 설명:\*\* 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다\./);
+  assert.match(noticeJob, /scopeTooLarge \? \[`\*\*쉬운 설명:\*\* 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다\.\$\{sizeDetail\} /);
+  // 개수는 오류 사유의 "(changed N + impacted tests M = T)"에서 읽고, 사람 말로 풀어 쓴다. 형식이 다르면 덧붙이지 않는다.
+  assert.match(noticeJob, /within \(\\d\+\) bounded paths \\\(changed \(\\d\+\) \\\+ impacted tests \(\\d\+\) = \(\\d\+\)\\\)/);
+  assert.match(noticeJob, /sizeMatch \? ` \(PLAN이 고른 변경 파일 \$\{sizeMatch\[2\]\}개 \+ 자동으로 더해지는 기존 테스트 \$\{sizeMatch\[3\]\}개 = \$\{sizeMatch\[4\]\}개, 한도 \$\{sizeMatch\[1\]\}개\)` : ''/);
   // 사유 원문 줄은 그대로다.
   assert.match(noticeJob, /reason \? `사유: \\`\$\{reason\}\\`` : '사유: 위 run 로그를 확인하세요\.'/);
   // 한도 초과 문구가 실제 오류 문구와 같은 곳에서 나온다.

@@ -105,6 +105,31 @@ test("bounded slot이 모자라면 조용히 넘기지 않고 fail-closed 한다
   assert.throws(() => applyImpactedTestCompanions(target, context, raw), /cannot hold existing tests that import changed sources/);
 });
 
+test("한도 초과 오류는 개수를 목록보다 앞에 두어 실패 댓글의 300자 안에서 얼마나 줄여야 하는지 보인다", () => {
+  const { target, context } = appFixture();
+  const filler = Array.from({ length: PLAN_IMPLEMENT_MAX_FILES - 1 }, (_, index) => `src/new-${index}.js`);
+  const raw = readyPlan(context, ["src/web.js"]);
+  (raw.implementationScope as { allowedPaths: string[] }).allowedPaths.push(...filler);
+  const changed = PLAN_IMPLEMENT_MAX_FILES;
+  let message = "";
+  try {
+    applyImpactedTestCompanions(target, context, raw);
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  const match = /^PLAN scope cannot hold existing tests that import changed sources within (\d+) bounded paths \(changed (\d+) \+ impacted tests (\d+) = (\d+)\): changed=\[(.*)\] tests=\[(.*)\]$/.exec(message);
+  assert.ok(match, message);
+  assert.equal(Number(match[1]), PLAN_IMPLEMENT_MAX_FILES);
+  assert.equal(Number(match[2]), changed);
+  assert.ok(Number(match[3]) >= 1);
+  assert.equal(Number(match[4]), Number(match[2]) + Number(match[3]));
+  assert.ok(Number(match[4]) > PLAN_IMPLEMENT_MAX_FILES);
+  assert.match(match[5] ?? "", /src\/web\.js/);
+  // 개수는 앞 300자 안에 들어와 notice가 자르더라도 남는다.
+  assert.match(message.slice(0, 300), /\(changed \d+ \+ impacted tests \d+ = \d+\)/);
+  assert.ok(!message.includes("\n"));
+});
+
 /** sales-order-exception-analyzer #221 모양: 기존 VM harness가 source를 import 대신 파일로 읽어 실행한다. */
 function literalReadFixture(withHarness: boolean): string {
   const root = mkdtempSync(join(tmpdir(), "planner-literal-read-"));

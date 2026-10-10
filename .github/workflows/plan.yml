@@ -606,6 +606,8 @@ jobs:
             if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) throw new Error('Missing PLAN requirement issue number');
             const reason = (process.env.PLAN_FAILURE_REASON || '').replace(/[`\r\n]/g, ' ').trim().slice(0, 300);
             const scopeTooLarge = /PLAN scope cannot hold existing tests/.test(reason);
+            const sizeMatch = /within (\d+) bounded paths \(changed (\d+) \+ impacted tests (\d+) = (\d+)\)/.exec(reason);
+            const sizeDetail = sizeMatch ? ` (PLAN이 고른 변경 파일 ${sizeMatch[2]}개 + 자동으로 더해지는 기존 테스트 ${sizeMatch[3]}개 = ${sizeMatch[4]}개, 한도 ${sizeMatch[1]}개)` : '';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const body = [
               '## PLAN 실패 (게시된 PLAN 없음)',
@@ -613,7 +615,7 @@ jobs:
               reason ? `사유: \`${reason}\`` : '사유: 위 run 로그를 확인하세요.',
               '### HumanStatus: PLAN_FAILED',
               '**현재 상황:** PLAN 결과를 받지 못했거나 trusted 검증을 통과하지 못해 PLAN이 게시되지 않았습니다. 승인할 PLAN이 없습니다.',
-              ...(scopeTooLarge ? ['**쉬운 설명:** 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다. 요구를 둘로 나누거나 바꾸려는 내용을 줄여서 본문에 적어 주세요.'] : []),
+              ...(scopeTooLarge ? [`**쉬운 설명:** 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다.${sizeDetail} 요구를 둘로 나누거나 바꾸려는 내용을 줄여서 본문에 적어 주세요.`] : []),
               '**다음 행동:** 사유를 보고 필요하면 Issue 본문을 보완한 뒤, Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행하세요. Issue 본문을 고치는 것만으로는 PLAN이 다시 시작되지 않습니다. 진행하지 않으려면 사유를 남기고 Issue를 닫으세요.',
             ].join('\n\n');
             await github.rest.issues.createComment({ ...context.repo, issue_number: issueNumber, body });
