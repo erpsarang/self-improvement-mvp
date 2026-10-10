@@ -762,9 +762,12 @@ export function applyImpactedTestCompanions(
   companions.sort((a, b) => a.localeCompare(b));
   if (companions.length === 0) return untouched;
 
-  if (allowedPaths.length + companions.length > PLAN_IMPLEMENT_MAX_FILES) {
+  const totalPaths = allowedPaths.length + companions.length;
+  if (totalPaths > PLAN_IMPLEMENT_MAX_FILES) {
+    // 실패 댓글(plan.yml failure_notice)은 첫 Error 줄을 300자로 자른다. 사람이 얼마나 줄여야 하는지 알 수 있도록 개수를 목록보다 앞에 둔다.
+    const oneLine = (paths: string[]): string => paths.map((path) => path.replace(/[\r\n`]/g, " ")).join(", ");
     throw new Error(
-      `PLAN scope cannot hold existing tests that import changed sources within ${PLAN_IMPLEMENT_MAX_FILES} bounded paths: ${companions.join(", ")}`,
+      `PLAN scope cannot hold existing tests that import changed sources within ${PLAN_IMPLEMENT_MAX_FILES} bounded paths (changed ${allowedPaths.length} + impacted tests ${companions.length} = ${totalPaths}): changed=[${oneLine(allowedPaths)}] tests=[${oneLine(companions)}]`,
     );
   }
 
