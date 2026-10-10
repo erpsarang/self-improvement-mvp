@@ -327,6 +327,75 @@ function boundedLine(name: string, value: unknown): string {
   return line;
 }
 
+/** 머지 뒤 Product Discovery를 자동으로 시작할지 정하는 결정적 판단의 입력. AI가 판단하지 않는다. */
+export interface AutoDiscoveryInput {
+  /** 저장소 변수 AUTO_PRODUCT_DISCOVERY가 on일 때만 true. 기본은 꺼져 있다. */
+  readonly enabled: boolean;
+  /** 마지막 Discovery 요청 이후 Human Merge된 ai-publish PR 수. Discovery 기록이 없으면 전체. */
+  readonly mergedSinceLast: number;
+  /** 열려 있는 [Self-Improvement] Issue 수. */
+  readonly openCandidateCount: number;
+  /** 마지막 Discovery 요청 시각(ISO). 한 번도 없으면 null. */
+  readonly lastDiscoveryAt: string | null;
+  readonly now: string;
+  /** product-evaluation.yml run이 이미 대기 중이거나 실행 중인지. */
+  readonly runInFlight: boolean;
+}
+
+export type AutoDiscoveryDecision =
+  | { readonly action: "dispatch" }
+  | { readonly action: "skip"; readonly reason: string };
+
+/** 마지막 Discovery 이후 이만큼 Human Merge가 쌓여야 자동으로 시작한다. Merge마다 도는 폭주를 막는다. */
+export const AUTO_DISCOVERY_MIN_MERGES = 3;
+/** 자동 시작 사이의 최소 간격. 하루에 opus 호출이 여러 번 나가지 않게 한다. */
+export const AUTO_DISCOVERY_MIN_INTERVAL_HOURS = 24;
+
+function nonNegativeInteger(name: string, value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`auto discovery ${name} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function timestamp(name: string, value: unknown): number {
+  const parsed = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(parsed)) throw new Error(`auto discovery ${name} must be an ISO timestamp`);
+  return parsed;
+}
+
+/**
+ * 자동 시작 조건을 모두 만족할 때만 dispatch한다. 하나라도 어긋나면 이유와 함께 skip한다.
+ * 비용 상한: 사람이 켠 저장소에서, Merge 3건이 쌓였고, 열린 후보가 없고, 마지막 시작에서 24시간이 지났을 때만 opus 1회.
+ */
+export function decideAutoDiscovery(input: AutoDiscoveryInput): AutoDiscoveryDecision {
+  if (typeof input.enabled !== "boolean") throw new Error("auto discovery enabled must be a boolean");
+  if (typeof input.runInFlight !== "boolean") throw new Error("auto discovery runInFlight must be a boolean");
+  const merged = nonNegativeInteger("mergedSinceLast", input.mergedSinceLast);
+  const openCandidates = nonNegativeInteger("openCandidateCount", input.openCandidateCount);
+  const now = timestamp("now", input.now);
+  const last = input.lastDiscoveryAt === null ? null : timestamp("lastDiscoveryAt", input.lastDiscoveryAt);
+
+  if (!input.enabled) return { action: "skip", reason: "저장소 변수 AUTO_PRODUCT_DISCOVERY가 on이 아닙니다" };
+  if (input.runInFlight) return { action: "skip", reason: "Product Discovery가 이미 실행 중이거나 대기 중입니다" };
+  if (openCandidates > 0) {
+    return { action: "skip", reason: "사람이 처리하지 않은 [Self-Improvement] Issue가 열려 있습니다" };
+  }
+  if (merged < AUTO_DISCOVERY_MIN_MERGES) {
+    return {
+      action: "skip",
+      reason: `마지막 Discovery 이후 Human Merge가 ${merged}건이라 ${AUTO_DISCOVERY_MIN_MERGES}건에 못 미칩니다`,
+    };
+  }
+  if (last !== null && now - last < AUTO_DISCOVERY_MIN_INTERVAL_HOURS * 3_600_000) {
+    return {
+      action: "skip",
+      reason: `마지막 Discovery 시작 이후 ${AUTO_DISCOVERY_MIN_INTERVAL_HOURS}시간이 지나지 않았습니다`,
+    };
+  }
+  return { action: "dispatch" };
+}
+
 /** Framework distribution이 소유하는 경로인지 판단한다. 제품 평가와 개선 범위에서 모두 제외된다. */
 export function isFrameworkOwnedPath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/");

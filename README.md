@@ -33,10 +33,10 @@ User Requirement
 → 다음 Requirement / PLAN cycle
 ```
 
-배포된 App은 사람이 실행할 때만 같은 경계에서 제품 관점으로도 한 번 살펴봅니다(Product Discovery). 머지 후 자동 평가는 하지 않습니다.
+배포된 App은 같은 경계에서 제품 관점으로도 한 번 살펴봅니다(Product Discovery). 기본은 사람이 실행할 때만 돌고, 저장소 변수 `AUTO_PRODUCT_DISCOVERY=on`을 켠 저장소는 Human Merge가 쌓였을 때 조건을 보고 자동으로 시작합니다. Merge마다 평가하지는 않습니다.
 
 ```text
-사람이 Trusted Product Evaluation 실행
+사람이 Trusted Product Evaluation 실행 (또는 opt-in 저장소에서 상한 조건이 맞으면 자동 시작)
 → Product Snapshot (실행 시점 기본 브랜치의 제품 source 전체 + 최근 이력)
 → read-only AI Product Discovery (서로 다른 영역의 후보 3개 비교)
 → 실행당 최대 1개의 Improvement Candidate Issue
@@ -98,11 +98,11 @@ Merge가 실제 완료된 뒤에만 Completed Cycle Record를 만듭니다. LEAR
 
 LEARN 결과는 authority가 아니라 evidence-grounded proposal이고, Improvement Candidate도 `proposal-only / pending-human`입니다. 사람이 선택한 candidate만 새 Requirement / PLAN cycle로 연결됩니다.
 
-### 5. 사람이 실행하는 Product Discovery → Improvement Candidate Issue
+### 5. Product Discovery → Improvement Candidate Issue
 
 LEARN이 개발 cycle의 진행 방식을 본다면, Product Discovery는 **배포된 App 자체가 사용자에게 충분한가**를 봅니다. 두 stage는 입력도 산출물도 공유하지 않습니다.
 
-사람이 Actions에서 `Trusted Product Evaluation`을 실행할 때만 돕니다. 평가 대상은 실행 시점 기본 브랜치의 제품 source 전체(테스트 제외)와 README, 그리고 최근 이력(완료한 요구, 기각된 후보와 사유, 최근 변경 경로)입니다. Framework distribution 파일은 snapshot 선택에서 제외되므로 Evaluator는 Framework를 볼 수 없습니다.
+사람이 Actions에서 `Trusted Product Evaluation`을 실행하면 돕니다. 저장소 변수 `AUTO_PRODUCT_DISCOVERY=on`을 켠 저장소에서는 머지 뒤 아래 상한 조건이 모두 맞을 때 같은 workflow가 자동으로 시작됩니다(기본은 꺼짐). 평가 대상은 실행 시점 기본 브랜치의 제품 source 전체(테스트 제외)와 README, 그리고 최근 이력(완료한 요구, 기각된 후보와 사유, 최근 변경 경로)입니다. Framework distribution 파일은 snapshot 선택에서 제외되므로 Evaluator는 Framework를 볼 수 없습니다.
 
 AI는 서로 다른 영역의 후보 3개를 사용자 영향, 사용 빈도, README 비전으로 비교해 1위 1개만 제안하고, 고르지 않은 후보의 이유를 함께 적습니다. 최근 변경 영역은 결함이 아니면 순위를 낮추고, 셋 다 가치가 낮으면 NONE을 냅니다. 1위가 있을 때만 App repository에 `[Self-Improvement]` Issue 하나가 만들어집니다. 지켜지는 경계는 다음과 같습니다.
 
@@ -110,6 +110,7 @@ AI는 서로 다른 영역의 후보 3개를 사용자 영향, 사용 빈도, RE
 - 열린 `[Self-Improvement]` Issue가 있거나 같은 제목이 이미 있으면 생성 금지
 - 개선 범위가 Framework 소유 경로면 fail-closed로 거부
 - AI 호출은 실행당 1회(Claude opus, effort medium)이고 재시도하지 않음
+- 자동 시작(opt-in)은 마지막 Discovery 이후 Human Merge 3건, 열린 `[Self-Improvement]` Issue 없음, 마지막 시작 후 24시간, 실행 중인 run 없음을 모두 만족할 때만이고, 이 판단에는 AI를 쓰지 않음
 - 요청·결과와 사람이 읽을 판단 요약은 Discovery 전용 Issue(`[Product Discovery] 실행 기록`) 하나에 남음
 - 생성된 Issue에는 read-only AI PLAN이 정확히 한 번 자동으로 제안됨
 - 구현은 사람이 `PLAN-승인`한 이후에만 진행하고, 진행하지 않을 후보는 사유를 남기고 `not_planned`로 닫음

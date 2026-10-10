@@ -335,12 +335,12 @@ LEARN report의 improvement hypothesis는 deterministic하게 `Improvement Candi
 
 LEARN은 "개발 cycle이 어떻게 흘렀는가"를 봅니다. Product Discovery는 "배포된 App이 사용자에게 충분한가"를 봅니다.
 
-`Trusted Product Evaluation`은 머지 후 자동으로 시작하지 않습니다. 사람이 Actions에서 workflow_dispatch로 실행할 때만 돌며, 입력은 없습니다. 실행 시점의 기본 브랜치 SHA를 평가합니다.
+`Trusted Product Evaluation`은 Merge마다 자동으로 시작하지 않습니다. 사람이 Actions에서 workflow_dispatch로 실행하거나, 저장소 변수 `AUTO_PRODUCT_DISCOVERY=on`을 켠 저장소에서 아래 "자동 시작" 조건이 맞을 때만 돌며, 입력은 없습니다. 실행 시점의 기본 브랜치 SHA를 평가합니다.
 
 Evaluator는 snapshot 전체를 담은 PRODUCT_EVALUATION_REQUEST 1회로 Private subscription executor(Claude Max, opus, effort medium)가 실행합니다. 재시도하지 않습니다. 요청·결과 댓글과 사람이 읽을 판단 요약은 Discovery 전용 Issue `[Product Discovery] 실행 기록` 하나에 계속 남습니다. 이 Issue는 첫 실행 때 Framework가 만들고, 사람이 닫으면 다음 실행에서 새로 만듭니다. App repository는 자기 executor의 `EXECUTOR_ALLOWED_REPOSITORIES`에 있어야 합니다.
 
 ```text
-사람이 Trusted Product Evaluation 실행
+사람이 Trusted Product Evaluation 실행 (또는 opt-in 저장소에서 자동 시작)
 → 실행 시점 기본 브랜치 SHA 확인
 → Product Snapshot 생성 (제품 source 전체 + 최근 이력)
 → isolated read-only AI Product Discovery (후보 3개 비교, 1위 또는 NONE)
@@ -380,6 +380,21 @@ snapshot에서 항상 제외되는 것:
 | 사람이 기각한 후보를 다시 제안하지 않음 | `not_planned`로 닫힌 `[Self-Improvement]` Issue와 닫기 코멘트를 snapshot에 담아 Evaluator에게 금지 목록으로 전달 |
 
 중복 판단 규칙은 두 가지입니다. 열린 `[Self-Improvement]` Issue가 하나라도 있으면 사람이 처리할 때까지 새 후보를 쌓지 않습니다. 열림/닫힘과 무관하게 같은 제목이 이미 있으면 만들지 않습니다.
+
+### 자동 시작 (opt-in)
+
+저장소 변수 `AUTO_PRODUCT_DISCOVERY`를 `on`으로 두면(저장소 Settings → Secrets and variables → Actions → Variables), Human Merge 뒤 post-merge 흐름의 끝(`Trusted Improvement Candidate`)에서 Discovery를 자동으로 시작할지 판단합니다. 변수가 없거나 `on`이 아니면 이 판단 job 자체가 건너뛰어지고 아무 비용도 들지 않습니다.
+
+판단은 AI 없이 결정적 함수(`decideAutoDiscovery`)가 하며, 아래를 **모두** 만족할 때만 `Trusted Product Evaluation`을 dispatch합니다.
+
+| 조건 | 막는 것 |
+| --- | --- |
+| 마지막 Discovery 요청 이후 Human Merge(`ai-publish/` PR)가 3건 이상 | Merge마다 도는 폭주 |
+| 열린 `[Self-Improvement]` Issue가 없음 | 사람이 처리하지 않은 후보 위에 쌓이는 것 |
+| 마지막 Discovery 시작 후 24시간 경과 | 하루에 여러 번 |
+| 대기 중이거나 실행 중인 Discovery run이 없음 | 겹치는 실행 |
+
+상한은 opus 호출이 하루 1회를 넘지 않는 것입니다. 시간 기준(cron) 대신 Merge 뒤에 판단하는 이유는 executor runner가 사람이 작업 중일 때 켜져 있기 때문입니다(꺼져 있으면 요청은 timeout으로 멈춥니다). 판단 근거는 Framework가 만든 Discovery 기록 Issue의 봇 댓글과 `ai-publish/` 브랜치의 병합 PR뿐이며, 사람이 만든 같은 제목의 Issue는 믿지 않습니다. 이 job은 workflow 하나를 dispatch할 뿐이고 후보 Issue, `PLAN-승인`, Merge는 만들지 않습니다. 자동으로 올라온 후보도 사람이 `PLAN-승인`해야 구현이 시작됩니다.
 
 `scopePaths`에는 파일 경로와 폴더 표기(끝에 `/` 하나, 예: `test/`)를 쓸 수 있습니다. 경로 탈출, 절대 경로, 빈 조각(`test//`)과 Framework 경로는 이 표기로도 계속 거부됩니다.
 

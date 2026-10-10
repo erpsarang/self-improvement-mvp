@@ -23,6 +23,9 @@ import {
   type ProductEvaluationReport,
   type ProductSnapshot,
   type RejectedCandidate,
+  AUTO_DISCOVERY_MIN_INTERVAL_HOURS,
+  AUTO_DISCOVERY_MIN_MERGES,
+  decideAutoDiscovery,
 } from "../src/self-improvement/product-evaluation.js";
 
 const target: ProductDiscoveryTarget = {
@@ -653,4 +656,53 @@ test("Discovery subscription identity는 exact snapshot, 배포 SHA, Discovery I
   assert.throws(() => createProductDiscoverySubscriptionIdentity(snapshot, { runId: 0, runAttempt: 1 }), /worker\.runId/);
   // 위변조된 snapshot으로는 요청을 만들지 않는다.
   assert.throws(() => createProductDiscoverySubscriptionIdentity({ ...snapshot, fileCount: snapshot.fileCount + 1 }, { runId: 901, runAttempt: 1 }));
+});
+
+const gateBase = {
+  enabled: true,
+  mergedSinceLast: 3,
+  openCandidateCount: 0,
+  lastDiscoveryAt: "2026-10-09T00:00:00.000Z",
+  now: "2026-10-10T09:00:00.000Z",
+  runInFlight: false,
+} as const;
+
+test("자동 Discovery는 조건을 모두 만족할 때만 시작한다 (#383)", () => {
+  assert.deepEqual(decideAutoDiscovery(gateBase), { action: "dispatch" });
+  // 한 번도 돌지 않은 저장소도 Merge가 충분히 쌓였으면 시작한다.
+  assert.deepEqual(decideAutoDiscovery({ ...gateBase, lastDiscoveryAt: null }), { action: "dispatch" });
+  assert.equal(AUTO_DISCOVERY_MIN_MERGES, 3);
+  assert.equal(AUTO_DISCOVERY_MIN_INTERVAL_HOURS, 24);
+});
+
+test("자동 Discovery는 꺼져 있거나 비용 상한에 걸리면 이유와 함께 시작하지 않는다 (#383)", () => {
+  const skipReason = (overrides: Record<string, unknown>): string => {
+    const decision = decideAutoDiscovery({ ...gateBase, ...overrides } as never);
+    assert.equal(decision.action, "skip");
+    return decision.action === "skip" ? decision.reason : "";
+  };
+  assert.match(skipReason({ enabled: false }), /AUTO_PRODUCT_DISCOVERY/);
+  assert.match(skipReason({ runInFlight: true }), /이미 실행 중/);
+  assert.match(skipReason({ openCandidateCount: 1 }), /\[Self-Improvement\] Issue가 열려/);
+  assert.match(skipReason({ mergedSinceLast: 2 }), /Human Merge가 2건/);
+  assert.match(skipReason({ mergedSinceLast: 0, lastDiscoveryAt: null }), /Human Merge가 0건/);
+  // 24시간이 되기 직전에는 시작하지 않고, 정확히 24시간이 지나면 시작한다.
+  assert.match(skipReason({ lastDiscoveryAt: "2026-10-09T09:00:00.001Z" }), /24시간/);
+  assert.deepEqual(decideAutoDiscovery({ ...gateBase, lastDiscoveryAt: "2026-10-09T09:00:00.000Z" }), { action: "dispatch" });
+  // 시계가 어긋나 마지막 시작이 미래로 보여도 시작하지 않는다.
+  assert.match(skipReason({ lastDiscoveryAt: "2026-10-11T00:00:00.000Z" }), /24시간/);
+});
+
+test("자동 Discovery 판단은 잘못된 입력을 조용히 넘기지 않고 거부한다 (#383)", () => {
+  for (const overrides of [
+    { mergedSinceLast: -1 },
+    { mergedSinceLast: 1.5 },
+    { openCandidateCount: "0" },
+    { now: "어제" },
+    { lastDiscoveryAt: "not-a-date" },
+    { enabled: "on" },
+    { runInFlight: undefined },
+  ]) {
+    assert.throws(() => decideAutoDiscovery({ ...gateBase, ...overrides } as never), /auto discovery/, JSON.stringify(overrides));
+  }
 });
