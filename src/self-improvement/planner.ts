@@ -642,7 +642,7 @@ function assertSafePlanPath(path: string): void {
 // 성공한 PLAN 호출이 통째로 버려진다 (#240).
 const EXPLICIT_PLAN_PATH = /(?:^|[\s`\"'(])((?:\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+\.?[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9._-]*|(?:package(?:-lock)?\.json|tsconfig\.json|index\.html|README\.md))/g;
 
-function explicitPlanPaths(values: readonly string[]): string[] {
+export function explicitPlanPaths(values: readonly string[]): string[] {
   const paths: string[] = [];
   for (const value of values) {
     for (const match of value.matchAll(EXPLICIT_PLAN_PATH)) {
