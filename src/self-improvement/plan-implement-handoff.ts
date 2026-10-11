@@ -12,6 +12,7 @@ import {
 import type { ApprovedPlanEvidence } from "./context-pack.js";
 import {
   PLAN_IMPLEMENT_MAX_CONTEXT_BYTES as PLANNER_IMPLEMENT_MAX_CONTEXT_BYTES,
+  PLAN_IMPLEMENT_MAX_FILES,
   verifyPlanContextPack,
   type PlanContextPack,
 } from "./planner.js";
@@ -20,7 +21,6 @@ export const PLAN_AUTHORIZE_WORKFLOW_PATH = ".github/workflows/plan-authorize.ym
 export const PLAN_WORKFLOW_PATH = ".github/workflows/plan.yml" as const;
 export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = PLANNER_IMPLEMENT_MAX_CONTEXT_BYTES;
 export const PLAN_IMPLEMENT_MAX_PATCH_BYTES = 80_000;
-export const PLAN_IMPLEMENT_MAX_FILES = 8;
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const GIT_SHA = /^[0-9a-f]{40,64}$/;

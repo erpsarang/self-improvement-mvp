@@ -25,6 +25,23 @@
 - main 직접 push 금지
 ```
 
+## 1-1. 요구 본문 점검 (조언)
+
+`[업무 요구]` Issue를 저장소 구성원(OWNER/MEMBER/COLLABORATOR)이 열거나 고치면 `Requirement Lint` workflow가 본문을 점검하고 Issue에 **조언 댓글 한 개**를 남기거나 갱신합니다. 결정적 규칙만 쓰고 AI를 호출하지 않으며, PLAN 시작·검증·승인에는 영향이 없습니다. workflow가 실패해도 PLAN은 그대로 진행됩니다.
+
+| 규칙 | 수준 | 점검 | 이유 |
+| --- | --- | --- | --- |
+| R1 | 오류 / 경고 | LEARN 증거 크기가 8,192바이트를 넘으면 오류, 90% 이상이면 경고 | Human Merge 뒤 LEARN이 `maxItemBytes`로 실패합니다 |
+| R2 | 정보 | 이 본문으로 PLAN이 쓸 모델(sonnet/opus) | 복잡한 요구 체크 한 줄이 모델을 정합니다 |
+| R3 | 경고 | ‘예상 변경 범위’ 목록이 8개를 넘음, 또는 `package.json`이 있고 `package-lock.json`이 없는데 이미 8개 | PLAN 허용 파일은 최대 8개이고 lock은 자동으로 더해집니다 |
+| R4 | 경고 | 본문의 경로 모양 문자열이 ‘예상 변경 범위’에 없음, 허용 경로의 끝부분만 쓴 짧은 이름, 주소(URL) | PLAN이 이를 되풀이하면 허용 경로와 글자가 달라 거부될 수 있습니다 |
+
+- **R1의 크기는 본문 길이가 아닙니다.** LEARN은 `{"title", "body", "digest"}`를 JSON으로 만든 값의 UTF-8 바이트를 잽니다. 제목, 키 이름, digest, 줄바꿈과 따옴표의 이스케이프가 더해지고 한글은 글자당 3바이트이므로, 본문이 8,192바이트보다 짧아도 넘을 수 있습니다.
+- R3·R4는 휴리스틱입니다. ‘예상 변경 범위’ 절은 제목에 "변경 범위"가 들어간 절이고, 파일 개수는 그 절의 목록 항목 맨 앞 백틱 표기만 셉니다. 절이 없으면 정보로만 표시합니다. PLAN 경로 검증은 본문이 아니라 PLAN(AI)이 쓴 문장에 걸리므로, R4는 거부를 없애지 못하고 가능성을 줄일 뿐입니다.
+- 댓글에는 본문 문장을 되풀이하지 않고 규칙 ID, 숫자, 경로(코드 표기)만 씁니다.
+- 본문을 고치면 댓글이 갱신됩니다. 다만 본문 수정만으로는 PLAN이 다시 시작되지 않으므로, 고친 뒤 Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행해야 합니다.
+- 이미 닫힌 Issue도 Actions → Requirement Lint를 Issue 번호로 직접 실행해 점검할 수 있습니다. `post_comment`를 끄면 Issue에 댓글을 남기지 않고 Actions 요약에만 결과를 보여 줍니다.
+
 ## 2. AI 실행 경계 준비 (팀별 Claude 구독 executor)
 
 AI 호출 비용은 그 App을 개발하는 팀의 Claude 구독이 낸다. 팀마다 Private executor repository(`subscription-ai-executor` 복제)와 self-hosted runner를 두고, runner에는 팀 전용 Claude 계정으로 로그인한다. App repository는 자기 executor로만 요청을 보낸다.

@@ -1,0 +1,139 @@
+name: Requirement Lint
+
+# 요구 접수 사전 점검(#392). [업무 요구] Issue 본문을 결정적 규칙(R1~R4)으로 점검해 조언 댓글 한 개를 남기고 갱신한다.
+# 조언일 뿐이다: PLAN 시작, 검증기, 승인 경로를 바꾸지 않고, 이 workflow가 실패해도 PLAN은 영향받지 않는다.
+# AI 호출과 secret이 없다. Issue 본문은 쓰기 권한이 없는 lint job에서만 읽고 처리하며, 댓글은 issues: write만 가진 job이 게시한다.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 점검할 업무 요구 Issue 번호
+        required: true
+        type: string
+      post_comment:
+        description: 점검 결과를 Issue 댓글로 남길지 (끄면 Actions 요약에만 남김)
+        required: false
+        default: true
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: requirement-lint-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'issues' &&
+       startsWith(github.event.issue.title, '[업무 요구]') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      comment: ${{ steps.lint.outputs.comment }}
+      error_count: ${{ steps.lint.outputs.error_count }}
+      warning_count: ${{ steps.lint.outputs.warning_count }}
+    env:
+      GH_TOKEN: ""
+      GITHUB_TOKEN: ""
+    steps:
+      - name: Framework checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: lint-control
+
+      - name: Framework runtime layout 준비
+        working-directory: lint-control
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Framework dependencies
+        working-directory: lint-control
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
+
+      - name: Read requirement Issue
+        id: input
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ github.event_name == 'issues' && github.event.issue.number || inputs.issue_number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const raw = process.env.ISSUE_NUMBER;
+            if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('Invalid issue number');
+            const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: Number(raw) });
+            if (issue.pull_request) throw new Error('A requirement Issue is required, not a pull request');
+            const dir = path.join(process.env.RUNNER_TEMP, 'requirement-lint');
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, 'input.json'), JSON.stringify({ title: issue.title, body: issue.body ?? '' }));
+            core.setOutput('dir', dir);
+
+      - name: Lint requirement (deterministic, no AI)
+        id: lint
+        working-directory: lint-control
+        env:
+          REQUIREMENT_LINT_INPUT_JSON: ${{ steps.input.outputs.dir }}/input.json
+          REQUIREMENT_LINT_COMMENT_MD: ${{ steps.input.outputs.dir }}/comment.md
+        run: |
+          .framework-runtime/node_modules/.bin/tsx src/self-improvement/requirement-lint-handler.ts
+          delimiter="REQUIREMENT_LINT_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "comment<<${delimiter}"
+            cat "$REQUIREMENT_LINT_COMMENT_MD"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+  comment:
+    needs: lint
+    if: >-
+      needs.lint.result == 'success' &&
+      (github.event_name == 'issues' || inputs.post_comment)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Upsert requirement lint comment
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ github.event_name == 'issues' && github.event.issue.number || inputs.issue_number }}
+          LINT_COMMENT: ${{ needs.lint.outputs.comment }}
+        with:
+          script: |
+            const MARKER = '<!-- ai-dev-framework:REQUIREMENT_LINT v=1 -->';
+            const BOT = 'github-actions[bot]';
+            const raw = process.env.ISSUE_NUMBER;
+            if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('Invalid issue number');
+            const issue_number = Number(raw);
+            const body = process.env.LINT_COMMENT.trimEnd();
+            if (!body.startsWith(MARKER) || body.length > 60000) throw new Error('Unexpected requirement lint comment');
+            // 사람이 같은 marker를 흉내 낸 댓글은 갱신하지 않는다. Framework가 남긴 봇 댓글만 대상이다.
+            const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number, per_page: 100 });
+            const existing = comments.find((comment) => comment.user?.login === BOT && (comment.body ?? '').startsWith(MARKER));
+            if (existing) {
+              if ((existing.body ?? '').trimEnd() === body) return;
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number, body });
+            }
