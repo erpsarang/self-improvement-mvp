@@ -20,6 +20,8 @@ import {
 export const PLAN_AUTHORIZE_WORKFLOW_PATH = ".github/workflows/plan-authorize.yml" as const;
 export const PLAN_WORKFLOW_PATH = ".github/workflows/plan.yml" as const;
 export const PLAN_IMPLEMENT_MAX_CONTEXT_BYTES = PLANNER_IMPLEMENT_MAX_CONTEXT_BYTES;
+// 정의는 planner.ts 한 곳에 있다. 공개 이름만 유지한다.
+export { PLAN_IMPLEMENT_MAX_FILES };
 export const PLAN_IMPLEMENT_MAX_PATCH_BYTES = 80_000;
 
 const SHA256 = /^[0-9a-f]{64}$/;

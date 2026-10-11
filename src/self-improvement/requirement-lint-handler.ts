@@ -23,9 +23,12 @@ if (
 ) {
   throw new Error("REQUIREMENT_LINT_INPUT_JSON must contain string title and body");
 }
-const { title, body } = input as { title: string; body: string };
+const { title, body, authoredByHuman } = input as { title: string; body: string; authoredByHuman?: unknown };
+if (authoredByHuman !== undefined && typeof authoredByHuman !== "boolean") {
+  throw new Error("REQUIREMENT_LINT_INPUT_JSON authoredByHuman must be a boolean when present");
+}
 
-const report = lintRequirement({ title, body });
+const report = lintRequirement({ title, body, ...(authoredByHuman === undefined ? {} : { authoredByHuman }) });
 const comment = renderRequirementLintComment(report);
 writeFileSync(requiredEnv("REQUIREMENT_LINT_COMMENT_MD"), `${comment}\n`, "utf8");
 writeOutput("error_count", report.errorCount);

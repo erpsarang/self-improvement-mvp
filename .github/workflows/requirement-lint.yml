@@ -21,9 +21,10 @@ on:
 
 permissions: {}
 
+# 같은 Issue의 점검은 하나씩 차례로 돈다. cancel-in-progress는 쓰지 않는다: 조건 때문에 모든 job이 건너뛰어지는 실행
+# (예: 제목에서 [업무 요구]를 지운 수정)이 같은 그룹의 진행 중인 점검을 취소하지 않게 하려는 것이다.
 concurrency:
   group: requirement-lint-${{ github.event.issue.number || inputs.issue_number }}
-  cancel-in-progress: true
 
 jobs:
   lint:
@@ -86,7 +87,10 @@ jobs:
             if (issue.pull_request) throw new Error('A requirement Issue is required, not a pull request');
             const dir = path.join(process.env.RUNNER_TEMP, 'requirement-lint');
             fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(path.join(dir, 'input.json'), JSON.stringify({ title: issue.title, body: issue.body ?? '' }));
+            // plan.yml은 사람이 쓴 본문(marker가 없고 작성자가 User)에서만 복잡한 요구 체크를 opus로 올린다. R2 안내가 같게 하려고 넘긴다.
+            const body = issue.body ?? '';
+            const authoredByHuman = issue.user?.type === 'User' && !/<!-- ai-dev-framework:PRODUCT_IMPROVEMENT /.test(body);
+            fs.writeFileSync(path.join(dir, 'input.json'), JSON.stringify({ title: issue.title, body, authoredByHuman }));
             core.setOutput('dir', dir);
 
       - name: Lint requirement (deterministic, no AI)

@@ -209,3 +209,71 @@ test("PLAN_IMPLEMENT_MAX_FILES는 src 전체에서 한 곳에서만 정의된다
     .filter((name) => /\b(?:export\s+)?const\s+PLAN_IMPLEMENT_MAX_FILES\b/.test(readFileSync(`src/self-improvement/${name}`, "utf8")));
   assert.deepEqual(definitions, ["planner.ts"]);
 });
+
+test("코드 블록 안의 # 줄은 ‘예상 변경 범위’ 절을 끊지 않는다", () => {
+  const body = [
+    "## 예상 변경 범위",
+    "",
+    "- `src/a.ts`",
+    "",
+    "```sh",
+    "# 이 줄은 제목이 아니라 주석이다",
+    "npm test",
+    "```",
+    "",
+    "- `src/b.ts`",
+    "",
+    "## 다음 절",
+    "- `src/not-counted.ts`",
+  ].join("\n");
+  const report = lintRequirement({ title: TITLE, body });
+  assert.equal(result(report, "R3").summary, "예상 변경 파일 2개 / 한도 8개");
+  // 범위 밖 절의 파일만 경고하고, 코드 블록 뒤에 이어진 `src/b.ts`는 범위 안으로 읽는다.
+  const r4 = result(report, "R4");
+  assert.equal(r4.status, "warning");
+  assert.ok(r4.details[0]!.includes("`src/not-counted.ts`"));
+  assert.ok(!r4.details[0]!.includes("`src/b.ts`") && !r4.details[0]!.includes("`src/a.ts`"));
+});
+
+test("‘변경 범위’ 제목이 코드 블록 안에만 있으면 절로 보지 않는다", () => {
+  const body = ["```md", "## 예상 변경 범위", "- `src/a.ts`", "```"].join("\n");
+  assert.equal(result(lintRequirement({ title: TITLE, body }), "R3").status, "info");
+});
+
+test("목록 항목 한 줄의 여러 파일과 앞머리 설명이 있어도 모두 변경 범위로 읽는다", () => {
+  const body = [
+    "본문에서 `src/b.ts`와 `src/c.ts`를 언급합니다.",
+    "",
+    "## 예상 변경 범위",
+    "",
+    "- `src/a.ts` 와 `src/b.ts`",
+    "- 수정: `src/c.ts`",
+    "1. `test/d.test.ts` (새 파일)",
+  ].join("\n");
+  const report = lintRequirement({ title: TITLE, body });
+  assert.equal(result(report, "R3").summary, "예상 변경 파일 4개 / 한도 8개");
+  assert.equal(result(report, "R4").status, "ok");
+});
+
+test("절은 있는데 읽을 수 있는 파일 목록이 없으면 0개 통과가 아니라 점검하지 않았다고 알린다", () => {
+  const body = ["본문에 `src/a.ts`가 나옵니다.", "", "## 예상 변경 범위", "", "Dockerfile 하나만 바꿉니다."].join("\n");
+  const report = lintRequirement({ title: TITLE, body });
+  const r3 = result(report, "R3");
+  assert.equal(r3.status, "info");
+  assert.ok(r3.summary.includes("파일 목록을 읽지 못했습니다"));
+  assert.equal(result(report, "R4").status, "info");
+  assert.equal(report.warningCount, 0);
+});
+
+test("R2는 사람이 쓴 본문이 아니면 복잡한 요구 체크가 있어도 sonnet이라고 알린다", () => {
+  const body = "- [x] 복잡한 요구입니다\n";
+  assert.ok(result(lintRequirement({ title: TITLE, body, authoredByHuman: false }), "R2").summary.startsWith("PLAN 모델: sonnet"));
+  assert.ok(result(lintRequirement({ title: TITLE, body, authoredByHuman: true }), "R2").summary.startsWith("PLAN 모델: opus"));
+  assert.ok(result(lintRequirement({ title: TITLE, body }), "R2").summary.startsWith("PLAN 모델: opus"));
+});
+
+test("경로 추출은 검증기의 explicitPlanPaths를 쓰고 공유 정규식을 직접 쓰지 않는다", () => {
+  const source = readFileSync("src/self-improvement/requirement-lint.ts", "utf8");
+  assert.ok(/import \{[^}]*\bexplicitPlanPaths\b[^}]*\} from "\.\/planner\.js"/.test(source));
+  assert.ok(!/\bEXPLICIT_PLAN_PATH\b/.test(source.replace(/^\/\/.*$/gm, "")), "코드에서 EXPLICIT_PLAN_PATH를 직접 쓰지 않는다");
+});

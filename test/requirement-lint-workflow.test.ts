@@ -61,7 +61,8 @@ test("댓글은 한 개를 marker로 찾아 갱신하고, 봇이 쓴 댓글만 �
 test("점검 결과는 PLAN을 막는 경로가 없다: 별도 workflow이고 plan.yml은 이 workflow를 참조하지 않는다", () => {
   assert.match(workflow, /^name: Requirement Lint$/m);
   assert.doesNotMatch(plan, /requirement-lint|Requirement Lint|REQUIREMENT_LINT/);
-  assert.doesNotMatch(workflow, /needs:\s*\[?plan|plan\.yml/);
+  const code = workflow.split("\n").filter((line) => !line.trim().startsWith("#")).join("\n");
+  assert.doesNotMatch(code, /needs:\s*\[?plan\b|workflow_run|workflows:\s*\[?\s*["']?Read-only AI PLAN/);
 });
 
 test("R2의 복잡한 요구 정규식은 plan.yml의 정의와 같다", () => {
@@ -76,4 +77,14 @@ test("멀티라인 출력은 임의 delimiter를 쓰고 댓글 본문을 스크�
   const commentScript = job("comment").split("script: |")[1] ?? "";
   assert.ok(commentScript.length > 0, "댓글 job에 script가 있다");
   assert.doesNotMatch(commentScript, /\$\{\{/);
+});
+
+test("같은 Issue의 점검은 차례로 돌고, 건너뛰는 실행이 진행 중인 점검을 취소하지 않는다", () => {
+  assert.match(workflow, /concurrency:\s*\n\s*group: requirement-lint-/);
+  assert.doesNotMatch(workflow, /cancel-in-progress:\s*true/);
+});
+
+test("사람이 쓴 본문인지 판단해 R2에 넘기고, 입력 파일로만 전달한다", () => {
+  assert.match(workflow, /issue\.user\?\.type === 'User' && !\/<!-- ai-dev-framework:PRODUCT_IMPROVEMENT \//);
+  assert.match(workflow, /JSON\.stringify\(\{ title: issue\.title, body, authoredByHuman \}\)/);
 });

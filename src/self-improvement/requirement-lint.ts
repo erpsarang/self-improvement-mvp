@@ -1,10 +1,10 @@
 import { LEARN_INPUT_BUDGET } from "./learn-input-pack.js";
-import { EXPLICIT_PLAN_PATH, PLAN_IMPLEMENT_MAX_FILES } from "./planner.js";
+import { explicitPlanPaths, PLAN_IMPLEMENT_MAX_FILES } from "./planner.js";
 
 // 요구 접수 사전 점검(requirement lint, #392).
 // 사람이 쓴 [업무 요구] Issue 본문을 결정적 규칙으로 점검해 조언 댓글 한 개로 알려 준다.
 // 조언일 뿐이다: PLAN 시작, 검증기, 승인 경로를 바꾸지 않고 권한도 없다. AI를 호출하지 않는다.
-// 한도와 정규식은 실제 검증기가 쓰는 값을 import한다. 여기에 숫자나 정규식을 다시 적지 않는다.
+// 한도와 경로 추출은 실제 검증기가 쓰는 값과 함수를 import한다. 여기에 숫자나 정규식을 다시 적지 않는다.
 
 export const REQUIREMENT_LINT_MARKER = "<!-- ai-dev-framework:REQUIREMENT_LINT v=1 -->";
 
@@ -16,12 +16,13 @@ export const COMPLEX_REQUIREMENT_CHECKBOX = /^[ \t]*[-*][ \t]+\[[xX]\][ \t]+복�
 const PLACEHOLDER_DIGEST = "0".repeat(64);
 const NEAR_LIMIT_RATIO = 0.9;
 const MAX_LISTED_PATHS = 10;
-// "예상 변경 범위" 절에서 변경 파일 목록을 읽는 용도다. 검증기의 EXPLICIT_PLAN_PATH는 폴더 없는 파일(`ui5.yaml` 등)을
-// 잡지 못해 개수가 모자라게 나오므로 따로 읽는다. 경로 검증에는 쓰지 않는다.
-// 목록 항목(줄머리 -, *, 1.)의 첫 백틱 표기만 센다. "그대로 둡니다"처럼 문장 속에 나열한 파일은 변경 대상이 아니다.
-const SCOPE_FILE_ITEM = /^[ \t]*(?:[-*]|\d+\.)[ \t]+`((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9._-]*)`/gm;
-const SCOPE_HEADING = /^(#{1,6})[ \t]+.*변경 범위.*$/m;
+const SCOPE_HEADING_TEXT = "변경 범위";
 const HEADING = /^(#{1,6})[ \t]+\S/;
+const FENCE = /^[ \t]*(?:```|~~~)/;
+const LIST_ITEM = /^[ \t]*(?:[-*]|\d+\.)[ \t]+/;
+// "예상 변경 범위" 목록에서 변경 파일을 읽는 용도다. 검증기의 경로 추출은 폴더 없는 파일(`ui5.yaml` 등)을 잡지 못해
+// 개수가 모자라게 나오므로 따로 읽는다. 경로 검증에는 쓰지 않는다.
+const FILE_TOKEN = /`((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9._-]*)`/g;
 const URL_SHAPE = /https?:\/\/[^\s)>\]"'`]+/g;
 
 export type LintStatus = "ok" | "info" | "warning" | "error";
@@ -43,30 +44,65 @@ export interface RequirementLintReport {
 export interface RequirementLintInput {
   readonly title: string;
   readonly body: string;
+  // 사람이 쓴 본문인지. plan.yml은 사람이 쓴 본문(source.kind === 'HUMAN')에서만 복잡한 요구 체크를 opus로 올린다. 기본값은 사람이다.
+  readonly authoredByHuman?: boolean;
 }
 
-function uniqueMatches(text: string, pattern: RegExp): string[] {
-  const found: string[] = [];
-  for (const match of text.matchAll(pattern)) {
-    const value = match[1]!;
-    if (!found.includes(value)) found.push(value);
+// 점검할 수 있는 ‘예상 변경 범위’ 파일 목록. files가 null이면 점검하지 않고 이유만 알린다.
+interface ScopeFiles {
+  readonly files: readonly string[] | null;
+  readonly reason: string;
+}
+
+// "변경 범위"가 들어간 제목 아래 절(같거나 더 높은 수준의 다음 제목 전까지)을 돌려준다. 코드 블록 안의 줄은 제목으로 보지 않는다.
+function scopeSection(body: string): string[] | null {
+  const lines = body.split("\n");
+  let inFence = false;
+  let start = -1;
+  let level = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (FENCE.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const heading = HEADING.exec(line);
+    if (heading && line.includes(SCOPE_HEADING_TEXT)) {
+      start = index + 1;
+      level = heading[1]!.length;
+      break;
+    }
   }
-  return found;
-}
-
-// "변경 범위"가 들어간 제목 아래 절(같거나 더 높은 수준의 다음 제목 전까지)을 돌려준다. 없으면 null.
-function scopeSection(body: string): string | null {
-  const heading = SCOPE_HEADING.exec(body);
-  if (!heading) return null;
-  const level = heading[1]!.length;
-  const lines = body.slice(heading.index + heading[0].length).split("\n");
+  if (start === -1) return null;
   const section: string[] = [];
-  for (const line of lines) {
-    const next = HEADING.exec(line);
-    if (next && next[1]!.length <= level) break;
+  inFence = false;
+  for (const line of lines.slice(start)) {
+    if (FENCE.test(line)) inFence = !inFence;
+    else if (!inFence) {
+      const next = HEADING.exec(line);
+      if (next && next[1]!.length <= level) break;
+    }
     section.push(line);
   }
-  return section.join("\n");
+  return section;
+}
+
+// 목록 항목(줄머리 -, *, 1.)에 백틱으로 적은 파일 표기를 모두 읽는다. "그대로 둡니다"처럼 문장 속에 나열한 파일은 변경 대상이 아니라서 세지 않는다.
+function readScopeFiles(body: string): ScopeFiles {
+  const section = scopeSection(body);
+  if (section === null) return { files: null, reason: "‘예상 변경 범위’ 절을 찾지 못했습니다" };
+  const files: string[] = [];
+  for (const line of section) {
+    if (!LIST_ITEM.test(line)) continue;
+    for (const match of line.matchAll(FILE_TOKEN)) {
+      if (!files.includes(match[1]!)) files.push(match[1]!);
+    }
+  }
+  if (files.length === 0) {
+    return { files: null, reason: "‘예상 변경 범위’ 절에서 파일 목록을 읽지 못했습니다(목록 항목에 `경로`를 백틱으로 적어 주세요)" };
+  }
+  return { files, reason: "" };
 }
 
 function codeSpans(paths: readonly string[]): string {
@@ -105,19 +141,24 @@ function lintSize(input: RequirementLintInput): LintResult {
 }
 
 function lintModel(input: RequirementLintInput): LintResult {
-  const complex = COMPLEX_REQUIREMENT_CHECKBOX.test(input.body);
+  const checked = COMPLEX_REQUIREMENT_CHECKBOX.test(input.body);
+  const human = input.authoredByHuman !== false;
+  if (checked && !human) {
+    return { id: "R2", status: "info", summary: "PLAN 모델: sonnet (사람이 쓴 본문이 아니라서 복잡한 요구 체크를 쓰지 않음)", details: [] };
+  }
   return {
     id: "R2",
     status: "info",
-    summary: complex ? "PLAN 모델: opus (복잡한 요구 체크됨)" : "PLAN 모델: sonnet (복잡한 요구 체크 없음)",
+    summary: checked ? "PLAN 모델: opus (복잡한 요구 체크됨)" : "PLAN 모델: sonnet (복잡한 요구 체크 없음)",
     details: [],
   };
 }
 
-function lintScopeSize(allowed: readonly string[] | null): LintResult {
-  if (allowed === null) {
-    return { id: "R3", status: "info", summary: "‘예상 변경 범위’ 절을 찾지 못해 점검하지 않았습니다", details: [] };
+function lintScopeSize(scope: ScopeFiles): LintResult {
+  if (scope.files === null) {
+    return { id: "R3", status: "info", summary: `${scope.reason} 파일 수는 점검하지 않았습니다`, details: [] };
   }
+  const allowed = scope.files;
   const max = PLAN_IMPLEMENT_MAX_FILES;
   const summary = `예상 변경 파일 ${allowed.length}개 / 한도 ${max}개`;
   const details: string[] = [];
@@ -132,15 +173,15 @@ function lintScopeSize(allowed: readonly string[] | null): LintResult {
   return { id: "R3", status: details.length > 0 ? "warning" : "ok", summary, details };
 }
 
-function lintPathShapes(input: RequirementLintInput, allowed: readonly string[] | null): LintResult {
+function lintPathShapes(input: RequirementLintInput, scope: ScopeFiles): LintResult {
   const urlCount = (input.body.match(URL_SHAPE) ?? []).length;
   const details: string[] = [];
-  let outside: string[] = [];
-  let shortNames: string[] = [];
-  if (allowed !== null) {
-    for (const path of uniqueMatches(input.body, EXPLICIT_PLAN_PATH)) {
-      if (allowed.includes(path)) continue;
-      if (allowed.some((candidate) => candidate.endsWith(`/${path}`))) shortNames.push(path);
+  const outside: string[] = [];
+  const shortNames: string[] = [];
+  if (scope.files !== null) {
+    for (const path of explicitPlanPaths([input.body])) {
+      if (scope.files.includes(path)) continue;
+      if (scope.files.some((candidate) => candidate.endsWith(`/${path}`))) shortNames.push(path);
       else outside.push(path);
     }
   }
@@ -157,21 +198,17 @@ function lintPathShapes(input: RequirementLintInput, allowed: readonly string[] 
   if (urlCount > 0) {
     details.push(`주소(URL) 모양 ${urlCount}건. PLAN이 주소의 끝부분을 파일 경로로 오인할 수 있으니 주소 문자열은 말로 설명하세요.`);
   }
-  if (details.length === 0) {
-    return {
-      id: "R4",
-      status: allowed === null ? "info" : "ok",
-      summary: allowed === null ? "‘예상 변경 범위’ 절이 없어 경로 모양은 판단하지 않았습니다" : "본문의 경로 표기가 모두 ‘예상 변경 범위’와 같습니다",
-      details: [],
-    };
+  if (details.length > 0) {
+    return { id: "R4", status: "warning", summary: "PLAN이 되풀이하면 거부될 수 있는 표기가 있습니다", details };
   }
-  return { id: "R4", status: "warning", summary: "PLAN이 되풀이하면 거부될 수 있는 표기가 있습니다", details };
+  return scope.files === null
+    ? { id: "R4", status: "info", summary: `${scope.reason} 경로 모양은 판단하지 않았습니다`, details: [] }
+    : { id: "R4", status: "ok", summary: "본문의 경로 표기가 모두 ‘예상 변경 범위’와 같습니다", details: [] };
 }
 
 export function lintRequirement(input: RequirementLintInput): RequirementLintReport {
-  const section = scopeSection(input.body);
-  const allowed = section === null ? null : uniqueMatches(section, SCOPE_FILE_ITEM);
-  const results = [lintSize(input), lintModel(input), lintScopeSize(allowed), lintPathShapes(input, allowed)];
+  const scope = readScopeFiles(input.body);
+  const results = [lintSize(input), lintModel(input), lintScopeSize(scope), lintPathShapes(input, scope)];
   return {
     results,
     errorCount: results.filter((result) => result.status === "error").length,
