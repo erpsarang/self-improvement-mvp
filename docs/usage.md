@@ -34,7 +34,7 @@
 | R1 | 오류 / 경고 | LEARN 증거 크기가 8,192바이트를 넘으면 오류, 90% 이상이면 경고 | Human Merge 뒤 LEARN이 `maxItemBytes`로 실패합니다 |
 | R2 | 정보 | 이 본문으로 PLAN이 쓸 모델(sonnet/opus) | 복잡한 요구 체크 한 줄이 모델을 정합니다 |
 | R3 | 경고 | ‘예상 변경 범위’ 목록이 8개를 넘음, 또는 `package.json`이 있고 `package-lock.json`이 없는데 이미 8개 | PLAN 허용 파일은 최대 8개이고 lock은 자동으로 더해집니다 |
-| R4 | 경고 | 본문의 경로 모양 문자열이 ‘예상 변경 범위’에 없음, 허용 경로의 끝부분만 쓴 짧은 이름, 주소(URL) | PLAN이 이를 되풀이하면 허용 경로와 글자가 달라 거부될 수 있습니다 |
+| R4 | 경고 | 본문의 경로 모양 문자열이 ‘예상 변경 범위’에 없음, 여러 허용 경로의 끝부분과 맞는 모호한 이름, 주소(URL) | PLAN이 이를 되풀이하면 범위 밖이거나 어느 파일인지 정할 수 없어 거부될 수 있습니다 |
 
 - **R1의 크기는 본문 길이가 아닙니다.** LEARN은 `{"title", "body", "digest"}`를 JSON으로 만든 값의 UTF-8 바이트를 잽니다. 제목, 키 이름, digest, 줄바꿈과 따옴표의 이스케이프가 더해지고 한글은 글자당 3바이트이므로, 본문이 8,192바이트보다 짧아도 넘을 수 있습니다.
 - R3·R4는 휴리스틱입니다. ‘예상 변경 범위’ 절은 제목에 "변경 범위"가 들어간 절이고, 파일 개수는 그 절의 목록 항목(`-`, `*`, `1.`)에 백틱으로 적은 파일 표기를 모두 셉니다. 문장 속에 나열한 파일은 세지 않고, 코드 블록 안의 줄은 제목으로 보지 않습니다. 절이 없거나 읽을 수 있는 파일 목록이 없으면 정보로만 표시합니다. PLAN 경로 검증은 본문이 아니라 PLAN(AI)이 쓴 문장에 걸리므로, R4는 거부를 없애지 못하고 가능성을 줄일 뿐입니다.
@@ -183,6 +183,16 @@ Planner는 repository를 수정하지 않으며 PLAN 자체도 authority가 아�
 PLAN은 Private subscription executor가 1회 실행하며 모델은 기본 sonnet(effort medium)입니다. 사람이 Issue 템플릿의 `- [x] 복잡한 요구입니다`를 체크한 요구만 opus로 실행합니다. 체크 여부는 본문에 있으므로 requirement digest와 PLAN_REQUEST marker의 `model=`에 그대로 남습니다. Product Discovery 후보처럼 사람이 쓰지 않은 본문은 체크박스가 있어도 opus로 올리지 않습니다. 체크를 바꾸려면 본문을 고친 뒤 PLAN을 다시 실행합니다.
 
 `ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
+
+### PLAN 문장 속 경로 표기
+
+PLAN이 `approach`·`changeCandidates`·`testStrategy`·`requiredChanges` 문장에 쓴 파일 경로는 trusted 검증이 `allowedPaths`와 `contextPaths`에 대조합니다(`planner.ts`의 `validateReadyPlanPathConsistency`). 경로 모양 문자열 하나라도 범위 안으로 읽히지 않으면 PLAN 전체가 `PLAN_FAILED`로 거부됩니다.
+
+- 글자가 같은 경로는 범위 안입니다.
+- 폴더 앞부분을 뗀 끝부분도, **폴더 경계 기준으로 정확히 하나의 허용·참고 경로의 끝부분**이면 그 경로를 가리킨 것으로 보고 받아 줍니다. 허용 경로가 `src/app/static/index.html`이면 `static/index.html`과 `index.html`은 범위 안입니다(`planPathSuffixMatches`).
+- 끝부분이 둘 이상의 경로와 맞으면 어느 파일인지 정할 수 없어 거부합니다. 어느 경로의 끝부분도 아니거나(`other/index.html`) 폴더 경계가 아닌 부분 문자열(`tatic/app.js`)이면 범위 밖으로 거부합니다.
+- 이것은 문장을 거부할지 정하는 기준일 뿐입니다. 쓰기 범위는 계속 `allowedPaths`에 글자 그대로 적힌 경로뿐이며, 짧은 이름이 범위를 넓히지 않습니다.
+- 요구 본문에서 경로 표기를 점검하는 R4(1-1장)도 같은 기준을 씁니다.
 
 ### PLAN이 보는 Context
 

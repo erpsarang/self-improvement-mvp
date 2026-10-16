@@ -49,7 +49,7 @@ test("실제 Issue #5(본문 11,610B)는 R1 오류이고 측정값이 독립 계
   assert.equal(result(report, "R3").summary, "예상 변경 파일 5개 / 한도 8개");
 });
 
-test("실제 Issue #7은 본문이 8,192B보다 짧아도 증거 기준으로 R1 오류이고 짧은 이름·주소를 경고한다", () => {
+test("실제 Issue #7은 본문이 8,192B보다 짧아도 증거 기준으로 R1 오류이고 주소를 경고한다. 하나의 허용 경로 끝부분인 짧은 이름은 더 이상 경고하지 않는다", () => {
   const issue = fixture(7);
   const bodyBytes = Buffer.byteLength(issue.body, "utf8");
   assert.ok(bodyBytes < LIMIT, "본문 자체는 한도보다 짧다");
@@ -60,7 +60,8 @@ test("실제 Issue #7은 본문이 8,192B보다 짧아도 증거 기준으로 R1
   assert.equal(result(report, "R3").status, "ok");
   const r4 = result(report, "R4");
   assert.equal(r4.status, "warning");
-  assert.ok(r4.details.some((detail) => detail.includes("짧은 이름") && detail.includes("`index.html`")));
+  // `index.html`은 허용 경로 `app/purchaserequests/webapp/index.html` 하나의 끝부분이다. PLAN 검증이 받아 주므로 경고하지 않는다.
+  assert.ok(!r4.details.some((detail) => detail.includes("모호한 이름")));
   assert.ok(r4.details.some((detail) => detail.includes("주소(URL) 모양 2건")));
 });
 
@@ -148,7 +149,7 @@ test("R3와 R4는 ‘예상 변경 범위’ 절이 없으면 정보로 남고 �
   assert.equal(result(url, "R4").status, "warning");
 });
 
-test("R4는 변경 범위에 없는 경로 모양과 짧은 이름을 구분해 경고하고, 범위 안 경로는 통과시킨다", () => {
+test("R4는 변경 범위에 없는 경로 모양과 모호한 이름을 구분해 경고하고, 범위 안 경로와 하나의 경로 끝부분인 이름은 통과시킨다", () => {
   const body = [
     "`app/index.cds`는 필요 없고 `src/a.ts`는 바꿉니다. `resources/sap-ui-core.js`도 쓰지 않습니다. `test/a.test.ts`",
     "",
@@ -157,8 +158,10 @@ test("R4는 변경 범위에 없는 경로 모양과 짧은 이름을 구분해 
     "- `src/a.ts`",
     "- `test/a.test.ts`",
     "- `app/web/index.html`",
+    "- `app/admin/index.html`",
+    "- `app/web/app.js`",
     "",
-    "README.md는 건드리지 않고 index.html은 새로 만듭니다.",
+    "README.md는 건드리지 않고 index.html은 새로 만듭니다. web/app.js와 admin/index.html은 그대로 둡니다.",
   ].join("\n");
   const r4 = result(lintRequirement({ title: TITLE, body }), "R4");
   assert.equal(r4.status, "warning");
@@ -166,8 +169,13 @@ test("R4는 변경 범위에 없는 경로 모양과 짧은 이름을 구분해 
   assert.ok(outside);
   assert.ok(outside.includes("`app/index.cds`") && outside.includes("`resources/sap-ui-core.js`") && outside.includes("`README.md`"));
   assert.ok(!outside.includes("`src/a.ts`") && !outside.includes("`test/a.test.ts`"));
-  const short = r4.details.find((detail) => detail.startsWith("허용 경로의 끝부분만 쓴 짧은 이름"));
-  assert.ok(short?.includes("`index.html`"));
+  // `index.html`은 `app/web/index.html`과 `app/admin/index.html` 둘의 끝부분이라 모호하다.
+  const ambiguous = r4.details.find((detail) => detail.startsWith("‘예상 변경 범위’의 여러 경로 끝부분과 맞는 모호한 이름"));
+  assert.ok(ambiguous?.includes("`index.html`"));
+  assert.ok(ambiguous);
+  // `web/app.js`, `admin/index.html`은 각각 정확히 하나의 경로 끝부분이므로 어디에도 나오지 않는다.
+  assert.ok(!outside.includes("web/app.js") && !outside.includes("admin/index.html"));
+  assert.ok(!ambiguous.includes("web/app.js") && !ambiguous.includes("admin/index.html"));
 });
 
 test("R4는 모든 경로가 범위 안이고 주소가 없으면 통과한다", () => {
