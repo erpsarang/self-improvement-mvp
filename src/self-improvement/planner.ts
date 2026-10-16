@@ -653,6 +653,21 @@ export function explicitPlanPaths(values: readonly string[]): string[] {
   return paths;
 }
 
+/**
+ * PLAN 문장은 폴더 앞부분을 떼고 경로의 끝부분만 적는 일이 잦다(`static/index.html`, `index.html`).
+ * 그 끝부분이 폴더 경계 기준으로 후보 경로 중 정확히 하나의 끝부분이면 그 경로를 가리킨 것으로 본다. 둘 이상이면 모호하다.
+ * 문장을 거부할지 정하는 기준일 뿐이고 쓰기 범위는 바뀌지 않는다: 허용은 계속 allowedPaths에 글자 그대로 적힌 경로뿐이다
+ * (App transportation_guide #2 PLAN run 38885217871·38887176176, 허용 경로 `src/transportation_guide/static/index.html`; #391 8번).
+ * requirement-lint R4도 같은 기준을 쓴다. 이 정의를 두 곳에 따로 두지 않는다.
+ */
+export function planPathSuffixMatches(path: string, candidates: Iterable<string>): string[] {
+  const matches: string[] = [];
+  for (const candidate of candidates) {
+    if (candidate !== path && candidate.endsWith(`/${path}`)) matches.push(candidate);
+  }
+  return matches;
+}
+
 function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: PlanImplementationScope): void {
   if (!scope.ready) return;
   const allowed = new Set(scope.allowedPaths);
@@ -665,13 +680,22 @@ function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: 
     ...scope.requiredChanges,
   ];
 
+  // 글자가 같거나, 폴더 경계 기준으로 읽을 수 있는 경로 정확히 하나의 끝부분이면 범위 안이다. 둘 이상과 맞으면 모호해서 거부한다.
+  const assertInBounds = (path: string, outsideMessage: string): void => {
+    if (readable.has(path)) return;
+    const matches = planPathSuffixMatches(path, readable);
+    if (matches.length === 1) return;
+    if (matches.length > 1) throw new Error(`PLAN references path that matches more than one bounded path: ${path} (${matches.join(", ")})`);
+    throw new Error(`${outsideMessage}: ${path}`);
+  };
+
   // changeCandidates가 "참조만 한다"며 contextPaths의 읽기 전용 파일을 적는 것은 허용한다. 쓰기는 여전히 allowedPaths로만 제한된다
   // (App #289 PLAN run 36982979475: "src/web-main.ts — 참조만 하며 수정하지 않습니다"로 PLAN 전체가 거부됨).
   for (const path of explicitPlanPaths(changeCandidates)) {
-    if (!readable.has(path)) throw new Error(`PLAN change candidate path is outside allowedPaths: ${path}`);
+    assertInBounds(path, "PLAN change candidate path is outside allowedPaths");
   }
   for (const path of explicitPlanPaths(descriptiveSections)) {
-    if (!readable.has(path)) throw new Error(`PLAN references exact path outside bounded implementation scope: ${path}`);
+    assertInBounds(path, "PLAN references exact path outside bounded implementation scope");
   }
 }
 

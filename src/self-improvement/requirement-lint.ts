@@ -1,5 +1,5 @@
 import { LEARN_INPUT_BUDGET } from "./learn-input-pack.js";
-import { explicitPlanPaths, PLAN_IMPLEMENT_MAX_FILES } from "./planner.js";
+import { explicitPlanPaths, planPathSuffixMatches, PLAN_IMPLEMENT_MAX_FILES } from "./planner.js";
 
 // 요구 접수 사전 점검(requirement lint, #392).
 // 사람이 쓴 [업무 요구] Issue 본문을 결정적 규칙으로 점검해 조언 댓글 한 개로 알려 준다.
@@ -177,11 +177,14 @@ function lintPathShapes(input: RequirementLintInput, scope: ScopeFiles): LintRes
   const urlCount = (input.body.match(URL_SHAPE) ?? []).length;
   const details: string[] = [];
   const outside: string[] = [];
-  const shortNames: string[] = [];
+  const ambiguous: string[] = [];
   if (scope.files !== null) {
     for (const path of explicitPlanPaths([input.body])) {
       if (scope.files.includes(path)) continue;
-      if (scope.files.some((candidate) => candidate.endsWith(`/${path}`))) shortNames.push(path);
+      // PLAN 검증은 정확히 하나의 허용 경로의 끝부분인 이름을 받아 준다. 둘 이상과 맞는 이름만 모호해서 거부된다.
+      const matches = planPathSuffixMatches(path, scope.files);
+      if (matches.length === 1) continue;
+      if (matches.length > 1) ambiguous.push(path);
       else outside.push(path);
     }
   }
@@ -190,9 +193,9 @@ function lintPathShapes(input: RequirementLintInput, scope: ScopeFiles): LintRes
       `‘예상 변경 범위’에 없는 경로 모양: ${codeSpans(outside)}. “바꾸지 않는다”는 뜻으로 적었더라도 PLAN이 되풀이하면 범위 밖 경로로 거부될 수 있으니 말로 풀어 쓰는 편이 안전합니다.`,
     );
   }
-  if (shortNames.length > 0) {
+  if (ambiguous.length > 0) {
     details.push(
-      `허용 경로의 끝부분만 쓴 짧은 이름: ${codeSpans(shortNames)}. PLAN이 이 이름을 따라 쓰면 허용 경로와 글자가 달라 거부됩니다. 본문에서는 전체 경로를 쓰거나 이름을 빼세요.`,
+      `‘예상 변경 범위’의 여러 경로 끝부분과 맞는 모호한 이름: ${codeSpans(ambiguous)}. PLAN이 이 이름을 따라 쓰면 어느 파일인지 정할 수 없어 거부됩니다. 본문에서는 전체 경로를 쓰거나 이름을 빼세요.`,
     );
   }
   if (urlCount > 0) {
@@ -203,7 +206,7 @@ function lintPathShapes(input: RequirementLintInput, scope: ScopeFiles): LintRes
   }
   return scope.files === null
     ? { id: "R4", status: "info", summary: `${scope.reason} 경로 모양은 판단하지 않았습니다`, details: [] }
-    : { id: "R4", status: "ok", summary: "본문의 경로 표기가 모두 ‘예상 변경 범위’와 같습니다", details: [] };
+    : { id: "R4", status: "ok", summary: "본문의 경로 표기가 모두 ‘예상 변경 범위’ 안에 있습니다", details: [] };
 }
 
 export function lintRequirement(input: RequirementLintInput): RequirementLintReport {
