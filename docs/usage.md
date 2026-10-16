@@ -190,6 +190,7 @@ PLAN이 `approach`·`changeCandidates`·`testStrategy`·`requiredChanges` 문장
 
 - 글자가 같은 경로는 범위 안입니다.
 - 폴더 앞부분을 뗀 끝부분도, **폴더 경계 기준으로 정확히 하나의 허용·참고 경로의 끝부분**이면 그 경로를 가리킨 것으로 보고 받아 줍니다. 허용 경로가 `src/app/static/index.html`이면 `static/index.html`과 `index.html`은 범위 안입니다(`planPathSuffixMatches`).
+- 두 파일을 슬래시로 이어 쓴 줄임 표기(`test_a.py/test_b.py`)는 폴더가 아니라 별개 파일로 풀어 각각 위 기준으로 대조합니다. 경로 전체가 먼저 범위 안인지 보므로 점이 있는 실제 폴더(`src/api.v2/spec.json`)는 영향이 없고, 하나라도 범위 밖이면 거부합니다(`checkPlanPathBounds`).
 - 끝부분이 둘 이상의 경로와 맞으면 어느 파일인지 정할 수 없어 거부합니다. 어느 경로의 끝부분도 아니거나(`other/index.html`) 폴더 경계가 아닌 부분 문자열(`tatic/app.js`)이면 범위 밖으로 거부합니다.
 - 이것은 문장을 거부할지 정하는 기준일 뿐입니다. 쓰기 범위는 계속 `allowedPaths`에 글자 그대로 적힌 경로뿐이며, 짧은 이름이 범위를 넓히지 않습니다.
 - 요구 본문에서 경로 표기를 점검하는 R4(1-1장)도 같은 기준을 씁니다.

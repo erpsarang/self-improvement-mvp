@@ -1,5 +1,5 @@
 import { LEARN_INPUT_BUDGET } from "./learn-input-pack.js";
-import { explicitPlanPaths, planPathSuffixMatches, PLAN_IMPLEMENT_MAX_FILES } from "./planner.js";
+import { checkPlanPathBounds, explicitPlanPaths, PLAN_IMPLEMENT_MAX_FILES } from "./planner.js";
 
 // 요구 접수 사전 점검(requirement lint, #392).
 // 사람이 쓴 [업무 요구] Issue 본문을 결정적 규칙으로 점검해 조언 댓글 한 개로 알려 준다.
@@ -179,13 +179,12 @@ function lintPathShapes(input: RequirementLintInput, scope: ScopeFiles): LintRes
   const outside: string[] = [];
   const ambiguous: string[] = [];
   if (scope.files !== null) {
+    // PLAN 검증과 같은 함수로 대조한다: 정확히 하나의 허용 경로의 끝부분인 이름은 받아 주고, 이어 쓴 파일 이름은 풀어서 본다. 둘 이상과 맞는 이름만 모호해서 거부된다.
+    const allowed = new Set(scope.files);
     for (const path of explicitPlanPaths([input.body])) {
-      if (scope.files.includes(path)) continue;
-      // PLAN 검증은 정확히 하나의 허용 경로의 끝부분인 이름을 받아 준다. 둘 이상과 맞는 이름만 모호해서 거부된다.
-      const matches = planPathSuffixMatches(path, scope.files);
-      if (matches.length === 1) continue;
-      if (matches.length > 1) ambiguous.push(path);
-      else outside.push(path);
+      const bounds = checkPlanPathBounds(path, allowed);
+      if (bounds.kind === "ambiguous" && !ambiguous.includes(bounds.path)) ambiguous.push(bounds.path);
+      else if (bounds.kind === "outside" && !outside.includes(bounds.path)) outside.push(bounds.path);
     }
   }
   if (outside.length > 0) {
