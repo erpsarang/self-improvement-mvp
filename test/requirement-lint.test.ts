@@ -178,6 +178,24 @@ test("R4는 변경 범위에 없는 경로 모양과 모호한 이름을 구분�
   assert.ok(!ambiguous.includes("web/app.js") && !ambiguous.includes("admin/index.html"));
 });
 
+test("R4는 슬래시로 이어 쓴 파일 이름을 PLAN 검증과 같이 풀어서 본다 (App transportation_guide #2 PLAN run 38979993091)", () => {
+  const body = [
+    "`test_a.py/test_b.py`를 보강하고 `test_a.py/test_x.py`는 건드리지 않습니다.",
+    "",
+    "## 예상 변경 범위",
+    "",
+    "- `src/a.py`",
+    "- `test/test_a.py`",
+    "- `test/test_b.py`",
+  ].join("\n");
+  const r4 = result(lintRequirement({ title: TITLE, body }), "R4");
+  assert.equal(r4.status, "warning");
+  const outside = r4.details.find((detail) => detail.startsWith("‘예상 변경 범위’에 없는 경로 모양"));
+  // 둘 다 범위 안인 `test_a.py/test_b.py`는 나오지 않고, 범위 밖 파일을 이은 것은 그 파일 이름으로 나온다.
+  assert.ok(outside?.includes("`test_x.py`"));
+  assert.ok(!outside?.includes("test_b.py"));
+});
+
 test("R4는 모든 경로가 범위 안이고 주소가 없으면 통과한다", () => {
   const report = lintRequirement({ title: TITLE, body: `\`src/a.ts\`를 고칩니다.${SCOPE_OK}` });
   assert.equal(result(report, "R4").status, "ok");

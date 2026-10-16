@@ -668,6 +668,48 @@ export function planPathSuffixMatches(path: string, candidates: Iterable<string>
   return matches;
 }
 
+// 파일 이름 하나의 모양: 폴더 이름이 아니라 확장자(문자로 시작)가 있는 이름. 앞이 점으로 시작하는 폴더(`.github`)는 해당하지 않는다.
+const FILE_NAME_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9._-]*$/;
+
+/**
+ * PLAN 문장은 두 파일을 슬래시로 이어 "test_a.py/test_b.py 보강"처럼 줄여 쓰는 일이 있다. 경로 추출은 이것을 폴더 `test_a.py` 안의
+ * 파일 하나로 읽는다. 경로의 끝에서 파일 이름이 둘 이상 이어지면(`test/test_a.py/test_b.py`는 `test/test_a.py`, `test/test_b.py`) 별개 파일로 푼다.
+ * 풀 수 없으면 null. 점이 있는 실제 폴더(`src/api.v2/spec.json`)일 수 있으므로, 부르는 쪽은 경로 전체를 먼저 대조한 뒤에만 이것을 쓴다.
+ * (App transportation_guide #2 PLAN run 38979993091: `test_recommend.py/test_server.py`로 ready PLAN 전체가 거부됨.)
+ */
+export function joinedFileNameParts(path: string): string[] | null {
+  const segments = path.split("/");
+  const first = segments.findIndex((segment) => FILE_NAME_SEGMENT.test(segment));
+  if (first === -1 || first === segments.length - 1) return null;
+  const names = segments.slice(first);
+  if (!names.every((name) => FILE_NAME_SEGMENT.test(name))) return null;
+  const prefix = segments.slice(0, first).join("/");
+  return names.map((name) => (prefix === "" ? name : `${prefix}/${name}`));
+}
+
+export type PlanPathBounds =
+  | { readonly kind: "inside" }
+  | { readonly kind: "ambiguous"; readonly path: string; readonly matches: readonly string[] }
+  | { readonly kind: "outside"; readonly path: string };
+
+/**
+ * PLAN 문장·요구 본문에 적힌 경로 하나가 범위(candidates) 안인지 정한다. 이 판단을 검증기와 requirement-lint R4가 함께 쓴다.
+ * 글자가 같거나 폴더 경계 기준으로 정확히 하나의 끝부분이면 범위 안, 둘 이상이면 모호, 아니면 이어 쓴 파일 이름을 풀어 각각 대조한다.
+ */
+export function checkPlanPathBounds(path: string, candidates: ReadonlySet<string>): PlanPathBounds {
+  if (candidates.has(path)) return { kind: "inside" };
+  const matches = planPathSuffixMatches(path, candidates);
+  if (matches.length === 1) return { kind: "inside" };
+  if (matches.length > 1) return { kind: "ambiguous", path, matches };
+  const parts = joinedFileNameParts(path);
+  if (parts === null) return { kind: "outside", path };
+  for (const part of parts) {
+    const result = checkPlanPathBounds(part, candidates);
+    if (result.kind !== "inside") return result;
+  }
+  return { kind: "inside" };
+}
+
 function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: PlanImplementationScope): void {
   if (!scope.ready) return;
   const allowed = new Set(scope.allowedPaths);
@@ -682,11 +724,9 @@ function validateReadyPlanPathConsistency(plan: Record<string, unknown>, scope: 
 
   // 글자가 같거나, 폴더 경계 기준으로 읽을 수 있는 경로 정확히 하나의 끝부분이면 범위 안이다. 둘 이상과 맞으면 모호해서 거부한다.
   const assertInBounds = (path: string, outsideMessage: string): void => {
-    if (readable.has(path)) return;
-    const matches = planPathSuffixMatches(path, readable);
-    if (matches.length === 1) return;
-    if (matches.length > 1) throw new Error(`PLAN references path that matches more than one bounded path: ${path} (${matches.join(", ")})`);
-    throw new Error(`${outsideMessage}: ${path}`);
+    const bounds = checkPlanPathBounds(path, readable);
+    if (bounds.kind === "ambiguous") throw new Error(`PLAN references path that matches more than one bounded path: ${bounds.path} (${bounds.matches.join(", ")})`);
+    if (bounds.kind === "outside") throw new Error(`${outsideMessage}: ${bounds.path}`);
   };
 
   // changeCandidates가 "참조만 한다"며 contextPaths의 읽기 전용 파일을 적는 것은 허용한다. 쓰기는 여전히 allowedPaths로만 제한된다

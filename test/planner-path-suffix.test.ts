@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { planPathSuffixMatches, selectPlanContext, validatePlan, type PlanContextPack } from "../src/self-improvement/planner.js";
+import {
+  checkPlanPathBounds,
+  explicitPlanPaths,
+  joinedFileNameParts,
+  planPathSuffixMatches,
+  selectPlanContext,
+  validatePlan,
+  type PlanContextPack,
+} from "../src/self-improvement/planner.js";
 
 // App transportation_guide #2: PLAN run 38885217871은 `static/index.html`, run 38887176176은 `index.html`·`static/app.js`로
 // ready PLAN 전체가 거부됐다. 허용 경로는 `src/transportation_guide/static/…`였다(#391 8번과 같은 규칙).
@@ -106,6 +114,51 @@ test("허용 경로 어디의 끝부분도 아닌 경로와 폴더 경계가 아
     assert.throws(
       () => validatePlan(planWith(context, GUIDE_PATHS, { changeCandidates: ["docs/guide.md (신규)"] }), f.target, context),
       /change candidate path is outside allowedPaths: docs\/guide\.md/,
+    );
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// App transportation_guide #2: PLAN run 38979993091은 requiredChanges의 "test_recommend.py/test_server.py 보강"으로 거부됐다.
+// 두 파일을 슬래시로 이어 쓴 줄임 표기를 폴더 `test_recommend.py` 안의 파일 하나로 읽었기 때문이다. 요구 본문에는 그 이름이 없었다.
+
+test("이어 쓴 파일 이름은 별개 파일로 풀고, 풀 수 없는 경로는 null이다", () => {
+  assert.deepEqual(joinedFileNameParts("test_recommend.py/test_server.py"), ["test_recommend.py", "test_server.py"]);
+  assert.deepEqual(joinedFileNameParts("test/test_a.py/test_b.py/test_c.py"), ["test/test_a.py", "test/test_b.py", "test/test_c.py"]);
+  assert.equal(joinedFileNameParts("src/guide/static/index.html"), null);
+  assert.equal(joinedFileNameParts(".github/workflows/ci.yml"), null);
+  // 폴더 이름이 점을 가져도 뒤따르는 것이 모두 파일 이름이 아니면 풀지 않는다.
+  assert.equal(joinedFileNameParts("node_modules/next.js/lib/x.ts"), null);
+  assert.equal(joinedFileNameParts("2.5/1.25"), null);
+});
+
+test("checkPlanPathBounds는 이어 쓴 파일 이름이 각각 범위 안일 때만 받아 준다", () => {
+  const allowed = new Set(["test/test_recommend.py", "test/test_server.py", "src/guide/server.py"]);
+  assert.deepEqual(checkPlanPathBounds("test_recommend.py/test_server.py", allowed), { kind: "inside" });
+  assert.deepEqual(checkPlanPathBounds("test/test_recommend.py/test_server.py", allowed), { kind: "inside" });
+  assert.deepEqual(checkPlanPathBounds("test_recommend.py/test_other.py", allowed), { kind: "outside", path: "test_other.py" });
+  assert.deepEqual(checkPlanPathBounds("other/test_server.py", allowed), { kind: "outside", path: "other/test_server.py" });
+  // 점 있는 실제 폴더는 경로 전체가 범위 안이면 풀기 전에 통과한다.
+  assert.deepEqual(checkPlanPathBounds("docs/api.v2/spec.json", new Set(["docs/api.v2/spec.json"])), { kind: "inside" });
+});
+
+test("explicitPlanPaths는 이어 쓴 표기를 그대로 한 경로로 돌려주고 대조는 checkPlanPathBounds가 한다", () => {
+  assert.deepEqual(explicitPlanPaths(["test_providers.py 신규 작성과 test_recommend.py/test_server.py 보강"]), ["test_recommend.py/test_server.py"]);
+});
+
+test("PLAN 문장이 두 테스트 파일을 슬래시로 이어 써도 각각 범위 안이면 거부하지 않고, 하나라도 범위 밖이면 거부한다", () => {
+  const f = webFixture();
+  try {
+    const context = contextFor(f.target);
+    const plan = planWith(context, GUIDE_PATHS, {
+      requiredChanges: ["static/index.html과 static/app.js 보강", "static/index.html/app.js를 함께 고친다"],
+    });
+    assert.deepEqual(
+      (validatePlan(plan, f.target, context) as { implementationScope: { allowedPaths: string[] } }).implementationScope.allowedPaths,
+      GUIDE_PATHS,
+    );
+    assert.throws(
+      () => validatePlan(planWith(context, GUIDE_PATHS, { requiredChanges: ["app.js/other.js 보강"] }), f.target, context),
+      /exact path outside bounded implementation scope: other\.js/,
     );
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
