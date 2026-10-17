@@ -234,7 +234,8 @@ Trusted `PLAN_AUTHORIZE`는 댓글 문자열만 믿지 않고 다음 identity를
 - PLAN artifact / provenance
 - frozen target SHA
 - approval comment ID
-- approver immutable GitHub user ID
+
+승인자에 대해서는 계정 유형이 `User`인지만 확인하고, approver의 immutable GitHub user ID를 provenance에 **기록**합니다. 저장소 policy나 `author_association`과 대조하지는 않습니다(`docs/trust-model.md` "Trusted execution"). 공개 저장소에서는 저장소 구성원이 아닌 계정의 `PLAN-승인`도 IMPLEMENT·REVIEW 호출과 MERGE_READY PR 생성까지 일으킬 수 있습니다. 최종 Merge는 여전히 사람만 할 수 있습니다.
 
 Requirement나 target SHA가 PLAN 이후 바뀌었다면 silent substitution하지 않고 fail-closed합니다. 이 경우 새 PLAN이 필요합니다.
 
