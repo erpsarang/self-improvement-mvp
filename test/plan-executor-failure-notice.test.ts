@@ -134,7 +134,7 @@ test("PLAN_FAILED와 PLAN_RESULT가 함께 있으면 결과보다 실패 신호�
 
 test("resolve는 사유를 output으로 넘기고 failure_notice만 쉬운 말로 알린다 (권한 확대 없음)", () => {
   const resolveJob = workflow.split("\n  resolve:\n")[1]?.split("\n  provenance:\n", 1)[0] ?? "";
-  const noticeJob = workflow.split("\n  failure_notice:\n")[1] ?? "";
+  const noticeJob = workflow.split("\n  failure_notice:\n")[1]?.split("\n  auto_retry:\n", 1)[0] ?? "";
   assert.match(resolveJob, /executor_failure_reason: \$\{\{ steps\.wait\.outputs\.executor_failure_reason \}\}/);
   assert.doesNotMatch(resolveJob, /issues: write/);
   assert.match(noticeJob, /PLAN_EXECUTOR_FAILURE_REASON: \$\{\{ needs\.resolve\.outputs\.executor_failure_reason \}\}/);

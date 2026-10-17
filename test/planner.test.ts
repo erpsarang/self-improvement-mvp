@@ -369,7 +369,8 @@ test("PLAN workflow는 subscription credential 없이 bounded request를 만들�
   assert.match(workflow, /source\.kind === 'HUMAN' && complexRequirement \? 'opus' : 'sonnet'/);
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action|openai\/codex-action/);
   assert.doesNotMatch(workflow, /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|FRAMEWORK_CODEX_API_KEY|APP_CODEX_API_KEY|openai-api-key/);
-  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 4);
+  // plan 준비 Framework·Target 2, trusted validation Framework·Target 2, auto_retry Framework 1
+  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 5);
   const prepareJob = workflow.split("\n  plan:\n")[1]?.split("\n  request:\n", 1)[0] ?? "";
   assert.doesNotMatch(prepareJob, /(?:contents|issues|pull-requests): write|git (?:commit|push|checkout -b)|trusted-rail/);
   assert.match(workflow, /runner.temp.*ai-plan\/PLAN-context.json/);
