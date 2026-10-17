@@ -28,6 +28,7 @@ jobs:
       issue_number: ${{ steps.prepare.outputs.issue_number }}
       decision: ${{ steps.prepare.outputs.decision }}
       requirement_complete: ${{ steps.prepare.outputs.requirement_complete }}
+      requirement_note: ${{ steps.prepare.outputs.requirement_note }}
       next_state: ${{ steps.prepare.outputs.next_state }}
       should_create_pr: ${{ steps.prepare.outputs.should_create_pr }}
       should_dispatch_fix: ${{ steps.prepare.outputs.should_dispatch_fix }}
@@ -188,6 +189,7 @@ jobs:
           REVIEWED_HEAD_SHA: ${{ needs.route.outputs.reviewed_head_sha }}
           REVIEW_DECISION: ${{ needs.route.outputs.decision }}
           REQUIREMENT_COMPLETE: ${{ needs.route.outputs.requirement_complete }}
+          REQUIREMENT_NOTE: ${{ needs.route.outputs.requirement_note }}
           NEXT_STATE: ${{ needs.route.outputs.next_state }}
           REQUIREMENTS_DIGEST: ${{ needs.route.outputs.requirements_digest }}
           TRUSTED_RAIL_RUN_ID: ${{ github.run_id }}
@@ -229,6 +231,19 @@ jobs:
             }
             if (requirementComplete !== 'true' && requirementComplete !== 'false') {
               core.setFailed(`invalid trusted requirement completion: ${requirementComplete}`);
+              return;
+            }
+            // 완료를 확인하지 못한 이유 안내. trusted prepare가 review provenance에서 만든 사람용 설명이며 authority가 아니다.
+            // 완료 확인 시에는 비어 있어야 하고, 미확인 시에는 있어야 한다. 어긋나면 PR을 만들지 않는다.
+            let requirementNote;
+            try {
+              requirementNote = JSON.parse(process.env.REQUIREMENT_NOTE || '""');
+            } catch {
+              requirementNote = null;
+            }
+            if (typeof requirementNote !== 'string' || requirementNote.length > 8000 ||
+                (requirementComplete === 'true') !== (requirementNote === '')) {
+              core.setFailed('invalid requirement completion note');
               return;
             }
             // branch는 trusted REVIEW provenance의 값이다. 새 PUBLISH는 cycle branch를 쓰고,
@@ -323,6 +338,8 @@ jobs:
                     : [
                         '- 이 PR은 검증된 구현 slice를 병합합니다. 부모 Issue 자동 종료는 하지 않습니다.',
                         '- trusted Semantic REVIEW가 부모 업무 요구 전체 완료를 확인하지 않았습니다.',
+                        '',
+                        ...requirementNote.split('\n'),
                       ]),
                   '',
                   marker,
@@ -499,6 +516,7 @@ jobs:
           EXPECTED_ISSUE: ${{ needs.route.outputs.issue_number }}
           EXPECTED_DECISION: ${{ needs.route.outputs.decision }}
           EXPECTED_REQUIREMENT_COMPLETE: ${{ needs.route.outputs.requirement_complete }}
+          EXPECTED_REQUIREMENT_NOTE: ${{ needs.route.outputs.requirement_note }}
           EXPECTED_STATE: ${{ needs.route.outputs.next_state }}
           EXPECTED_COMPLETED_FIX_COUNT: ${{ needs.route.outputs.completed_fix_count }}
           EXPECTED_NEXT_FIX_ATTEMPT: ${{ needs.route.outputs.next_fix_attempt }}
@@ -508,6 +526,7 @@ jobs:
           ACTUAL_ISSUE: ${{ steps.revalidate.outputs.issue_number }}
           ACTUAL_DECISION: ${{ steps.revalidate.outputs.decision }}
           ACTUAL_REQUIREMENT_COMPLETE: ${{ steps.revalidate.outputs.requirement_complete }}
+          ACTUAL_REQUIREMENT_NOTE: ${{ steps.revalidate.outputs.requirement_note }}
           ACTUAL_STATE: ${{ steps.revalidate.outputs.next_state }}
           ACTUAL_COMPLETED_FIX_COUNT: ${{ steps.revalidate.outputs.completed_fix_count }}
           ACTUAL_NEXT_FIX_ATTEMPT: ${{ steps.revalidate.outputs.next_fix_attempt }}
@@ -519,6 +538,7 @@ jobs:
           if [ "$EXPECTED_ISSUE" != "$ACTUAL_ISSUE" ] || \
              [ "$EXPECTED_DECISION" != "$ACTUAL_DECISION" ] || \
              [ "$EXPECTED_REQUIREMENT_COMPLETE" != "$ACTUAL_REQUIREMENT_COMPLETE" ] || \
+             [ "$EXPECTED_REQUIREMENT_NOTE" != "$ACTUAL_REQUIREMENT_NOTE" ] || \
              [ "$EXPECTED_STATE" != "$ACTUAL_STATE" ] || \
              [ "$EXPECTED_COMPLETED_FIX_COUNT" != "$ACTUAL_COMPLETED_FIX_COUNT" ] || \
              [ "$EXPECTED_NEXT_FIX_ATTEMPT" != "$ACTUAL_NEXT_FIX_ATTEMPT" ] || \

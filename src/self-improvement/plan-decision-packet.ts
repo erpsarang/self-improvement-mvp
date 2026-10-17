@@ -43,6 +43,30 @@ const REJECT_INSTRUCTION = "기각: 사유를 댓글로 남기고 Issue를 `not_
 const REPLAN_INSTRUCTION = "요구사항 보완 후 재PLAN: Issue 본문을 보완한 뒤 Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행합니다.";
 const DISPLAY_ONLY_NOTE = "이 Packet은 trusted validation을 통과한 PLAN artifact의 사람용 발췌입니다. 승인 시 exact PLAN artifact와 provenance를 다시 검증하며, 이 댓글 자체는 authority가 아닙니다.";
 
+/** forbiddenChanges 문장에서 문서 경로로 보이는 표기(`README.md`, `docs/…`)를 찾는 패턴. 경로에 쓰는 글자만 잡는다. */
+const DOCUMENT_MENTION = /[A-Za-z0-9_/-][A-Za-z0-9_./-]*\.md\b|\bdocs\/[A-Za-z0-9_./-]*/gi;
+
+/**
+ * PLAN이 forbiddenChanges로 수정을 제외한 문서 경로. allowedPaths에 들어 있는 문서는 제외된 것이 아니므로 뺀다.
+ * 문장에서 기계적으로 뽑을 뿐 그 문서가 실제로 어긋나는지는 판단하지 않는다(표시 전용).
+ */
+export function excludedDocumentPaths(
+  scope: Pick<PlanDecisionScope, "allowedPaths" | "forbiddenChanges">,
+  limit = 5,
+): string[] {
+  const found = new Set<string>();
+  for (const item of scope.forbiddenChanges) {
+    for (const match of item.matchAll(DOCUMENT_MENTION)) {
+      const token = match[0].replace(/^\/+/, "");
+      const covered = token.endsWith("/")
+        ? scope.allowedPaths.some((path) => path.startsWith(token))
+        : scope.allowedPaths.includes(token);
+      if (!covered) found.add(token);
+    }
+  }
+  return [...found].slice(0, limit);
+}
+
 export function isPlanApprovable(plan: PlanDecisionInput): boolean {
   return plan.implementationScope.ready === true && plan.questions.length === 0;
 }
@@ -128,6 +152,7 @@ export function renderPlanDecisionPacket(plan: PlanDecisionInput, options: { max
       dropOrder: 3,
       text: `**범위 밖 / 금지 변경 (forbiddenChanges):**\n${bullets(scope.forbiddenChanges, "명시된 금지 변경 없음")}`,
     },
+    ...documentNoticeSections(scope),
     {
       key: "choices",
       text: `**사람의 선택지:**\n- ${approvable ? APPROVE_INSTRUCTION : "승인: 지금은 불가합니다. 위 준비 상태를 보세요."}\n- ${REJECT_INSTRUCTION}\n- ${REPLAN_INSTRUCTION}`,
@@ -152,6 +177,24 @@ export function renderPlanDecisionPacket(plan: PlanDecisionInput, options: { max
     output = render();
   }
   return output;
+}
+
+/**
+ * 문서 수정을 제외한 PLAN에는 승인 전에 그 사실을 보여 준다. 코드 변경으로 문서의 설명이 어긋나면 같은 요구를 위해
+ * 병합 뒤 사이클이 한 번 더 필요해지는데, 금지 목록의 문장 하나로는 사람이 이를 알아채기 어렵다.
+ */
+function documentNoticeSections(scope: PlanDecisionScope): PacketSection[] {
+  if (!scope.ready) return [];
+  const excluded = excludedDocumentPaths(scope);
+  if (excluded.length === 0) return [];
+  return [{
+    key: "documentNotice",
+    text:
+      `**문서 수정 제외 안내:** 이 PLAN은 ${excluded.map((path) => `\`${path}\``).join(", ")}의 수정을 이번 범위에서 제외했습니다. ` +
+      "이번 변경으로 그 문서의 설명이 어긋나면, 병합 뒤 문서를 고치는 사이클이 한 번 더 필요할 수 있습니다. " +
+      "문서에 어긋나는 문장이 있다면 승인하기 전에 문서도 함께 고치도록 Issue 본문을 보완해 PLAN을 다시 받을 수 있습니다. " +
+      "(이 안내는 금지 변경의 문장에서 기계적으로 뽑은 것이며 실제로 어긋나는지는 판단하지 않습니다.)",
+  }];
 }
 
 /** ready 여부에 따라 달라지는 HumanStatus "다음 행동" 문구. 표시 전용. */

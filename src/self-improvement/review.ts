@@ -801,7 +801,8 @@ export function createSemanticReviewPrompt(input: {
       `8. 근거 없는 추측은 blocker로 만들지 마세요. evidence에는 구체적인 파일/코드/승인된 slice 근거를 적으세요.\n` +
       `9. requirementComplete는 decision과 별도입니다. 원본 Issue 요구 전체가 이 exact verified candidate로 충족됐을 때만 true입니다. 승인 PLAN의 approach/forbiddenChanges에 후속 범위가 남아 있거나 이번 slice acceptanceCriteria의 사용자 가시 완료조건이 candidate에 없으면, slice가 PASS여도 false로 반환하세요.\n` +
       `10. 이전 slice는 이미 base SHA에 merge되어 있어 patch.diff에 보이지 않습니다. 승인 PLAN의 approach/forbiddenChanges에 남은 Issue 요구가 없고 이번 slice가 PASS이면, 이전 slice 작업이 patch에 없다는 이유만으로 requirementComplete를 false로 반환하지 마세요.\n` +
-      `11. Issue 본문이 이 Issue 밖(별도 요구)으로 명시한 후속 범위는 남은 Issue 요구가 아닙니다. approach에 그 후속 범위가 적혀 있어도 그런 후속 범위만 남았고 이번 slice가 PASS이면 requirementComplete를 true로 반환하세요. 그 후속 범위는 FOLLOW_UP(scope NONE)으로만 기록하세요.\n\n`
+      `11. Issue 본문이 이 Issue 밖(별도 요구)으로 명시한 후속 범위는 남은 Issue 요구가 아닙니다. approach에 그 후속 범위가 적혀 있어도 그런 후속 범위만 남았고 이번 slice가 PASS이면 requirementComplete를 true로 반환하세요. 그 후속 범위는 FOLLOW_UP(scope NONE)으로만 기록하세요.\n` +
+      `12. requirementComplete를 false로 반환하면 summary를 "충족되지 않은 것:"으로 시작해 무엇이 충족되지 않았는지 한 문장으로 먼저 적으세요. 사람이 PR 본문에서 그 이유로 읽습니다.\n\n`
     : `## 판정 규칙\n` +
       `1. 제공된 bounded patch가 승인된 요구사항을 의미적으로 만족하는지 확인하세요. patch 밖의 사실은 추정하지 마세요.\n` +
       `2. PASS: 요구사항을 만족하고 merge를 막을 semantic blocker가 없습니다. 스타일/리팩터링/P2 이하 개선은 FOLLOW_UP으로만 기록할 수 있습니다.\n` +
@@ -809,7 +810,8 @@ export function createSemanticReviewPrompt(input: {
       `4. STRUCTURAL_CHANGE: 요구사항 변경, 아키텍처 재설계, Trust Boundary 변경 등 구조적 변경이 필요한 blocker가 하나 이상 있습니다. 그 BLOCKER의 scope는 STRUCTURAL이어야 합니다.\n` +
       `5. FOLLOW_UP finding은 decision을 막지 않으며 scope는 NONE으로 작성하세요.\n` +
       `6. 근거 없는 추측은 blocker로 만들지 마세요. evidence에는 구체적인 파일/코드/요구사항 근거를 적으세요.\n` +
-      `7. requirementComplete는 원본 승인 요구 전체가 이 exact verified candidate로 충족됐을 때만 true입니다. decision과 별도로 판단하세요.\n\n`;
+      `7. requirementComplete는 원본 승인 요구 전체가 이 exact verified candidate로 충족됐을 때만 true입니다. decision과 별도로 판단하세요.\n` +
+      `8. requirementComplete를 false로 반환하면 summary를 "충족되지 않은 것:"으로 시작해 무엇이 충족되지 않았는지 한 문장으로 먼저 적으세요. 사람이 PR 본문에서 그 이유로 읽습니다.\n\n`;
   return `당신은 AI Development Framework의 독립 Semantic Reviewer입니다.\n\n` +
     `검토 대상은 review-context/patch.diff에 고정된 exact base SHA → verified SHA 변경입니다.\n` +
     `변경 파일 목록은 review-context/changed-files.txt에 있습니다. 이 두 파일만 코드 근거로 사용하세요.\n` +

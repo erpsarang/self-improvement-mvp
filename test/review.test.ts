@@ -131,6 +131,7 @@ test("Semantic Reviewer prompt는 full repo 대신 bounded patch만 코드 근�
   assert.match(prompt, /review-context\/changed-files\.txt/);
   assert.match(prompt, /전체 repository는 제공되지 않습니다/);
   assert.match(prompt, /patch 밖의 사실은 추정하지 마세요/);
+  assert.match(prompt, /requirementComplete를 false로 반환하면 summary를 "충족되지 않은 것:"으로 시작해/);
   assert.doesNotMatch(prompt, /\.\.\/review-target/);
   assert.doesNotMatch(prompt, /git diff\/show/);
 });

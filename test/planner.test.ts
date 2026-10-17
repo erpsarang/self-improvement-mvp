@@ -440,6 +440,11 @@ test("PLAN prompt는 allowedPaths가 repository-relative path이며 filesystem �
     assert.match(prompt, /추가·수정·생성할 파일을 언급하면 repository-relative exact path를 쓰고 반드시 allowedPaths에 포함/);
     assert.match(prompt, /package-lock\.json companion을 추가할 수 있도록 8개 bounded slot 중 최소 1개를 비워두세요/);
     assert.match(prompt, /필요한 변경 파일이 8개 안에 들어오지 않으면 명시적 Issue 완료선을 훼손하지 않는 범위에서만 축소하세요/);
+    // #402: 거짓이 되는 문서는 같은 slice에서 고치고, 제외하면 어느 문장이 거짓이 되는지 적는다.
+    assert.match(prompt, /이번 변경으로 문장이 거짓이 되는 문서\(README\.md, docs\/ 아래 문서 등\)가 Context Pack에 보이면/);
+    assert.match(prompt, /Human Requirement가 문서 수정을 명시적으로 금지하지 않았다면 그 문서를 allowedPaths와 requiredChanges에 포함해 같은 slice에서 고치세요\(8개 한도 안에서\)/);
+    assert.match(prompt, /어느 문장이 병합 뒤 거짓이 되는지를 approach에 구체적으로 적으세요/);
+    assert.match(prompt, /근거 없이 문서를 forbiddenChanges에 넣지 마세요/);
     // 외부 사실 추측 금지와 일반 요구의 첫 slice 전략은 유지한다 (#244, #273).
     assert.match(prompt, /Context Pack에 없는 외부 사실\(모델 식별자, 가격, 사용량 필드, 외부 서비스 동작 등\)은 추측하거나 가정하지 마세요/);
     assert.match(prompt, /명시적 Issue 완료선이 없는 일반 요구에만 첫 bounded slice 전략을 적용하세요/);

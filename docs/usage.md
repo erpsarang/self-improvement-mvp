@@ -213,6 +213,12 @@ PLAN이 `approach`·`changeCandidates`·`testStrategy`·`requiredChanges` 문장
 - 이것은 문장을 거부할지 정하는 기준일 뿐입니다. 쓰기 범위는 계속 `allowedPaths`에 글자 그대로 적힌 경로뿐이며, 짧은 이름이 범위를 넓히지 않습니다.
 - 요구 본문에서 경로 표기를 점검하는 R4(1-1장)도 같은 기준을 씁니다.
 
+### 거짓이 되는 문서는 같은 slice에서 고친다
+
+PLAN은 이번 변경으로 문장이 거짓이 되는 문서(`README.md`, `docs/` 아래 문서 등)가 Context Pack에 보이면, 사람이 요구 본문에서 문서 수정을 금지하지 않는 한 그 문서를 `allowedPaths`와 `requiredChanges`에 넣어 같은 slice에서 고치도록 prompt가 요구합니다(8개 한도 안에서). 문서를 넣을 수 없어 `forbiddenChanges`로 제외하면 어느 문장이 병합 뒤 거짓이 되는지를 `approach`에 적게 합니다. 사람이 금지하지 않았는데 근거 없이 문서를 금지 목록에 넣지 않게 합니다.
+
+문서를 제외한 PLAN은 Decision Packet에 "문서 수정 제외 안내"가 붙습니다. 이 안내는 AI가 쓰는 것이 아니라 trusted 코드가 `forbiddenChanges` 문장에서 `README.md`, `docs/…` 같은 표기를 기계적으로 뽑아 고정 문장으로 만든 것입니다(`plan-decision-packet.ts`의 `excludedDocumentPaths`). 문서가 `allowedPaths`에 있으면 만들지 않고, 문서가 실제로 어긋나는지는 판단하지 않으며, 승인 가능 여부나 authority에는 영향이 없습니다. 어긋나는 문장이 있다면 승인하기 전에 Issue 본문을 보완해 PLAN을 다시 받을 수 있습니다. 놓치면 병합 뒤 문서를 고치는 사이클이 한 번 더 필요합니다(9장).
+
 ### PLAN이 보는 Context
 
 Planner는 trusted 단계가 고른 Context Pack(최대 12개 파일, 80KB)에서 시작합니다. 기본은 도구 없이 이 Pack만 봅니다.
@@ -308,6 +314,8 @@ branch 이름이 아니라 exact `publishedHeadSha`를 checkout하여 기계 검
 | `LOCAL_FIX` | 제한된 수정으로 해결 가능 | bounded FIX loop |
 | `STRUCTURAL_CHANGE` | 범위를 넘는 재설계 필요 | `STOPPED` / Human 판단 |
 
+REVIEW는 `decision`과 별개로 `requirementComplete`를 냅니다. 이번 candidate가 부모 요구 전체를 충족할 때만 `true`이고, 승인된 PLAN slice가 `PASS`해도 후속 범위가 남아 있으면 `false`입니다. `false`이면 리뷰어는 summary를 "충족되지 않은 것:"으로 시작해 이유를 먼저 적도록 prompt가 요구하며, 이 이유는 아래 9장의 Human Merge PR 본문에 실립니다.
+
 ## 8. LOCAL_FIX
 
 `LOCAL_FIX`라고 해서 사람이 AI에게 자유형 수정 명령을 다시 주는 것이 아닙니다.
@@ -340,6 +348,16 @@ FIX Worker는 승인된 PLAN의 `allowedPaths` 원문(exact reviewed SHA)과 LOC
 그 뒤 사람이 직접 Merge합니다.
 
 **Auto Merge는 사용하지 않습니다.**
+
+### 부모 요구 완료를 확인하지 못한 PR
+
+REVIEW가 `requirementComplete=false`로 `PASS`하면 PR에는 `Closes`가 붙지 않고 "부모 업무 요구 전체 완료를 확인하지 않았습니다"가 적힙니다. 이때 PR 본문에는 다음도 함께 실립니다.
+
+- 리뷰어 요약(확인하지 못한 이유)과 남은 후속 범위(FOLLOW_UP, 최대 5건)
+- 병합 뒤에 일어나는 일: Issue가 열려 있는 동안 후속 PLAN이 자동으로 시작됩니다. 후속 PLAN은 제안일 뿐이며 `PLAN-승인`이 없으면 구현되지 않습니다.
+- 병합 뒤 정리: 남은 범위가 필요 없다고 판단하면 병합 **뒤에** Issue를 닫습니다. 병합 전에 Issue를 닫으면 후속 PLAN을 시작하는 단계(`post-merge-learn.yml`)가 실패합니다.
+
+이 안내는 trusted prepare가 검증된 REVIEW provenance에서 만들며 AI를 다시 부르지 않습니다. 리뷰어 출력은 외부 입력이므로 한 줄로 줄이고 길이를 자르며, 링크·멘션·Issue 참조·종료 키워드(`Closes #n`, `GH-n`, Issue URL)가 되지 않게 기호를 숫자 문자 참조로 바꿔 싣습니다(`orchestrator.ts`의 `neutralizeReviewerText`). 이 안내는 설명일 뿐 병합이나 Issue 종료의 근거가 아니고, `Closes`는 계속 `requirementComplete=true`일 때만 붙습니다. `requirementComplete=true`인 PR 본문은 바뀌지 않습니다.
 
 ## 10. Human Merge 이후 LEARN
 
