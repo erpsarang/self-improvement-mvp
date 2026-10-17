@@ -209,6 +209,7 @@ Auto Merge는 향후 목표가 아니며, 최종 Merge는 계속 Human-only입�
 ## 문서
 
 - [`CHARTER.md`](CHARTER.md) — 헌장. 목적, 가치의 우선순위, 과제 선정 기준, 프레임워크 고도화의 경계, 사람과 AI의 역할
+- [`docs/introduction.md`](docs/introduction.md) — 소개 자료. 배경·목표·의의, 작동 방식 A–Z, 새 App 개발 절차 가이드
 - [`docs/usage.md`](docs/usage.md) — v0.2 실제 사용 흐름
 - [`docs/architecture.md`](docs/architecture.md) — Trust Boundary, provenance, 비용 경계 구조
 - [`docs/roadmap.md`](docs/roadmap.md) — 현재 검증 위치와 다음 확장 방향
