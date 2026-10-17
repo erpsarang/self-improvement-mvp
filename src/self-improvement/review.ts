@@ -79,6 +79,12 @@ export interface ApprovedPlanReviewScope {
   readonly allowedPaths: readonly string[];
   readonly requiredChanges: readonly string[];
   readonly forbiddenChanges: readonly string[];
+  /**
+   * PLAN의 testStrategy 중 자동 검증으로 확인할 수 없다고 PLAN이 `수동 확인:`으로 표시한 항목(접두어 제외).
+   * PR 본문의 "병합 전 확인" 목록에 옮기는 표시 전용 값이며 심사 기준이나 authority가 아니다.
+   * 이 필드가 없던 review.json도 유효하다(없으면 빈 목록과 같다).
+   */
+  readonly manualChecks?: readonly string[];
 }
 
 export interface ReviewProvenance {
@@ -371,6 +377,7 @@ function validatePlanAuthorizationForReview(input: {
 const APPROVED_PLAN_SCOPE_KEYS = [
   "acceptanceCriteria", "allowedPaths", "approach", "forbiddenChanges", "planArtifact", "requiredChanges",
 ] as const;
+const MANUAL_CHECK_PREFIX = /^수동 확인\s*[:：]\s*/;
 const PLAN_SCOPE_MAX_ITEMS = 8;
 const PLAN_SCOPE_MAX_ITEM_LENGTH = 1600;
 
@@ -400,7 +407,10 @@ function safeRelativePath(value: string): boolean {
 
 /** review.json에 기록된 승인 scope의 shape만 검사한다 (Orchestrator/FIX가 review.json을 다시 읽을 때). */
 export function validateApprovedPlanReviewScopeShape(value: unknown): ApprovedPlanReviewScope {
-  if (!record(value) || !exactKeys(value, APPROVED_PLAN_SCOPE_KEYS)) {
+  if (
+    !record(value) ||
+    !exactKeys(value, "manualChecks" in value ? [...APPROVED_PLAN_SCOPE_KEYS, "manualChecks"] : APPROVED_PLAN_SCOPE_KEYS)
+  ) {
     throw new Error("승인된 PLAN scope 구조가 올바르지 않습니다");
   }
   if (
@@ -427,7 +437,21 @@ export function validateApprovedPlanReviewScopeShape(value: unknown): ApprovedPl
     allowedPaths,
     requiredChanges: boundedStrings(value.requiredChanges, "requiredChanges", 1),
     forbiddenChanges: boundedStrings(value.forbiddenChanges, "forbiddenChanges", 0),
+    ...("manualChecks" in value ? { manualChecks: boundedStrings(value.manualChecks, "manualChecks", 0) } : {}),
   });
+}
+
+/**
+ * PLAN의 testStrategy에서 `수동 확인:`으로 시작하는 항목만 접두어를 떼고 꺼낸다. 표시 전용이므로
+ * 개수·길이 상한을 넘는 항목은 PLAN 승인 자체를 막지 않고 잘라 낸다.
+ */
+function extractManualChecks(testStrategy: unknown): readonly string[] {
+  if (!Array.isArray(testStrategy)) return [];
+  return testStrategy
+    .filter((item): item is string => typeof item === "string" && MANUAL_CHECK_PREFIX.test(item.trim()))
+    .map((item) => item.trim().replace(MANUAL_CHECK_PREFIX, "").slice(0, PLAN_SCOPE_MAX_ITEM_LENGTH))
+    .filter((item) => item.length > 0)
+    .slice(0, PLAN_SCOPE_MAX_ITEMS);
 }
 
 /**
@@ -453,6 +477,7 @@ export function validateApprovedPlanReviewScope(
     allowedPaths: scope.allowedPaths,
     requiredChanges: scope.requiredChanges,
     forbiddenChanges: scope.forbiddenChanges,
+    manualChecks: extractManualChecks(planJson.plan.testStrategy),
   });
 }
 

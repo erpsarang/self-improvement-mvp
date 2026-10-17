@@ -359,6 +359,14 @@ REVIEW가 `requirementComplete=false`로 `PASS`하면 PR에는 `Closes`가 붙�
 
 이 안내는 trusted prepare가 검증된 REVIEW provenance에서 만들며 AI를 다시 부르지 않습니다. 리뷰어 출력은 외부 입력이므로 한 줄로 줄이고 길이를 자르며, 링크·멘션·Issue 참조·종료 키워드(`Closes #n`, `GH-n`, Issue URL)가 되지 않게 기호를 숫자 문자 참조로 바꿔 싣습니다(`orchestrator.ts`의 `neutralizeReviewerText`). 이 안내는 설명일 뿐 병합이나 Issue 종료의 근거가 아니고, `Closes`는 계속 `requirementComplete=true`일 때만 붙습니다. `requirementComplete=true`인 PR 본문은 바뀌지 않습니다.
 
+### 병합 전 확인 목록
+
+PLAN의 `testStrategy` 중 자동 테스트로 확인할 수 없는 항목(실제 브라우저 동작, 화면 배치 등)은 문장을 `수동 확인:`으로 시작하도록 PLAN prompt가 요구합니다. PLAN 계보의 PR 본문에는 이 접두어가 붙은 항목만 "병합 전 확인" 체크리스트로 실립니다. `requirementComplete`와 무관합니다.
+
+- CI와 REVIEW는 이 항목을 실행하지 않습니다. 둘이 통과했다는 사실이 이 항목의 확인을 뜻하지 않으며, 확인은 사람이 합니다.
+- 접두어가 붙은 항목이 없으면 이 절은 PR 본문에 나타나지 않습니다. PLAN이 접두어를 빠뜨리면 목록에서도 빠지므로, 화면을 바꾸는 요구는 `PLAN-승인` 때 Decision Packet의 테스트 계획에서 수동 확인 항목이 적혀 있는지 함께 봅니다.
+- 이 목록은 trusted prepare가 승인된 PLAN artifact에서 옮기며 AI를 다시 부르지 않습니다. 병합의 조건이나 근거가 아니고, 화면을 자동으로 검증하는 수단도 아닙니다(그 수단의 부재는 #404가 다룹니다). 항목은 `neutralizeReviewerText`로 다뤄 종료 키워드·멘션·링크가 되지 않습니다. 항목은 최대 8개, 항목당 400자까지 싣습니다.
+
 ## 10. Human Merge 이후 LEARN
 
 LEARN은 open PR이나 MERGE_READY를 완료된 사실로 취급하지 않습니다. 실제 Human Merge가 끝난 cycle만 학습 대상으로 사용합니다.

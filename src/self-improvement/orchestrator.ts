@@ -299,6 +299,7 @@ const NOTICE_SUMMARY_MAX = 600;
 const NOTICE_FOLLOW_UP_MAX = 5;
 const NOTICE_TITLE_MAX = 120;
 const NOTICE_RECOMMENDATION_MAX = 200;
+const MANUAL_CHECK_MAX = 400;
 
 /**
  * AI 리뷰어가 쓴 문장을 PR 본문에 넣을 때 쓴다. 리뷰어 출력은 외부 입력이므로 한 줄로 줄인 뒤,
@@ -362,6 +363,26 @@ export function renderRequirementIncompleteNotice(
     "_이 안내는 AI 리뷰어의 출력을 옮긴 설명이며 병합이나 Issue 종료의 근거가 아닙니다._",
   );
   return lines.join("\n");
+}
+
+/**
+ * 승인된 PLAN이 자동 검증으로 확인할 수 없다고 `수동 확인:`으로 표시한 항목을 PR 본문의 "병합 전 확인" 목록으로 옮긴다.
+ * 이미 검증된 review provenance의 approvedPlanScope.manualChecks만 쓰며 AI를 다시 부르지 않는다.
+ * CI와 REVIEW는 이 항목을 실행하지 않는다. 목록은 설명일 뿐 병합의 근거나 조건이 아니다. 항목이 없으면 빈 문자열이다.
+ */
+export function renderManualChecksNotice(review: Pick<ReviewProvenance, "approvedPlanScope">): string {
+  const checks = review.approvedPlanScope?.manualChecks ?? [];
+  if (checks.length === 0) return "";
+  return [
+    "### 병합 전 확인",
+    "",
+    "승인된 PLAN이 자동 검증으로 확인할 수 없다고 적은 항목입니다. CI와 REVIEW는 이 항목을 실행하지 않았으므로, " +
+      "통과했다는 사실이 이 항목의 확인을 뜻하지 않습니다.",
+    "",
+    ...checks.map((check) => `- [ ] ${neutralizeReviewerText(check, MANUAL_CHECK_MAX)}`),
+    "",
+    "_이 목록은 승인된 PLAN의 테스트 계획을 옮긴 설명이며 병합의 조건이 아닙니다. 병합 여부는 사람이 결정합니다._",
+  ].join("\n");
 }
 
 export function routeReviewDecision(

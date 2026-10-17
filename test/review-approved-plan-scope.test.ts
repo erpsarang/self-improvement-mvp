@@ -77,6 +77,47 @@ const sourceRun = {
   workflowPath: ".github/workflows/trusted-rail.yml",
 } as const;
 
+test("PLAN testStrategy 중 '수동 확인:' 항목만 접두어를 떼고 manualChecks로 옮기며, 없던 review.json도 유효하다", () => {
+  const authority = {
+    type: "PLAN_AUTHORIZE" as const,
+    artifact: chain.bridge.sourcePlanAuthorize.artifact,
+    authorization: chain.bridge.sourcePlanAuthorize.authorization,
+    requirement: chain.bridge.requirement,
+    bridgeDigest: chain.bridge.bridgeDigest,
+  };
+  // 이 fixture의 PLAN에는 수동 확인 항목이 없다.
+  assert.deepEqual(scope.manualChecks, []);
+
+  const planJson = structuredClone(chain.planJson) as { plan: { testStrategy: unknown } };
+  planJson.plan.testStrategy = [
+    "npm test로 화면 파일 문자열을 확인한다.",
+    "수동 확인: 실제 브라우저에서 최근 목적지가 새로고침 뒤에도 남는지 본다.",
+    "  수동 확인：좁은 화면에서 목록이 잘리지 않는지 본다.",
+    "수동 확인:",
+    "자동 테스트와 수동 확인: 문구가 중간에 있는 문장은 옮기지 않는다.",
+  ];
+  const withManual = validateApprovedPlanReviewScope(planJson, authority);
+  assert.deepEqual(withManual.manualChecks, [
+    "실제 브라우저에서 최근 목적지가 새로고침 뒤에도 남는지 본다.",
+    "좁은 화면에서 목록이 잘리지 않는지 본다.",
+  ]);
+  // 승인 범위(심사 기준)는 testStrategy와 무관하다.
+  assert.deepEqual(withManual.allowedPaths, scope.allowedPaths);
+  assert.deepEqual(validateApprovedPlanReviewScopeShape(JSON.parse(JSON.stringify(withManual))), withManual);
+
+  // manualChecks가 없던 기존 review.json도 그대로 유효하다.
+  const { manualChecks: _omitted, ...legacy } = scope;
+  assert.deepEqual(validateApprovedPlanReviewScopeShape(JSON.parse(JSON.stringify(legacy))), legacy);
+  // 알 수 없는 키는 여전히 거부한다.
+  assert.throws(() => validateApprovedPlanReviewScopeShape({ ...legacy, extra: [] }), /승인된 PLAN scope 구조가 올바르지 않습니다/);
+
+  // 표시 전용이므로 상한을 넘는 항목은 PLAN 승인을 막지 않고 잘라 낸다.
+  planJson.plan.testStrategy = Array.from({ length: 20 }, (_, index) => `수동 확인: 항목 ${index + 1} ${"가".repeat(3000)}`);
+  const capped = validateApprovedPlanReviewScope(planJson, authority);
+  assert.equal(capped.manualChecks?.length, 8);
+  assert.ok(capped.manualChecks?.every((item) => item.length <= 1600));
+});
+
 test("승인된 PLAN.json에서 REVIEW authority가 되는 slice만 꺼내고 PLAN_AUTHORIZE identity에 묶는다", () => {
   assert.deepEqual(scope.planArtifact, chain.authorization.plan.artifact);
   assert.deepEqual(scope.allowedPaths, c.allowedPaths);

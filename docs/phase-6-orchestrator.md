@@ -70,6 +70,8 @@ permissions:
 
 - 리뷰어 출력은 외부 입력이므로 `neutralizeReviewerText`가 한 줄로 줄이고 길이를 자르며, 링크·멘션·Issue 참조·종료 키워드가 되지 않게 ASCII 기호를 숫자 문자 참조로 바꾼다. 표시 문자는 그대로이고 소스에는 참조 형태가 남지 않는다.
 - 안내는 authority가 아니다. `Closes #n`은 여전히 `requirement_complete=true`일 때만 붙고, PR job은 완료 여부와 안내가 어긋나면(`true`인데 안내가 있거나 `false`인데 없으면) PR을 만들지 않고 실패한다.
+
+PLAN 계보의 PR 본문에는 완료 여부와 별개로 "병합 전 확인" 목록(`manual_checks`)도 실린다. 승인된 PLAN의 `testStrategy` 중 `수동 확인:`으로 시작하는 항목을 REVIEW provenance의 `approvedPlanScope.manualChecks`로 옮긴 뒤 trusted prepare가 체크리스트로 만든다. CI와 REVIEW가 실행하지 않은 확인을 사람에게 보이기 위한 표시 전용 값이며 심사 기준도 병합 조건도 아니다. 항목이 없으면 비어 있고, record job은 route와 같은 값인지 다시 비교한다. 접두어가 없던 기존 `review.json`(`manualChecks` 키 없음)도 유효하다.
 - record job은 fresh runner에서 REVIEW provenance를 다시 검증해 `requirement_note`가 route와 같은지 비교한다. AI 호출은 없다.
 
 기존 PR 검색은 `head + base`로 수행하며:
