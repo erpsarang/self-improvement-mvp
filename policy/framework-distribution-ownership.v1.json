@@ -63,6 +63,8 @@
     { "sourcePath": "src/self-improvement/plan-implement-worker.ts", "targetPath": "src/self-improvement/plan-implement-worker.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-recovery-handler.ts", "targetPath": "src/self-improvement/plan-recovery-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-recovery.ts", "targetPath": "src/self-improvement/plan-recovery.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/plan-retry-handler.ts", "targetPath": "src/self-improvement/plan-retry-handler.ts", "classification": "required" },
+    { "sourcePath": "src/self-improvement/plan-retry.ts", "targetPath": "src/self-improvement/plan-retry.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/plan-worker-ci-repair-handler.ts", "targetPath": "src/self-improvement/plan-worker-ci-repair-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/planner-handler.ts", "targetPath": "src/self-improvement/planner-handler.ts", "classification": "required" },
     { "sourcePath": "src/self-improvement/planner.ts", "targetPath": "src/self-improvement/planner.ts", "classification": "required" },

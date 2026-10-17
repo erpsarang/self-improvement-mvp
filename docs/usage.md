@@ -39,7 +39,7 @@
 - **R1의 크기는 본문 길이가 아닙니다.** LEARN은 `{"title", "body", "digest"}`를 JSON으로 만든 값의 UTF-8 바이트를 잽니다. 제목, 키 이름, digest, 줄바꿈과 따옴표의 이스케이프가 더해지고 한글은 글자당 3바이트이므로, 본문이 8,192바이트보다 짧아도 넘을 수 있습니다.
 - R3·R4는 휴리스틱입니다. ‘예상 변경 범위’ 절은 제목에 "변경 범위"가 들어간 절이고, 파일 개수는 그 절의 목록 항목(`-`, `*`, `1.`)에 백틱으로 적은 파일 표기를 모두 셉니다. 문장 속에 나열한 파일은 세지 않고, 코드 블록 안의 줄은 제목으로 보지 않습니다. 절이 없거나 읽을 수 있는 파일 목록이 없으면 정보로만 표시합니다. PLAN 경로 검증은 본문이 아니라 PLAN(AI)이 쓴 문장에 걸리므로, R4는 거부를 없애지 못하고 가능성을 줄일 뿐입니다.
 - 댓글에는 본문 문장을 되풀이하지 않고 규칙 ID, 숫자, 경로(코드 표기)만 씁니다.
-- 본문을 고치면 댓글이 갱신됩니다. 다만 본문 수정만으로는 PLAN이 다시 시작되지 않으므로, 고친 뒤 Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행해야 합니다.
+- 본문을 고치면 댓글이 갱신됩니다. 다만 본문 수정만으로는 PLAN이 다시 시작되지 않으므로, 고친 뒤 Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행해야 합니다. executor가 `EXECUTION_FAILED`를 알린 실패는 본문을 고치지 않아도 PLAN이 스스로 한 번 다시 시작합니다(5절 "PLAN 실패 뒤 자동 재시도").
 - 이미 닫힌 Issue도 Actions → Requirement Lint를 Issue 번호로 직접 실행해 점검할 수 있습니다. `post_comment`를 끄면 Issue에 댓글을 남기지 않고 Actions 요약에만 결과를 보여 줍니다.
 
 ## 2. AI 실행 경계 준비 (팀별 Claude 구독 executor)
@@ -66,7 +66,7 @@ App repo (Public)                        executor repo (Private, 팀 소유)
 
 - 결과 댓글과 실패 댓글은 App repository 소유자 계정이 남긴 것만 받는다(`author_association` OWNER, login = repository owner). 그래서 지금은 `FRAMEWORK_BRIDGE_TOKEN` 계정이 App repository를 소유한 개인 계정이어야 하고, Organization 소유 App repository는 아직 지원하지 않는다.
 - secret 값은 repository나 문서에 기록하지 않는다.
-- self-hosted runner는 AI 단계가 돌 수 있는 동안 켜져 있어야 한다. App run은 executor 결과를 약 15분(PLAN은 약 10분)만 기다리고, 그 뒤에 runner가 job을 집으면 executor는 끝난 run의 요청을 stale로 거부한다. IMPLEMENT·REVIEW·FIX·LEARN·Product Discovery가 이렇게 timeout되면 요청 Issue에 `HumanStatus: STOPPED` 댓글이 남고, PLAN은 `HumanStatus: PLAN_FAILED` 댓글이 남는다. 이 댓글은 필요하면 요구 본문을 고친 뒤 Actions의 `Read-only AI PLAN`을 Issue 번호로 다시 실행하라고 안내한다. PLAN은 Issue를 새로 만들거나 다시 열 때와 수동 실행에만 시작하므로, 본문을 고치는 것만으로는 다시 시작되지 않는다. 변경할 파일이 PLAN 한도(8개)를 넘어 실패한 경우에는 사유 원문 아래에 쉬운 설명을 한 줄 덧붙이고, PLAN이 고른 변경 파일 수와 자동으로 더해지는 기존 테스트 수, 한도를 함께 보여 준다. 사유 원문은 이 개수를 목록보다 앞에 둔다(댓글이 사유를 300자로 자르기 때문이다). executor repository의 Actions에 poller run이 queued로 남아 있으면 runner가 offline인 것이다. runner를 되살린 뒤 그 단계를 다시 시작한다.
+- self-hosted runner는 AI 단계가 돌 수 있는 동안 켜져 있어야 한다. App run은 executor 결과를 약 15분(PLAN은 약 10분)만 기다리고, 그 뒤에 runner가 job을 집으면 executor는 끝난 run의 요청을 stale로 거부한다. IMPLEMENT·REVIEW·FIX·LEARN·Product Discovery가 이렇게 timeout되면 요청 Issue에 `HumanStatus: STOPPED` 댓글이 남고, PLAN은 `HumanStatus: PLAN_FAILED` 댓글이 남는다. 이 댓글은 필요하면 요구 본문을 고친 뒤 Actions의 `Read-only AI PLAN`을 Issue 번호로 다시 실행하라고 안내한다. PLAN은 Issue를 새로 만들거나 다시 열 때와 수동 실행, 그리고 프레임워크의 bounded 자동 재시도(5절)에만 시작하므로, 본문을 고치는 것만으로는 다시 시작되지 않는다. 변경할 파일이 PLAN 한도(8개)를 넘어 실패한 경우에는 사유 원문 아래에 쉬운 설명을 한 줄 덧붙이고, PLAN이 고른 변경 파일 수와 자동으로 더해지는 기존 테스트 수, 한도를 함께 보여 준다. 사유 원문은 이 개수를 목록보다 앞에 둔다(댓글이 사유를 300자로 자르기 때문이다). executor repository의 Actions에 poller run이 queued로 남아 있으면 runner가 offline인 것이다. runner를 되살린 뒤 그 단계를 다시 시작한다.
 - executor가 요청을 찾은 뒤 실패하면(request 검증 실패, Claude 호출이나 결과 형식 검증 실패, 결과 댓글 게시 실패) IMPLEMENT·REVIEW·FIX·LEARN·Product Discovery poller는 요청 Issue에 `{KIND}_FAILED` marker 댓글을 남긴다. App run은 이 댓글을 보면 timeout까지 기다리지 않고 바로 멈추고, 실제 사유와 함께 `HumanStatus: STOPPED` 댓글을 남긴다. 이 marker는 실패 신호일 뿐 결과가 아니어서 다음 단계를 시작하지 않는다. PLAN도 executor의 PLAN poller가 `PLAN_FAILED` marker를 남기면 같은 방식으로 바로 멈춘다. 이때는 `HumanStatus: PLAN_FAILED` 댓글이 executor가 알린 사유(`REQUEST_REJECTED`·`EXECUTION_FAILED`·`RESULT_POST_FAILED`)를 쉬운 말로 풀어 주고, 원인은 executor 저장소 Actions의 poller run 로그에서 찾으라고 안내한다. PLAN poller가 이 marker를 남기도록 갱신되지 않은 executor이거나 poller가 marker를 남기기 전에 멈춘 경우(runner offline 등)에는 marker가 없으므로 기존처럼 timeout까지 기다린다.
 
 ## 2-1. Merge-Ready PR 생성 identity (Framework 전용 GitHub App)
@@ -183,6 +183,15 @@ Planner는 repository를 수정하지 않으며 PLAN 자체도 authority가 아�
 PLAN은 Private subscription executor가 1회 실행하며 모델은 기본 sonnet(effort medium)입니다. 사람이 Issue 템플릿의 `- [x] 복잡한 요구입니다`를 체크한 요구만 opus로 실행합니다. 체크 여부는 본문에 있으므로 requirement digest와 PLAN_REQUEST marker의 `model=`에 그대로 남습니다. Product Discovery 후보처럼 사람이 쓰지 않은 본문은 체크박스가 있어도 opus로 올리지 않습니다. 체크를 바꾸려면 본문을 고친 뒤 PLAN을 다시 실행합니다.
 
 `ready=false`이거나 blocking question이 남아 있으면 IMPLEMENT로 넘어가지 않습니다.
+
+### PLAN 실패 뒤 자동 재시도
+
+PLAN이 게시되지 못하면 `HumanStatus: PLAN_FAILED` 댓글 뒤에 같은 run의 `auto_retry` job이 실패 사유를 닫힌 코드로 분류합니다(`src/self-improvement/plan-retry.ts`). 코드는 `EXECUTOR_EXECUTION_FAILED`, `EXECUTOR_REQUEST_REJECTED`, `EXECUTOR_RESULT_POST_FAILED`, `PLAN_PATH_NOTATION_REJECTED`, `PLAN_SCOPE_TOO_LARGE`, `PLAN_VALIDATION_REJECTED`, `PLAN_RESULT_TIMEOUT`, `PLAN_REQUEST_FAILED`, `UNKNOWN`이고, 사유 원문은 코드로만 남기며 어떤 AI prompt에도 넣지 않습니다.
+
+- 자동으로 다시 시작하는 것은 `EXECUTOR_EXECUTION_FAILED`뿐입니다. 관측상 사람이 본문을 바꾸지 않고 같은 요구로 다시 실행해 성공한 실패가 이것뿐이기 때문입니다(App transportation_guide #2 run 38981512927, #7 run 38992157914). 나머지 코드는 멈추고 사람의 판단을 기다립니다. 특히 PLAN 문장 속 경로 표기 거부는 같은 입력으로 다시 실행해도 같은 모양으로 실패했고 trusted 검증을 고친 뒤에야 통과했으므로(#395, #396) 재시도하지 않습니다.
+- 상한은 (Issue, requirement digest)당 2회이고, 같은 사유 코드로 두 번 실패하면 예산이 남아도 멈춥니다. 본문을 고치면 digest가 바뀌어 예산을 새로 셉니다. 횟수는 `github-actions[bot]`이 남긴 `AUTO_PLAN_RETRY` marker 댓글에서만 읽습니다.
+- 재시도는 `plan.yml`을 Issue 번호 하나만 입력으로 dispatch합니다. 새 run이 본문과 target SHA를 다시 얼리므로 이전 PLAN·승인·provenance는 아무것도 재사용하지 않고, 새 PLAN에는 Human `PLAN-승인`이 다시 필요합니다.
+- 재시도마다 Issue에 `PLAN 자동 재시도 (n/2)` 댓글(사유 코드, 원 run)이, 멈출 때는 `PLAN 자동 재시도 중지` 댓글이 남습니다. 저장소 변수 `AUTO_REPLAN`을 정확히 `off`로 두면 분류만 하고 dispatch하지 않습니다. 변수가 없으면 켜져 있습니다.
 
 ### PLAN 문장 속 경로 표기
 

@@ -313,6 +313,7 @@ jobs:
       request_id: ${{ needs.request.outputs.request_id }}
       failure_reason: ${{ steps.validate.outputs.failure_reason }}
       executor_failure_reason: ${{ steps.wait.outputs.executor_failure_reason }}
+      result_timeout: ${{ steps.wait.outputs.result_timeout }}
     steps:
       - name: Wait for subscription PLAN result
         id: wait
@@ -420,6 +421,8 @@ jobs:
               }
               await new Promise((resolve) => setTimeout(resolve, 10_000));
             }
+            // 자동 재시도 분류가 timeout을 다른 실패와 구분하도록 exact 출력으로 남긴다. 판정은 바뀌지 않는다.
+            core.setOutput('result_timeout', 'true');
             throw new Error('Timed out waiting for private subscription executor PLAN_RESULT');
 
       - name: Download bounded PLAN request
@@ -661,6 +664,61 @@ jobs:
               '**현재 상황:** PLAN 결과를 받지 못했거나 trusted 검증을 통과하지 못해 PLAN이 게시되지 않았습니다. 승인할 PLAN이 없습니다.',
               ...(executorReason ? [`**쉬운 설명:** ${EXECUTOR_FAILURE_EXPLANATIONS[executorReason]} 이 run은 결과를 15분 기다리지 않고 바로 멈췄습니다.`] : []),
               ...(scopeTooLarge ? [`**쉬운 설명:** 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다.${sizeDetail} 요구를 둘로 나누거나 바꾸려는 내용을 줄여서 본문에 적어 주세요.`] : []),
-              '**다음 행동:** 사유를 보고 필요하면 Issue 본문을 보완한 뒤, Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행하세요. Issue 본문을 고치는 것만으로는 PLAN이 다시 시작되지 않습니다. 진행하지 않으려면 사유를 남기고 Issue를 닫으세요.',
+              '**다음 행동:** 사유가 `executor가 PLAN_FAILED(EXECUTION_FAILED)를 알림`이면 프레임워크가 1~2분 안에 자동으로 한 번 다시 시도하고 아래에 댓글을 남기므로 기다리세요(저장소 변수 `AUTO_REPLAN`이 `off`가 아닐 때). 그 밖의 사유는 자동으로 다시 시도하지 않습니다. 사유를 보고 필요하면 Issue 본문을 보완한 뒤, Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행하세요. Issue 본문을 고치는 것만으로는 PLAN이 다시 시작되지 않습니다. 진행하지 않으려면 사유를 남기고 Issue를 닫으세요.',
             ].join('\n\n');
             await github.rest.issues.createComment({ ...context.repo, issue_number: issueNumber, body });
+
+  # 실패한 PLAN을 사람이 같은 Issue 번호로 다시 치던 클릭을 대체한다. 닫힌 사유 코드 중 재시도 대상(executor
+  # EXECUTION_FAILED)만, (Issue, requirement digest)당 2회까지, 같은 코드는 한 번만 다시 부른다. 승인은 대신하지 않는다.
+  auto_retry:
+    needs: [plan, request, resolve, failure_notice]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.failure_notice.result == 'success' &&
+      vars.AUTO_REPLAN != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    steps:
+      - name: Framework checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Framework runtime layout 준비
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .framework-runtime/package-lock.json
+
+      - name: Install Framework dependencies
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
+
+      - name: PLAN 실패 분류 및 bounded 자동 재시도
+        id: retry
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-retry-handler.ts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PLAN_IDENTITY: ${{ needs.plan.outputs.identity }}
+          PLAN_FAILURE_REASON: ${{ needs.resolve.outputs.failure_reason }}
+          PLAN_EXECUTOR_FAILURE_REASON: ${{ needs.resolve.outputs.executor_failure_reason }}
+          PLAN_RESULT_TIMEOUT: ${{ needs.resolve.outputs.result_timeout }}
+          REQUEST_RESULT: ${{ needs.request.result }}
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          AUTO_REPLAN: ${{ vars.AUTO_REPLAN }}
