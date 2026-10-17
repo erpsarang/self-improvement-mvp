@@ -211,6 +211,7 @@ Auto Merge는 향후 목표가 아니며, 최종 Merge는 계속 Human-only입�
 - [`CHARTER.md`](CHARTER.md) — 헌장. 목적, 가치의 우선순위, 과제 선정 기준, 프레임워크 고도화의 경계, 사람과 AI의 역할
 - [`docs/introduction.md`](docs/introduction.md) — 소개 자료. 배경·목표·의의, 작동 방식 A–Z, 새 App 개발 절차 가이드
 - [`docs/slides/introduction.pdf`](docs/slides/introduction.pdf) — 같은 내용의 소개 슬라이드 34장 (HTML판: [`docs/slides/introduction.html`](docs/slides/introduction.html))
+- [`docs/slides/manual.pdf`](docs/slides/manual.pdf) — 비IT 사용자를 위한 사용 매뉴얼 슬라이드 47장. Git·GitHub 기초부터 준비, 요구 한 건의 7단계, 유지보수, 문제 해결까지 (HTML판: [`docs/slides/manual.html`](docs/slides/manual.html))
 - [`docs/usage.md`](docs/usage.md) — v0.2 실제 사용 흐름
 - [`docs/architecture.md`](docs/architecture.md) — Trust Boundary, provenance, 비용 경계 구조
 - [`docs/roadmap.md`](docs/roadmap.md) — 현재 검증 위치와 다음 확장 방향
