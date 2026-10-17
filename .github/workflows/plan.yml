@@ -2,7 +2,7 @@ name: Read-only AI PLAN
 
 on:
   issues:
-    types: [opened, reopened]
+    types: [opened, edited, reopened]
   workflow_dispatch:
     inputs:
       issue_number:
@@ -12,14 +12,126 @@ on:
 
 permissions: {}
 
+# 같은 Issue의 PLAN run은 하나씩 돈다. 진행 중인 run은 취소하지 않는다(executor에 이미 보낸 호출을 버리지 않는다).
+# 대기 중인 run은 GitHub가 최신 것 하나만 남기므로, 연속 편집은 마지막 본문으로 한 번만 더 PLAN된다.
+concurrency:
+  group: plan-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
 jobs:
-  plan:
+  # 제목·본문 수정(issues.edited)으로 시작한 run의 gate(docs/usage.md 5절 "본문을 고치면 PLAN이 다시 시작"). 읽기만 한다.
+  # 마지막으로 PLAN한 본문과 같으면(되돌린 편집) 시작하지 않고, Issue당 서로 다른 본문 상한을 넘으면 시작하지 않는다.
+  # edited가 아닌 이벤트는 바로 통과한다.
+  edited_gate:
     if: >-
       (github.event_name == 'workflow_dispatch' &&
        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
       (github.event_name == 'issues' &&
        startsWith(github.event.issue.title, '[업무 요구]') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      start: ${{ steps.passthrough.outputs.start || steps.gate.outputs.start }}
+      outcome: ${{ steps.passthrough.outputs.outcome || steps.gate.outputs.outcome }}
+      distinct_requirements: ${{ steps.gate.outputs.distinct_requirements }}
+      cap: ${{ steps.gate.outputs.cap }}
+      requirement_digest: ${{ steps.gate.outputs.requirement_digest }}
+    steps:
+      - name: edited가 아니면 바로 통과
+        id: passthrough
+        if: github.event.action != 'edited'
+        run: |
+          echo "start=true" >> "$GITHUB_OUTPUT"
+          echo "outcome=NOT_EDITED" >> "$GITHUB_OUTPUT"
+
+      - name: Framework checkout
+        if: github.event_name == 'issues' && github.event.action == 'edited'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Framework runtime layout 준비
+        if: github.event_name == 'issues' && github.event.action == 'edited'
+        run: |
+          if grep -q '"name": "self-improvement-mvp"' package.json; then
+            mkdir -p .framework-runtime
+            cp package.json package-lock.json .framework-runtime/
+          fi
+
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'issues' && github.event.action == 'edited'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .framework-runtime/package-lock.json
+
+      - name: Install Framework dependencies
+        if: github.event_name == 'issues' && github.event.action == 'edited'
+        run: |
+          npm ci --ignore-scripts --prefix .framework-runtime
+          ln -sT .framework-runtime/node_modules node_modules
+
+      - name: 바뀐 본문으로 PLAN을 시작할지 판정
+        id: gate
+        if: github.event_name == 'issues' && github.event.action == 'edited'
+        run: .framework-runtime/node_modules/.bin/tsx src/self-improvement/plan-edited-handler.ts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+  # 상한에 걸려 자동으로 시작하지 않을 때만 알린다. 되돌린 편집(UNCHANGED)은 기존 PLAN이 그대로이므로 조용하다.
+  edited_notice:
+    needs: edited_gate
+    if: needs.edited_gate.outputs.outcome == 'CAP_REACHED'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      issues: write
+    steps:
+      - name: Leave auto-PLAN cap notice on requirement Issue
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          DISTINCT_REQUIREMENTS: ${{ needs.edited_gate.outputs.distinct_requirements }}
+          CAP: ${{ needs.edited_gate.outputs.cap }}
+          REQUIREMENT_DIGEST: ${{ needs.edited_gate.outputs.requirement_digest }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const distinct = Number(process.env.DISTINCT_REQUIREMENTS);
+            const cap = Number(process.env.CAP);
+            const digest = process.env.REQUIREMENT_DIGEST || '';
+            if (!Number.isSafeInteger(issueNumber) || issueNumber < 1 || !Number.isSafeInteger(distinct) || !Number.isSafeInteger(cap) || !/^[0-9a-f]{64}$/.test(digest)) {
+              throw new Error('Invalid auto-PLAN cap notice inputs');
+            }
+            // 같은 본문에 대해 한 번만 알린다.
+            const marker = `<!-- self-improvement:AUTO_PLAN_CAP issue=${issueNumber} requirement=${digest} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number: issueNumber, per_page: 100 });
+            if (comments.some((comment) => comment.user?.login === 'github-actions[bot]' && typeof comment.body === 'string' && comment.body.includes(marker))) return;
+            const body = [
+              marker,
+              '## PLAN 자동 시작 상한',
+              `이 Issue에서는 서로 다른 요구 본문 ${distinct}개를 이미 PLAN했습니다(상한 ${cap}개). 이번 수정으로는 PLAN을 자동으로 시작하지 않습니다.`,
+              '### HumanStatus: PLAN_FAILED',
+              '**현재 상황:** 바뀐 본문에 대한 PLAN이 없습니다.',
+              '**다음 행동:** 본문이 확정됐으면 Actions → Read-only AI PLAN을 이 Issue 번호로 직접 실행하세요. 요구가 처음과 크게 달라졌다면 새 Issue로 여는 것이 낫습니다.',
+            ].join('\n\n');
+            await github.rest.issues.createComment({ ...context.repo, issue_number: issueNumber, body });
+
+  plan:
+    needs: edited_gate
+    if: >-
+      needs.edited_gate.outputs.start == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
+        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+       (github.event_name == 'issues' &&
+        startsWith(github.event.issue.title, '[업무 요구]') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)))
     outputs:
       identity: ${{ steps.input.outputs.identity }}
       planner_model: ${{ steps.input.outputs.planner_model }}
@@ -664,7 +776,7 @@ jobs:
               '**현재 상황:** PLAN 결과를 받지 못했거나 trusted 검증을 통과하지 못해 PLAN이 게시되지 않았습니다. 승인할 PLAN이 없습니다.',
               ...(executorReason ? [`**쉬운 설명:** ${EXECUTOR_FAILURE_EXPLANATIONS[executorReason]} 이 run은 결과를 15분 기다리지 않고 바로 멈췄습니다.`] : []),
               ...(scopeTooLarge ? [`**쉬운 설명:** 한 번에 바꾸려는 내용이 많아 PLAN을 만들 수 없습니다.${sizeDetail} 요구를 둘로 나누거나 바꾸려는 내용을 줄여서 본문에 적어 주세요.`] : []),
-              '**다음 행동:** 사유가 `executor가 PLAN_FAILED(EXECUTION_FAILED)를 알림`이면 프레임워크가 1~2분 안에 자동으로 한 번 다시 시도하고 아래에 댓글을 남기므로 기다리세요(저장소 변수 `AUTO_REPLAN`이 `off`가 아닐 때). 그 밖의 사유는 자동으로 다시 시도하지 않습니다. 사유를 보고 필요하면 Issue 본문을 보완한 뒤, Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행하세요. Issue 본문을 고치는 것만으로는 PLAN이 다시 시작되지 않습니다. 진행하지 않으려면 사유를 남기고 Issue를 닫으세요.',
+              '**다음 행동:** 사유가 `executor가 PLAN_FAILED(EXECUTION_FAILED)를 알림`이면 프레임워크가 1~2분 안에 자동으로 한 번 다시 시도하고 아래에 댓글을 남기므로 기다리세요(저장소 변수 `AUTO_REPLAN`이 `off`가 아닐 때). 그 밖의 사유는 자동으로 다시 시도하지 않습니다. 사유를 보고 필요하면 Issue 본문이나 제목을 고치세요. Issue 본문이나 제목을 고치면 PLAN이 자동으로 다시 시작됩니다(Issue당 서로 다른 본문 4개까지). 고칠 것이 없거나 상한을 넘었으면 Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행하세요. 진행하지 않으려면 사유를 남기고 Issue를 닫으세요.',
             ].join('\n\n');
             await github.rest.issues.createComment({ ...context.repo, issue_number: issueNumber, body });
 

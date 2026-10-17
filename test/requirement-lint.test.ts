@@ -211,7 +211,7 @@ test("댓글은 marker를 갖고 본문 문장을 되풀이하지 않으며 경�
   assert.ok(!comment.includes("example.test"));
   assert.ok(comment.includes("`app/other.ts`"));
   assert.ok(comment.includes("경고 1건"));
-  assert.ok(comment.includes("본문 수정만으로는 PLAN이 다시 시작되지 않습니다"));
+  assert.ok(comment.includes("본문이나 제목을 고치면 새 본문으로 PLAN이 자동으로 다시 시작됩니다"));
 });
 
 test("고칠 점이 없으면 댓글이 그렇게 말한다", () => {

@@ -5,7 +5,7 @@ import test from "node:test";
 const workflow = await readFile(".github/workflows/plan.yml", "utf8");
 
 test("업무 요구 Issue opened/reopened는 PLAN을 자동 시작한다", () => {
-  assert.match(workflow, /issues:\s*\n\s*types: \[opened, reopened\]/);
+  assert.match(workflow, /issues:\s*\n\s*types: \[opened, edited, reopened\]/);
   assert.match(workflow, /github\.event_name == 'issues'/);
   assert.match(workflow, /startsWith\(github\.event\.issue\.title, '\[업무 요구\]'\)/);
   assert.match(
