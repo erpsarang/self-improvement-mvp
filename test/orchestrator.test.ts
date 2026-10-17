@@ -8,6 +8,7 @@ import {
 import {
   createOrchestrationProvenance,
   neutralizeReviewerText,
+  renderManualChecksNotice,
   renderRequirementIncompleteNotice,
   routeReviewDecision,
   validateReviewForOrchestration,
@@ -396,4 +397,32 @@ test("안내 문장 전체에 리뷰어가 넣은 Closes 키워드가 남지 않
     findings: [followUp("resolves GH-16", "Fixes https://github.com/erpsarang/transportation_guide/issues/16")],
   });
   assert.doesNotMatch(notice, /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:#|GH-|https?:|[\w.-]+\/[\w.-]+#)/i);
+});
+
+const baseScope = {
+  planArtifact: { name: "plan-artifact", id: 1, digest: `sha256:${"2".repeat(64)}` },
+  approach: ["접근"],
+  acceptanceCriteria: ["완료조건"],
+  allowedPaths: ["src/a.ts"],
+  requiredChanges: ["변경"],
+  forbiddenChanges: [],
+};
+
+test("병합 전 확인 목록은 PLAN의 수동 확인 항목을 체크리스트로 옮기고, 항목이 없으면 비어 있다", () => {
+  assert.equal(renderManualChecksNotice({}), "");
+  assert.equal(renderManualChecksNotice({ approvedPlanScope: { ...baseScope, manualChecks: [] } }), "");
+  assert.equal(renderManualChecksNotice({ approvedPlanScope: baseScope }), "");
+
+  const notice = renderManualChecksNotice({
+    approvedPlanScope: {
+      ...baseScope,
+      manualChecks: ["브라우저에서 최근 목적지가 새로고침 뒤에도 남는지 본다.", "Closes #1 @owner https://example.com/x"],
+    },
+  });
+  assert.match(notice, /^### 병합 전 확인\n/);
+  assert.match(notice, /CI와 REVIEW는 이 항목을 실행하지 않았으므로/);
+  assert.match(notice, /\n- \[ \] 브라우저에서 최근 목적지가 새로고침 뒤에도 남는지 본다\.\n/);
+  // PLAN 문장은 외부 입력처럼 다룬다: 종료 키워드·멘션·링크가 되지 않는다.
+  assert.doesNotMatch(notice, /Closes #|@owner|https:\/\//);
+  assert.match(notice, /병합의 조건이 아닙니다/);
 });

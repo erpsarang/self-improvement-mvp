@@ -1008,6 +1008,7 @@ analysis에는 Context Pack이 발급한 evidenceId(E…)나 additionalEvidence�
 Context Pack에 없는 외부 사실(모델 식별자, 가격, 사용량 필드, 외부 서비스 동작 등)은 추측하거나 가정하지 마세요. 명시적 Issue 완료선에 필수인 외부 사실이나 검증 근거가 없으면 위 완료선 정책에 따라 구체적인 blocker로 다루세요. 명시적 Issue 완료선이 없는 일반 요구에서는 그런 사실이 필요한 부분은 이번 slice에 넣지 말고 후속 범위로 남기세요. 이 일반 요구에서는 외부 사실이 없어 요구 전체를 한 번에 구현할 수 없다는 것만으로는 blocking question을 만들지 마세요.
 approach: 구현 접근, changeCandidates: 변경 후보 경로와 이유, acceptanceCriteria: 관찰 가능한 완료조건,
 testStrategy: 기존 문맥에서 확인 가능한 테스트와 추가할 테스트 및 실행 방법, questions: IMPLEMENT 범위 또는 검증 방법을 확정하지 못하게 하는 blocking question만 작성하세요. 비차단 확인/참고 사항은 questions에 넣지 말고 approach 또는 testStrategy에 검증 방법으로 반영하세요.
+testStrategy 중 자동 테스트로 확인할 수 없어 사람이 병합 전에 직접 확인해야 하는 항목(실제 브라우저 동작, 화면 배치 등)은 항목 문장을 정확히 '수동 확인:'으로 시작하세요. trusted 코드가 이 접두어로 그 항목만 Human Merge PR 본문의 '병합 전 확인' 목록에 옮깁니다. 자동 테스트로 확인하는 항목에는 이 접두어를 쓰지 말고, 수동 확인이 필요 없으면 쓰지 마세요. 실행하지 않은 검증을 했다고 적지 마세요.
 implementationScope는 IMPLEMENT에 넘길 machine-actionable 제안입니다. exact path만 사용하고 wildcard/placeholder를 쓰지 마세요.
 여기서 exact path는 filesystem 절대경로가 아니라 repository root 기준 상대경로(repository-relative path)를 뜻합니다.
 implementationScope.allowedPaths 규칙:

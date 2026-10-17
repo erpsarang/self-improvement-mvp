@@ -29,6 +29,7 @@ jobs:
       decision: ${{ steps.prepare.outputs.decision }}
       requirement_complete: ${{ steps.prepare.outputs.requirement_complete }}
       requirement_note: ${{ steps.prepare.outputs.requirement_note }}
+      manual_checks: ${{ steps.prepare.outputs.manual_checks }}
       next_state: ${{ steps.prepare.outputs.next_state }}
       should_create_pr: ${{ steps.prepare.outputs.should_create_pr }}
       should_dispatch_fix: ${{ steps.prepare.outputs.should_dispatch_fix }}
@@ -190,6 +191,7 @@ jobs:
           REVIEW_DECISION: ${{ needs.route.outputs.decision }}
           REQUIREMENT_COMPLETE: ${{ needs.route.outputs.requirement_complete }}
           REQUIREMENT_NOTE: ${{ needs.route.outputs.requirement_note }}
+          MANUAL_CHECKS: ${{ needs.route.outputs.manual_checks }}
           NEXT_STATE: ${{ needs.route.outputs.next_state }}
           REQUIREMENTS_DIGEST: ${{ needs.route.outputs.requirements_digest }}
           TRUSTED_RAIL_RUN_ID: ${{ github.run_id }}
@@ -244,6 +246,18 @@ jobs:
             if (typeof requirementNote !== 'string' || requirementNote.length > 8000 ||
                 (requirementComplete === 'true') !== (requirementNote === '')) {
               core.setFailed('invalid requirement completion note');
+              return;
+            }
+            // 병합 전 확인 목록. 승인된 PLAN이 `수동 확인:`으로 표시한 항목을 trusted prepare가 옮긴 표시 전용 안내이며
+            // 완료 여부와 무관하다. 병합의 조건도 authority도 아니다.
+            let manualChecks;
+            try {
+              manualChecks = JSON.parse(process.env.MANUAL_CHECKS || '""');
+            } catch {
+              manualChecks = null;
+            }
+            if (typeof manualChecks !== 'string' || manualChecks.length > 8000) {
+              core.setFailed('invalid manual checks note');
               return;
             }
             // branch는 trusted REVIEW provenance의 값이다. 새 PUBLISH는 cycle branch를 쓰고,
@@ -341,6 +355,7 @@ jobs:
                         '',
                         ...requirementNote.split('\n'),
                       ]),
+                  ...(manualChecks === '' ? [] : ['', ...manualChecks.split('\n')]),
                   '',
                   marker,
                   trustedRailMarker,
@@ -517,6 +532,7 @@ jobs:
           EXPECTED_DECISION: ${{ needs.route.outputs.decision }}
           EXPECTED_REQUIREMENT_COMPLETE: ${{ needs.route.outputs.requirement_complete }}
           EXPECTED_REQUIREMENT_NOTE: ${{ needs.route.outputs.requirement_note }}
+          EXPECTED_MANUAL_CHECKS: ${{ needs.route.outputs.manual_checks }}
           EXPECTED_STATE: ${{ needs.route.outputs.next_state }}
           EXPECTED_COMPLETED_FIX_COUNT: ${{ needs.route.outputs.completed_fix_count }}
           EXPECTED_NEXT_FIX_ATTEMPT: ${{ needs.route.outputs.next_fix_attempt }}
@@ -527,6 +543,7 @@ jobs:
           ACTUAL_DECISION: ${{ steps.revalidate.outputs.decision }}
           ACTUAL_REQUIREMENT_COMPLETE: ${{ steps.revalidate.outputs.requirement_complete }}
           ACTUAL_REQUIREMENT_NOTE: ${{ steps.revalidate.outputs.requirement_note }}
+          ACTUAL_MANUAL_CHECKS: ${{ steps.revalidate.outputs.manual_checks }}
           ACTUAL_STATE: ${{ steps.revalidate.outputs.next_state }}
           ACTUAL_COMPLETED_FIX_COUNT: ${{ steps.revalidate.outputs.completed_fix_count }}
           ACTUAL_NEXT_FIX_ATTEMPT: ${{ steps.revalidate.outputs.next_fix_attempt }}
@@ -539,6 +556,7 @@ jobs:
              [ "$EXPECTED_DECISION" != "$ACTUAL_DECISION" ] || \
              [ "$EXPECTED_REQUIREMENT_COMPLETE" != "$ACTUAL_REQUIREMENT_COMPLETE" ] || \
              [ "$EXPECTED_REQUIREMENT_NOTE" != "$ACTUAL_REQUIREMENT_NOTE" ] || \
+             [ "$EXPECTED_MANUAL_CHECKS" != "$ACTUAL_MANUAL_CHECKS" ] || \
              [ "$EXPECTED_STATE" != "$ACTUAL_STATE" ] || \
              [ "$EXPECTED_COMPLETED_FIX_COUNT" != "$ACTUAL_COMPLETED_FIX_COUNT" ] || \
              [ "$EXPECTED_NEXT_FIX_ATTEMPT" != "$ACTUAL_NEXT_FIX_ATTEMPT" ] || \

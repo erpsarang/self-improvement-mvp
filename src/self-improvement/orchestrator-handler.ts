@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createOrchestrationProvenance,
+  renderManualChecksNotice,
   renderRequirementIncompleteNotice,
   routeReviewDecision,
   validateReviewForOrchestration,
@@ -109,6 +110,7 @@ if (command === "prepare") {
   writeOutput("requirement_complete", route.requirementComplete);
   // 줄바꿈이 GITHUB_OUTPUT 형식을 깨지 않도록 JSON 문자열 한 줄로 내보낸다.
   writeOutput("requirement_note", JSON.stringify(renderRequirementIncompleteNotice(validatedReview)));
+  writeOutput("manual_checks", JSON.stringify(renderManualChecksNotice(validatedReview)));
   writeOutput("next_state", route.nextState);
   writeOutput("should_create_pr", route.shouldCreatePullRequest);
   writeOutput("should_dispatch_fix", route.shouldDispatchFix);

@@ -445,6 +445,10 @@ test("PLAN prompt는 allowedPaths가 repository-relative path이며 filesystem �
     assert.match(prompt, /Human Requirement가 문서 수정을 명시적으로 금지하지 않았다면 그 문서를 allowedPaths와 requiredChanges에 포함해 같은 slice에서 고치세요\(8개 한도 안에서\)/);
     assert.match(prompt, /어느 문장이 병합 뒤 거짓이 되는지를 approach에 구체적으로 적으세요/);
     assert.match(prompt, /근거 없이 문서를 forbiddenChanges에 넣지 마세요/);
+    // #404: 자동 테스트로 확인할 수 없는 항목은 '수동 확인:' 접두어로 표시해 PR 본문의 병합 전 확인 목록이 된다.
+    assert.match(prompt, /testStrategy 중 자동 테스트로 확인할 수 없어 사람이 병합 전에 직접 확인해야 하는 항목/);
+    assert.match(prompt, /항목 문장을 정확히 '수동 확인:'으로 시작하세요/);
+    assert.match(prompt, /실행하지 않은 검증을 했다고 적지 마세요/);
     // 외부 사실 추측 금지와 일반 요구의 첫 slice 전략은 유지한다 (#244, #273).
     assert.match(prompt, /Context Pack에 없는 외부 사실\(모델 식별자, 가격, 사용량 필드, 외부 서비스 동작 등\)은 추측하거나 가정하지 마세요/);
     assert.match(prompt, /명시적 Issue 완료선이 없는 일반 요구에만 첫 bounded slice 전략을 적용하세요/);

@@ -125,6 +125,20 @@ test("완료를 확인하지 못한 PR은 trusted prepare가 만든 안내를 �
   assert.equal((mergeSection.match(/Closes #\$\{issueNumber\}/g) ?? []).length, 1);
 });
 
+test("병합 전 확인 목록은 trusted prepare가 만들고 env로만 받으며, record가 같은 값을 다시 비교하고, 병합 조건이 되지 않는다", () => {
+  assert.match(orchestratorHandler, /writeOutput\("manual_checks", JSON\.stringify\(renderManualChecksNotice\(validatedReview\)\)\)/);
+  assert.match(routeSection, /manual_checks: \${{ steps\.prepare\.outputs\.manual_checks }}/);
+  assert.match(mergeSection, /MANUAL_CHECKS: \${{ needs\.route\.outputs\.manual_checks }}/);
+  assert.equal((mergeSection.match(/needs\.route\.outputs\.manual_checks/g) ?? []).length, 1);
+  assert.match(mergeSection, /JSON\.parse\(process\.env\.MANUAL_CHECKS \|\| '""'\)/);
+  assert.match(mergeSection, /invalid manual checks note/);
+  // 완료 여부와 무관하게 본문에 싣고, 비어 있으면 아무것도 더하지 않는다.
+  assert.match(mergeSection, /manualChecks === '' \? \[\] : \['', \.\.\.manualChecks\.split\('\\n'\)\]/);
+  assert.match(recordSection, /\[ "\$EXPECTED_MANUAL_CHECKS" != "\$ACTUAL_MANUAL_CHECKS" \]/);
+  // 목록은 authority를 바꾸지 않는다: Closes는 여전히 완료 확인(true)일 때만 붙는다.
+  assert.equal((mergeSection.match(/Closes #\$\{issueNumber\}/g) ?? []).length, 1);
+});
+
 test("PR은 Human-only Merge 경계이며 Orchestrator에는 merge/auto-merge/push가 없다", () => {
   assert.match(mergeSection, /최종 Merge는 \*\*Human-only\*\*/);
   assert.match(mergeSection, /Auto Merge는 사용하지 않습니다/);
