@@ -137,6 +137,8 @@ test("PLAN 계보 Reviewer prompt는 승인된 slice만 심사 기준으로 주�
   // 머지 뒤 같은 Issue에 이미 구현된 일을 다시 다루는 continuation PLAN이 자동으로 돌았다.
   assert.match(prompt, /Issue 본문이 이 Issue 밖\(별도 요구\)으로 명시한 후속 범위는 남은 Issue 요구가 아닙니다/);
   assert.match(prompt, /그런 후속 범위만 남았고 이번 slice가 PASS이면 requirementComplete를 true로 반환하세요/);
+  // #403: 미완료이면 이유를 summary 첫 문장에 적게 해, 사람이 PR 본문에서 이유로 읽는다.
+  assert.match(prompt, /requirementComplete를 false로 반환하면 summary를 "충족되지 않은 것:"으로 시작해/);
   // 배경 절은 심사 기준 절 뒤에 온다.
   assert.ok(prompt.indexOf("## 승인된 PLAN slice") < prompt.indexOf("## Issue 요구"));
   // 기존 read-only 경계는 그대로다.

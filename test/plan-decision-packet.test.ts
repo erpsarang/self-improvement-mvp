@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  excludedDocumentPaths,
   PLAN_DECISION_PACKET_HEADING,
   PLAN_DECISION_PACKET_MAX_BYTES,
   assertApprovablePlanArtifact,
@@ -181,4 +182,51 @@ test("writeGithubOutput은 한 줄 값과 여러 줄 값을 GitHub Actions 형�
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+const withForbidden = (forbiddenChanges: string[], allowedPaths = readyPlan.implementationScope.allowedPaths): PlanDecisionInput => ({
+  ...readyPlan,
+  implementationScope: { ...readyPlan.implementationScope, allowedPaths: [...allowedPaths], forbiddenChanges },
+});
+
+test("문서 수정을 금지 목록으로 제외한 PLAN은 승인 전에 그 사실을 고정 문장으로 알린다 (#402)", () => {
+  // transportation_guide Issue 16의 PLAN이 실제로 낸 금지 문장이다.
+  const packet = renderPlanDecisionPacket(withForbidden(["package.json과 README.md를 수정하지 않는다."]));
+  assert.match(packet, /\*\*문서 수정 제외 안내:\*\* 이 PLAN은 `README\.md`의 수정을 이번 범위에서 제외했습니다\./);
+  assert.match(packet, /문서를 고치는 사이클이 한 번 더 필요할 수 있습니다/);
+  assert.match(packet, /실제로 어긋나는지는 판단하지 않습니다/);
+  // 금지 변경 섹션 뒤, 사람의 선택지 앞에 놓인다.
+  assert.ok(packet.indexOf("금지 변경 (forbiddenChanges)") < packet.indexOf("문서 수정 제외 안내"));
+  assert.ok(packet.indexOf("문서 수정 제외 안내") < packet.indexOf("사람의 선택지"));
+  // 안내는 표시 전용이다: 승인 가능 여부를 바꾸지 않는다.
+  assert.equal(isPlanApprovable(withForbidden(["README.md 수정 금지"])), true);
+});
+
+test("문서가 allowedPaths에 있거나 문서 금지가 없으면 안내를 만들지 않는다", () => {
+  assert.doesNotMatch(renderPlanDecisionPacket(readyPlan), /문서 수정 제외 안내/);
+  assert.doesNotMatch(
+    renderPlanDecisionPacket(withForbidden(["README.md의 다른 절을 바꾸지 않는다"], ["README.md", "src/order-csv.ts"])),
+    /문서 수정 제외 안내/,
+  );
+  assert.doesNotMatch(renderPlanDecisionPacket(withForbidden(["package.json을 수정하지 않는다", "기존 판정 규칙 변경"])), /문서 수정 제외 안내/);
+  // ready=false PLAN에는 범위가 비어 있어 안내가 없다.
+  assert.doesNotMatch(renderPlanDecisionPacket(blockedPlan), /문서 수정 제외 안내/);
+});
+
+test("excludedDocumentPaths는 문서 경로와 docs 디렉터리 표기를 뽑고 allowedPaths가 덮은 것은 뺀다", () => {
+  const scope = (forbiddenChanges: string[], allowedPaths: string[] = []) => ({ forbiddenChanges, allowedPaths });
+  assert.deepEqual(excludedDocumentPaths(scope(["package.json과 README.md를 수정하지 않는다."])), ["README.md"]);
+  assert.deepEqual(excludedDocumentPaths(scope(["docs/usage.md, docs/architecture.md는 손대지 않는다"])), ["docs/usage.md", "docs/architecture.md"]);
+  assert.deepEqual(excludedDocumentPaths(scope(["docs/ 아래 문서를 수정하지 않는다"])), ["docs/"]);
+  assert.deepEqual(excludedDocumentPaths(scope(["docs/ 아래 문서를 수정하지 않는다"], ["docs/usage.md"])), []);
+  assert.deepEqual(excludedDocumentPaths(scope(["README.md 수정 금지", "README.md 재확인"])), ["README.md"]);
+  assert.deepEqual(excludedDocumentPaths(scope(["src/app.ts 수정 금지", "package.json 변경 금지"])), []);
+  const many = Array.from({ length: 9 }, (_, index) => `docs/doc${index}.md`).join(" ");
+  assert.equal(excludedDocumentPaths(scope([many])).length, 5);
+});
+
+test("문서 제외 안내는 크기 상한 때문에 생략되지 않는다", () => {
+  const huge = withForbidden(["README.md 수정 금지"]);
+  const packet = renderPlanDecisionPacket({ ...huge, summary: "가".repeat(30_000), testStrategy: ["나".repeat(30_000)] });
+  assert.match(packet, /문서 수정 제외 안내/);
 });

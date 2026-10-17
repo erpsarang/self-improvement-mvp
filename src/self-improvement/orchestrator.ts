@@ -295,6 +295,75 @@ export function validateReviewForOrchestration(input: {
   return review;
 }
 
+const NOTICE_SUMMARY_MAX = 600;
+const NOTICE_FOLLOW_UP_MAX = 5;
+const NOTICE_TITLE_MAX = 120;
+const NOTICE_RECOMMENDATION_MAX = 200;
+
+/**
+ * AI 리뷰어가 쓴 문장을 PR 본문에 넣을 때 쓴다. 리뷰어 출력은 외부 입력이므로 한 줄로 줄인 뒤,
+ * 링크·멘션·Issue 참조·종료 키워드(`Closes #1`, `GH-1`, Issue URL)가 만들어지지 않게 ASCII 기호를 숫자 문자 참조로 바꾸고,
+ * 바뀐 결과가 maxLength를 넘으면 문자 참조 중간을 자르지 않고 줄인다(기호가 많은 문장도 상한을 넘지 않는다).
+ * 마침표와 쉼표만 그대로 둔다. 화면에는 같은 글자로 보이지만 소스에는 참조 형태가 남지 않는다.
+ */
+export function neutralizeReviewerText(text: string, maxLength: number): string {
+  const collapsed = text
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const escaped = collapsed.replace(/[\u0021-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007e]/g, (character) =>
+    character === "." || character === "," ? character : `&#${character.charCodeAt(0)};`,
+  );
+  const chars = Array.from(escaped);
+  if (chars.length <= maxLength) return escaped;
+  // 마지막 한 글자를 …로 쓰고, 잘린 곳이 문자 참조(&#58; 같은 것) 중간이면 그 참조를 통째로 뺀다.
+  return `${chars.slice(0, maxLength - 1).join("").replace(/&(?:#\d*)?$/, "")}…`;
+}
+
+/**
+ * MERGE_READY PR에서 부모 요구 완료를 확인하지 못했을 때(requirementComplete=false) 사람이 이유를 읽을 수 있게
+ * 리뷰어의 summary와 남은 후속 범위(FOLLOW_UP)를 옮긴다. 이미 검증된 review provenance만 쓰며 AI를 다시 부르지 않는다.
+ * 이 문장은 설명일 뿐 병합·종료의 근거가 아니다. requirementComplete=true면 빈 문자열이다.
+ */
+export function renderRequirementIncompleteNotice(
+  review: Pick<ReviewProvenance, "requirementComplete" | "summary" | "findings">,
+): string {
+  if (review.requirementComplete) return "";
+  const lines = [
+    "### 부모 요구 완료를 확인하지 못한 이유",
+    "",
+    `- 리뷰어 요약: ${neutralizeReviewerText(review.summary, NOTICE_SUMMARY_MAX)}`,
+  ];
+  const followUps = review.findings.filter((finding) => finding.severity === "FOLLOW_UP");
+  if (followUps.length === 0) {
+    lines.push("- 리뷰어가 남은 후속 범위를 따로 기록하지 않았습니다.");
+  } else {
+    const shown = followUps.slice(0, NOTICE_FOLLOW_UP_MAX);
+    lines.push(
+      followUps.length > shown.length
+        ? `- 남은 후속 범위 ${followUps.length}건 중 ${shown.length}건:`
+        : `- 남은 후속 범위 ${followUps.length}건:`,
+    );
+    for (const finding of shown) {
+      lines.push(
+        `  - ${neutralizeReviewerText(finding.title, NOTICE_TITLE_MAX)}: ` +
+          neutralizeReviewerText(finding.recommendation, NOTICE_RECOMMENDATION_MAX),
+      );
+    }
+  }
+  lines.push(
+    "",
+    "**병합 뒤에 일어나는 일:** 병합하면 이 Issue가 열려 있는 동안 남은 범위에 대한 후속 PLAN이 자동으로 시작됩니다. " +
+      "후속 PLAN은 제안일 뿐이며 `PLAN-승인` 댓글이 없으면 구현되지 않습니다.",
+    "",
+    "**병합 뒤 정리:** 남은 범위가 필요 없다고 판단하면 병합 **뒤에** Issue를 닫으세요. " +
+      "병합 전에 Issue를 닫으면 후속 PLAN을 시작하는 단계가 실패합니다.",
+    "",
+    "_이 안내는 AI 리뷰어의 출력을 옮긴 설명이며 병합이나 Issue 종료의 근거가 아닙니다._",
+  );
+  return lines.join("\n");
+}
+
 export function routeReviewDecision(
   review: ReviewProvenance,
 ): {

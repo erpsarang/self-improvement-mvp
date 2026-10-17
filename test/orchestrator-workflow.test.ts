@@ -108,6 +108,23 @@ test("MERGE_READY PR은 trusted requirement-complete에 따라 부모 Issue 종�
   assert.match(recordSection, /ACTUAL_REQUIREMENT_COMPLETE/);
 });
 
+test("완료를 확인하지 못한 PR은 trusted prepare가 만든 안내를 본문에 싣고, record가 같은 안내를 다시 비교한다", () => {
+  assert.match(orchestratorHandler, /writeOutput\("requirement_note", JSON\.stringify\(renderRequirementIncompleteNotice\(validatedReview\)\)\)/);
+  assert.match(routeSection, /requirement_note: \${{ steps\.prepare\.outputs\.requirement_note }}/);
+  assert.match(mergeSection, /REQUIREMENT_NOTE: \${{ needs\.route\.outputs\.requirement_note }}/);
+  // 안내는 script에 보간하지 않고 env로만 받으며, 완료 여부와 어긋나면 PR을 만들지 않는다.
+  assert.equal((mergeSection.match(/needs\.route\.outputs\.requirement_note/g) ?? []).length, 1);
+  assert.match(mergeSection, /JSON\.parse\(process\.env\.REQUIREMENT_NOTE \|\| '""'\)/);
+  assert.match(mergeSection, /\(requirementComplete === 'true'\) !== \(requirementNote === ''\)/);
+  assert.match(mergeSection, /invalid requirement completion note/);
+  assert.match(mergeSection, /\.\.\.requirementNote\.split\('\\n'\)/);
+  assert.match(recordSection, /EXPECTED_REQUIREMENT_NOTE/);
+  assert.match(recordSection, /ACTUAL_REQUIREMENT_NOTE/);
+  assert.match(recordSection, /\[ "\$EXPECTED_REQUIREMENT_NOTE" != "\$ACTUAL_REQUIREMENT_NOTE" \]/);
+  // 안내가 authority를 바꾸지 않는다: Closes는 여전히 완료 확인(true)일 때만 붙는다.
+  assert.equal((mergeSection.match(/Closes #\$\{issueNumber\}/g) ?? []).length, 1);
+});
+
 test("PR은 Human-only Merge 경계이며 Orchestrator에는 merge/auto-merge/push가 없다", () => {
   assert.match(mergeSection, /최종 Merge는 \*\*Human-only\*\*/);
   assert.match(mergeSection, /Auto Merge는 사용하지 않습니다/);

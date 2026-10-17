@@ -66,6 +66,12 @@ permissions:
 
 `contents: write`는 없으며 branch를 수정하지 않는다. Merge와 Auto Merge도 실행하지 않는다. PR은 **Human이 최종 Merge 여부를 판단하는 경계 객체**다.
 
+`requirementComplete=false`인 PASS의 PR 본문에는 trusted prepare가 검증된 REVIEW provenance(`summary`, `findings`)에서 만든 사람용 안내(`requirement_note`)가 함께 실린다. 이유, 남은 후속 범위(FOLLOW_UP), 병합 뒤 후속 PLAN이 자동으로 시작된다는 사실, 병합 전에 Issue를 닫지 말라는 순서가 담긴다.
+
+- 리뷰어 출력은 외부 입력이므로 `neutralizeReviewerText`가 한 줄로 줄이고 길이를 자르며, 링크·멘션·Issue 참조·종료 키워드가 되지 않게 ASCII 기호를 숫자 문자 참조로 바꾼다. 표시 문자는 그대로이고 소스에는 참조 형태가 남지 않는다.
+- 안내는 authority가 아니다. `Closes #n`은 여전히 `requirement_complete=true`일 때만 붙고, PR job은 완료 여부와 안내가 어긋나면(`true`인데 안내가 있거나 `false`인데 없으면) PR을 만들지 않고 실패한다.
+- record job은 fresh runner에서 REVIEW provenance를 다시 검증해 `requirement_note`가 route와 같은지 비교한다. AI 호출은 없다.
+
 기존 PR 검색은 `head + base`로 수행하며:
 
 - exact open PR 1개 → 재사용
