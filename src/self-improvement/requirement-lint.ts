@@ -239,7 +239,7 @@ export function renderRequirementLintComment(report: RequirementLintReport): str
     ...rows,
     ...(detailLines.length > 0 ? ["", "### 고칠 점", "", ...detailLines] : []),
     "",
-    "이 점검은 조언입니다. PLAN 시작, 검증, 승인에는 영향을 주지 않습니다. 본문을 고쳤다면 Actions → Read-only AI PLAN을 이 Issue 번호로 다시 실행해야 새 본문으로 PLAN이 만들어집니다(본문 수정만으로는 PLAN이 다시 시작되지 않습니다).",
+    "이 점검은 조언입니다. PLAN 시작, 검증, 승인에는 영향을 주지 않습니다. 본문이나 제목을 고치면 새 본문으로 PLAN이 자동으로 다시 시작됩니다(Issue당 서로 다른 본문 4개까지, 그 뒤에는 Actions → Read-only AI PLAN을 이 Issue 번호로 직접 실행).",
     "",
     "_결정적 규칙 R1~R4 · AI 호출 없음. 본문을 고치면 이 댓글이 갱신됩니다._",
   ].join("\n");
