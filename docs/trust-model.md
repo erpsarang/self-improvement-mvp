@@ -14,7 +14,9 @@ Semantic `REVIEW`의 AI Reviewer도 **untrusted reasoning worker**로 취급한�
 
 `AUTHORIZE`, `SEAL`, `PUBLISH`, `VERIFY`, REVIEW의 trusted prepare/finalize, 그리고 `Embedded Orchestrator`의 route/record는 trusted control-plane execution이다.
 
-`AUTHORIZE`는 repository에서 version 관리되는 trusted approver policy를 사용하며 live collaborator permission에 의존하지 않는다. Policy는 재사용 가능한 login 대신 immutable GitHub numeric user ID를 권한 identity로 사용하고 login은 설명 메타데이터로만 보존한다. 승인 provenance에는 재조회한 approval, approver ID와 현재 login, exact policy digest, 승인 시각, repository와 trusted workflow run/creation-attempt identity를 보존하고, 신뢰 원본은 Issue comment가 아니라 Actions artifact이다.
+`PLAN_AUTHORIZE`는 승인 댓글이 정확히 `PLAN-승인`이고 작성자 계정 유형이 `User`인지만 trusted handler에서 확인한다(`.github/workflows/plan-authorize.yml`, `src/self-improvement/plan-authorization.ts`의 `assertHumanApprover`). 승인 provenance(`plan-authorize.json`)에는 approval comment ID, approver의 immutable GitHub numeric user ID, 승인 당시 requirement digest와 frozen target SHA, trusted workflow run/attempt identity를 보존하고, 신뢰 원본은 Issue comment가 아니라 Actions artifact이다.
+
+현재 경로는 repository에서 version 관리되는 approver policy를 **사용하지 않는다**. `policy/trusted-approvers.yml`과 `src/self-improvement/authorization.ts`의 numeric-ID policy 검증은 v0.1 `SI-승인` 입구의 것이며, 그 입구는 PR #355에서 삭제됐다. 두 파일은 legacy `implement.ts`와 그 테스트만 참조하고 Framework distribution ownership 목록에도 없다. 따라서 승인 자격은 지금 댓글 본문과 계정 유형으로만 판정되고, `author_association`·policy 대조·live collaborator permission 확인은 없다. 이 공백은 알려진 것이고 관측된 악용은 없으며, 검사를 추가할지는 별도 Issue에서 사람이 결정한다. 같은 Issue에서 다룰 또 하나의 공백: executor가 결과 댓글을 게시하는 `FRAMEWORK_BRIDGE_TOKEN` 계정이 App repository 소유자 계정이므로(`docs/usage.md` 2장), 그 토큰으로 쓴 `PLAN-승인`을 provenance가 사람 승인과 구분하지 못한다.
 
 Actions artifact는 현재 운영 단계의 trust anchor이며 영구 ledger가 아니다. retention 만료 후 장기 provenance 감사까지 보장하지 않으며, durable/append-only provenance는 후속 Framework 설계 과제이다(TODO).
 
