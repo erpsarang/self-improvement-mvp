@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>자기 개선 개발 프레임워크 소개</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hahmlet:wght@400..800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+html,body{margin:0;padding:0;background:#0B110F}
+.deck{display:flex;flex-direction:column;align-items:center;gap:24px;padding:24px 0}
+.frame{position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.35)}
+section{position:absolute;left:0;top:0;width:1920px;height:1080px;box-sizing:border-box;overflow:hidden;transform-origin:0 0}
+section *{box-sizing:border-box;margin:0;word-break:keep-all}
+section aside{display:none}
+section ul,section ol{margin:0}
+@media print{
+  @page{size:1920px 1080px;margin:0}
+  html,body{background:none}
+  .deck{display:block;padding:0}
+  .frame{width:1920px!important;height:1080px!important;box-shadow:none;break-after:page}
+  section{transform:none!important}
+}
+</style>
+</head>
+<body>
+<!-- 자기 개선 개발 프레임워크 소개 슬라이드. 원본: Claude Slides 덱(2026-10-17). 각 <section>이 1920×1080 슬라이드 한 장이다. -->
+<div class="deck">
+<section id="cover" data-transition="fade" style="background:#15201D;color:#F2EEE4;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<svg aria-label="네 정거장으로 된 레일: 사람이 요구하고, AI가 제안하고, Trusted가 검증하고, 사람이 Merge한다" style="position:absolute;left:0px;top:0px" width="1920" height="1080" viewBox="0 0 1920 1080"><path d="M128 820 H1792" stroke="#3A4843" stroke-width="4" fill="none"/><path d="M248 820 H1688" stroke="#F2EEE4" stroke-width="4" fill="none" stroke-dasharray="2 14" stroke-linecap="round"/><circle cx="248" cy="820" r="18" fill="#E4572E"/><circle cx="728" cy="820" r="18" fill="#15201D" stroke="#E3BE5E" stroke-width="5" stroke-dasharray="6 5"/><circle cx="1208" cy="820" r="18" fill="#0F6B63" stroke="#6FC2B5" stroke-width="4"/><circle cx="1688" cy="820" r="18" fill="#E4572E"/></svg>
+<div style="display:flex;justify-content:space-between;align-items:center">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#6FC2B5">AI DEVELOPMENT FRAMEWORK · v0.2</p>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#AEB8B3">2026-10-17 · 6f4bfe1</p>
+</div>
+<h1 style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1.1;letter-spacing:-2px">자기 개선<br>개발 프레임워크</h1>
+<p style="font-size:30px;color:#AEB8B3;line-height:1.45;width:960px">사람이 통제권을 지킨 채 AI의 개발 노동을 안전하게 쓰는 방법 — erpsarang/self-improvement-mvp</p>
+<p style="position:absolute;left:230px;top:862px;width:400px;font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#F2EEE4">01 사람이 요구</p>
+<p style="position:absolute;left:710px;top:862px;width:400px;font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#F2EEE4">02 AI가 제안</p>
+<p style="position:absolute;left:1190px;top:862px;width:400px;font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#F2EEE4">03 Trusted가 검증</p>
+<p style="position:absolute;left:1488px;top:862px;width:304px;text-align:right;font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#F2EEE4">04 사람이 Merge</p>
+<aside>자기 개선 개발 프레임워크 소개. 아래 레일의 네 정거장이 이 프레임워크의 요약이다: 사람이 요구하고, AI가 제안하고, Trusted 단계가 검증하고, 사람이 Merge한다.</aside>
+</section>
+<section id="agenda" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">00 · 목차</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">02 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">세 부분으로 읽는다</h2>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;align-items:center;gap:48px;border-bottom:1px solid #CFC7B5;padding:0px 0px 28px 0px">
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#E4572E;width:200px">01</p>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px"><p style="font-size:40px;font-weight:700">배경, 목표, 의의</p><p style="font-size:24px;color:#4F5B57">왜 만들었고, 무엇을 지향하며, 무엇이 다른가</p></div>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773;width:160px;text-align:right">03–09</p>
+</div>
+<div style="display:flex;align-items:center;gap:48px;border-bottom:1px solid #CFC7B5;padding:0px 0px 28px 0px">
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#0F6B63;width:200px">02</p>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px"><p style="font-size:40px;font-weight:700">작동 방식 A–Z</p><p style="font-size:24px;color:#4F5B57">요구 Issue 하나가 검증된 변경이 되기까지의 모든 단계</p></div>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773;width:160px;text-align:right">10–24</p>
+</div>
+<div style="display:flex;align-items:center;gap:48px">
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1;color:#15201D;width:200px">03</p>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px"><p style="font-size:40px;font-weight:700">새 App 개발 가이드</p><p style="font-size:24px;color:#4F5B57">빈 저장소에서 첫 Merge까지, 0단계부터 12단계</p></div>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773;width:160px;text-align:right">25–34</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">자기 개선 개발 프레임워크 소개 · 기준 커밋 6f4bfe1</p>
+</section>
+<section id="p1" data-transition="push" style="background:#15201D;color:#F2EEE4;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:end;gap:32px">
+<p style="position:absolute;left:1000px;top:40px;width:820px;font-family:'Hahmlet', Georgia, serif;font-size:400px;font-weight:800;line-height:1;text-align:right;color:transparent;-webkit-text-stroke:3px #E4572E">01</p>
+<div style="width:120px;height:8px;background:#E4572E"></div>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#AEB8B3">PART 01 · 슬라이드 03–09</p>
+<h1 style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1.1;letter-spacing:-2px">배경, 목표, 의의</h1>
+<p style="font-size:30px;color:#AEB8B3;line-height:1.45;width:960px">AI가 만든 변경을 어떻게 믿을 것인가에서 출발했다</p>
+</section>
+<section id="questions" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">01 · 배경</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">04 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">한 달 동안 되돌아온 세 질문</h2>
+</div>
+<div style="flex:1;display:flex">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;padding:0px 48px 0px 0px">
+<div style="display:flex;flex-direction:column;gap:20px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">Q1</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.3;letter-spacing:-1px">AI가 만든 변경을 어떻게 믿을 것인가</p></div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:1px solid #CFC7B5;padding:24px 0px 0px 0px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#0F6B63">지금의 답</p><p style="font-size:24px;line-height:1.5;color:#4F5B57">AI 결과는 늘 candidate다. 검증 레일을 지나야 변경이 된다.</p></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;border-left:1px solid #CFC7B5;padding:0px 48px 0px 48px">
+<div style="display:flex;flex-direction:column;gap:20px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">Q2</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.3;letter-spacing:-1px">사람의 개입을 어디까지 줄일 수 있는가</p></div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:1px solid #CFC7B5;padding:24px 0px 0px 0px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#0F6B63">지금의 답</p><p style="font-size:24px;line-height:1.5;color:#4F5B57">판단 없는 클릭은 없애고, 판단이 있는 자리는 남긴다.</p></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;border-left:1px solid #CFC7B5;padding:0px 0px 0px 48px">
+<div style="display:flex;flex-direction:column;gap:20px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">Q3</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.3;letter-spacing:-1px">프레임워크 다듬기는 언제 집착이 되는가</p></div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:1px solid #CFC7B5;padding:24px 0px 0px 0px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#0F6B63">지금의 답</p><p style="font-size:24px;line-height:1.5;color:#4F5B57">관측된 실패로 설명할 수 없는 변경은 만들지 않는다.</p></div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: CHARTER.md 전문 · 2026-09-06부터 약 한 달</p>
+</section>
+<section id="premise" data-transition="fade" style="background:#E4572E;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:center;gap:48px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:3px">05 / 34 · 출발점</p>
+<h1 style="font-family:'Hahmlet', Georgia, serif;font-size:160px;font-weight:800;line-height:1.05;letter-spacing:-3px">AI가 만들었다<br>≠ trusted</h1>
+<div style="width:1400px;height:3px;background:#15201D"></div>
+<p style="font-size:40px;line-height:1.4;width:1400px">AI 결과는 항상 <b>candidate</b>다. 정해진 검증 레일을 지나야만 실제 소프트웨어 변경이 된다.</p>
+<aside>이 프레임워크의 모든 설계는 이 한 줄에서 나온다. AI가 쓴 코드도, AI가 쓴 리뷰도, 그 자체로는 사실이 아니라 후보다.</aside>
+</section>
+<section id="goals" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">01 · 목표</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">06 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">목표는 세 문장이다</h2>
+</div>
+<div style="flex:1;display:flex;gap:64px">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:32px;align-items:start;border-bottom:1px solid #CFC7B5;padding:0px 0px 28px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E4572E;line-height:1;width:96px">1</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700;line-height:1.35">신뢰할 품질, 최소의 사람 개입</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">품질을 지키면서 사람의 손을 최소로 쓰는 App 개발 프레임워크를 만든다.</p></div></div>
+<div style="display:flex;gap:32px;align-items:start;border-bottom:1px solid #CFC7B5;padding:0px 0px 28px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E4572E;line-height:1;width:96px">2</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700;line-height:1.35">App이 다음 과제를 스스로 찾는다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">사용자 관점에서 과제를 찾고, 검증된 사이클로 실현하고, 결과에서 다시 배운다. 이것이 이름의 뜻이다.</p></div></div>
+<div style="display:flex;gap:32px;align-items:start"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E4572E;line-height:1;width:96px">3</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700;line-height:1.35">개입은 줄이고 authority는 유지한다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">개입 지점을 없애려면, 그 판단을 대신할 증거와 검증이 먼저 있어야 한다.</p></div></div>
+</div>
+<div style="width:600px;display:flex;flex-direction:column;justify-content:space-between;background:#15201D;padding:56px">
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:800;line-height:0.8;color:#E4572E">“</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.3;color:#F2EEE4;letter-spacing:-1px">프레임워크는 수단이고 App은 목적이다.</p>
+<p style="font-size:24px;line-height:1.5;color:#AEB8B3">가치는 완성도가 아니라, App이 사용자에게 더 나아지는 속도와 신뢰성으로 잰다.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: CHARTER.md 제1장 목적</p>
+</section>
+<section id="values" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">01 · 가치의 우선순위</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">07 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">충돌하면 위가 이긴다</h2>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;align-items:center;gap:32px;width:1664px;background:#15201D;padding:24px 36px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#E4572E;width:48px">1</p><p style="font-size:30px;font-weight:700;color:#F2EEE4;width:440px">증명 가능한 안전</p><p style="font-size:24px;color:#AEB8B3;flex:1">exact SHA · provenance · fail-closed · bounded 반복 · Human-only Merge</p></div>
+<div style="display:flex;align-items:center;gap:32px;width:1500px;background:#0F6B63;padding:24px 36px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#F7DCD1;width:48px">2</p><p style="font-size:30px;font-weight:700;color:#F2EEE4;width:440px">App 사용자의 실질적 가치</p><p style="font-size:24px;color:#D5E5E0;flex:1">변경은 App을 쓰는 사람에게 주는 것으로 정당화한다</p></div>
+<div style="display:flex;align-items:center;gap:32px;width:1336px;background:#D5E5E0;padding:24px 36px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#B23E1A;width:48px">3</p><p style="font-size:30px;font-weight:700;width:440px">사람 개입의 최소화</p><p style="font-size:24px;color:#2E3B37;flex:1">새 판단이 없는 클릭은 없앤다</p></div>
+<div style="display:flex;align-items:center;gap:32px;width:1172px;background:#E8E2D4;padding:24px 36px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#B23E1A;width:48px">4</p><p style="font-size:30px;font-weight:700;width:440px">지속 가능성(비용·시간)</p><p style="font-size:24px;color:#4F5B57;flex:1">같은 입력의 성공 호출을 다시 부르지 않는다</p></div>
+<div style="display:flex;align-items:center;gap:32px;width:1008px;border:2px solid #CFC7B5;padding:22px 34px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#B23E1A;width:48px">5</p><p style="font-size:30px;font-weight:700;width:440px">내부 정합성과 우아함</p><p style="font-size:24px;color:#4F5B57;flex:1">가장 낮다. 매몰되지 않는다</p></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: CHARTER.md 제2장 · 순위는 충돌할 때 무엇을 양보하는가의 순서다</p>
+</section>
+<section id="meaning" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">01 · 의의</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">08 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">증명할 수 있는 자동화</h2>
+</div>
+<div style="flex:1;display:flex;gap:64px">
+<div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:40px 48px">
+<div style="display:flex;flex-direction:column;gap:12px;border-top:4px solid #0F6B63;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">A</p><p style="font-size:30px;font-weight:700;line-height:1.35">근거와 권한이 증명된다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">AI가 무엇을 근거로 했고 어디까지 권한이 있었는지 SHA와 artifact로 남는다.</p></div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:4px solid #E4572E;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">B</p><p style="font-size:30px;font-weight:700;line-height:1.35">사람에게는 판단만 남는다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">요구, PLAN 승인, Merge, 후보 채택. 나머지는 프레임워크가 한다.</p></div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:4px solid #15201D;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700">C</p><p style="font-size:30px;font-weight:700;line-height:1.35">STOP이 정상 상태다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">한도를 넘거나 identity가 불명확하면 멈추고 사람에게 넘긴다.</p></div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:4px solid #C99A2E;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#7A5A12">D</p><p style="font-size:30px;font-weight:700;line-height:1.35">비개발자도 요구를 넣는다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">“무엇이 불편하고 어떻게 바뀌면 좋은가”만 쓰면 된다.</p></div>
+</div>
+<div style="width:560px;display:flex;flex-direction:column;justify-content:space-between;background:#15201D;padding:48px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#6FC2B5">실제 App에서 증명</p>
+<div style="display:flex;flex-direction:column;gap:4px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:800;line-height:1;color:#F2EEE4">3</p><p style="font-size:24px;color:#AEB8B3">개 App에서 요구부터 Merge·LEARN까지</p></div>
+<div style="display:flex;gap:32px;border-top:1px solid #3A4843;padding:24px 0px 0px 0px">
+<div style="display:flex;flex-direction:column;gap:4px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1;color:#E3BE5E">878</p><p style="font-size:24px;color:#AEB8B3">Framework 커밋</p></div>
+<div style="display:flex;flex-direction:column;gap:4px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1;color:#E3BE5E">650</p><p style="font-size:24px;color:#AEB8B3">App 커밋</p></div>
+</div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">수치: CHARTER.md 부록 A (2026-10-02 기준) · App: sales-order-exception-analyzer, meeting-action-items, transportation_guide</p>
+</section>
+<section id="notbuild" data-transition="fade" style="background:#E8E2D4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">01 · 경계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">09 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">우리가 만들지 않는 것</h2>
+</div>
+<div style="flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0px">
+<div style="display:flex;flex-direction:column;justify-content:center;gap:8px;border-bottom:1px solid #B9B09C;padding:24px 32px 24px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">✕ 01</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;text-decoration:line-through #E4572E">완전자율 개발 AI</p></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:8px;border-bottom:1px solid #B9B09C;padding:24px 32px">  <p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">✕ 02</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;text-decoration:line-through #E4572E">AI의 자기 승인</p></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:8px;border-bottom:1px solid #B9B09C;padding:24px 0px 24px 32px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">✕ 03</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;text-decoration:line-through #E4572E">무제한 FIX 루프</p></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:8px;padding:24px 32px 24px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">✕ 04</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;text-decoration:line-through #E4572E">Auto Merge</p></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:8px;padding:24px 32px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">✕ 05</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;text-decoration:line-through #E4572E">무한 Self-Improvement</p></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:8px;padding:24px 0px 24px 32px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">✕ 06</p><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;text-decoration:line-through #E4572E">blocker 재귀</p></div>
+</div>
+<div style="display:flex;align-items:center;gap:32px;background:#15201D;padding:28px 40px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#E3BE5E;width:200px">대신</p><p style="font-size:30px;color:#F2EEE4;line-height:1.4;flex:1">Self-Improvement는 자율적인 자기 수정이 아니라 <b style="color:#F7DCD1">증거에 근거한 개선 제안</b>이다.</p></div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/architecture.md 3장, 7장</p>
+</section>
+<section id="p2" data-transition="push" style="background:#15201D;color:#F2EEE4;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:end;gap:32px">
+<p style="position:absolute;left:1000px;top:40px;width:820px;font-family:'Hahmlet', Georgia, serif;font-size:400px;font-weight:800;line-height:1;text-align:right;color:transparent;-webkit-text-stroke:3px #6FC2B5">02</p>
+<div style="width:120px;height:8px;background:#0F6B63"></div>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#AEB8B3">PART 02 · 슬라이드 10–24</p>
+<h1 style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1.1;letter-spacing:-2px">작동 방식 A–Z</h1>
+<p style="font-size:30px;color:#AEB8B3;line-height:1.45;width:960px">요구 Issue 하나가 검증된 변경이 되기까지</p>
+</section>
+<section id="cycle" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<!-- nodes: A-row y340-450: req 128,PLAN 472,approve 816,handoff 1160,impl 1504 (w288)
+     B-row y560-690: HM 128-416, MR 472-760, rail 856-1792 (minis y606-670: REVIEW 876, VERIFY 1100, PUBLISH 1324, SEAL 1548, w200)
+     C-row y760-850: LEARN 128-416, STOP 472-760, FIX 836-1116 -->
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 한눈에 보기</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">11 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">요구에서 Merge까지, 한 사이클</h2>
+</div>
+<div style="position:absolute;left:128px;top:340px;width:288px;height:110px;background:#F7DCD1;border:3px solid #E4572E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">요구 Issue</p><p style="font-size:24px;color:#4F5B57">[업무 요구]</p></div>
+<div style="position:absolute;left:472px;top:340px;width:288px;height:110px;background:#F1E6C8;border:3px dashed #C99A2E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">AI PLAN</p><p style="font-size:24px;color:#4F5B57">read-only 제안</p></div>
+<div style="position:absolute;left:816px;top:340px;width:288px;height:110px;background:#F7DCD1;border:3px solid #E4572E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">PLAN-승인</p><p style="font-size:24px;color:#B23E1A;font-weight:600">Trust Boundary #1</p></div>
+<div style="position:absolute;left:1160px;top:340px;width:288px;height:110px;background:#D5E5E0;border:3px solid #0F6B63;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">Handoff</p><p style="font-size:24px;color:#4F5B57">Contract + Pack</p></div>
+<div style="position:absolute;left:1504px;top:340px;width:288px;height:110px;background:#F1E6C8;border:3px dashed #C99A2E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">IMPLEMENT</p><p style="font-size:24px;color:#4F5B57">candidate + CI</p></div>
+<div style="position:absolute;left:856px;top:560px;width:936px;height:130px;background:#D5E5E0;border:3px solid #0F6B63;border-radius:6px"></div>
+<svg aria-label="한 사이클의 흐름도" style="position:absolute;left:0px;top:0px" width="1920" height="1080" viewBox="0 0 1920 1080"><defs><marker id="k" orient="auto" markerWidth="4" markerHeight="4" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#15201D"/></marker><marker id="v" orient="auto" markerWidth="4" markerHeight="4" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#E4572E"/></marker></defs><g fill="none" stroke="#15201D" stroke-width="3" marker-end="url(#k)"><path d="M416 395 H466"/><path d="M760 395 H810"/><path d="M1104 395 H1154"/><path d="M1448 395 H1498"/><path d="M1648 450 V600"/><path d="M1548 638 H1530"/><path d="M1324 638 H1306"/><path d="M1100 638 H1082"/><path d="M856 625 H766"/><path d="M472 625 H422"/><path d="M272 690 V754"/><path d="M976 670 V754"/><path d="M1116 805 H1648 V676"/><path d="M836 805 H766"/><path d="M900 670 V725 H616 V754"/></g><path d="M128 805 H84 V395 H122" fill="none" stroke="#E4572E" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#v)"/></svg>
+<p style="position:absolute;left:876px;top:568px;width:220px;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">TRUSTED RAIL</p>
+<div style="position:absolute;left:876px;top:606px;width:200px;height:64px;background:#FAF8F2;border:2px dashed #C99A2E;border-radius:4px;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700">REVIEW</p></div>
+<div style="position:absolute;left:1100px;top:606px;width:200px;height:64px;background:#FAF8F2;border:2px solid #0F6B63;border-radius:4px;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700">VERIFY</p></div>
+<div style="position:absolute;left:1324px;top:606px;width:200px;height:64px;background:#FAF8F2;border:2px solid #0F6B63;border-radius:4px;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700">PUBLISH</p></div>
+<div style="position:absolute;left:1548px;top:606px;width:200px;height:64px;background:#FAF8F2;border:2px solid #0F6B63;border-radius:4px;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700">SEAL</p></div>
+<div style="position:absolute;left:472px;top:560px;width:288px;height:130px;background:#D5E5E0;border:3px solid #0F6B63;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">MERGE_READY</p><p style="font-size:24px;color:#4F5B57">PR 생성만</p></div>
+<div style="position:absolute;left:128px;top:560px;width:288px;height:130px;background:#F7DCD1;border:3px solid #E4572E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">Human Merge</p><p style="font-size:24px;color:#B23E1A;font-weight:600">Trust Boundary #2</p></div>
+<div style="position:absolute;left:128px;top:760px;width:288px;height:90px;background:#F1E6C8;border:3px dashed #C99A2E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">LEARN · Discovery</p></div>
+<div style="position:absolute;left:472px;top:760px;width:288px;height:90px;background:#15201D;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700;color:#F2EEE4">STOP</p><p style="font-size:24px;color:#AEB8B3">사람이 판단</p></div>
+<div style="position:absolute;left:836px;top:760px;width:280px;height:90px;background:#F1E6C8;border:3px dashed #C99A2E;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-size:28px;font-weight:700">bounded FIX</p><p style="font-size:24px;color:#4F5B57">최대 2회</p></div>
+<p style="position:absolute;left:768px;top:580px;width:80px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">PASS</p>
+<p style="position:absolute;left:992px;top:700px;width:200px;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#7A5A12">LOCAL_FIX</p>
+<p style="position:absolute;left:1290px;top:762px;width:340px;font-size:24px;color:#4F5B57">수정본은 SEAL부터 다시</p>
+<p style="position:absolute;left:128px;top:868px;width:340px;font-size:24px;font-weight:700;background:#E4572E;color:#15201D;padding:4px 16px;border-radius:4px">↺ 고른 후보만 새 요구로</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773"><span style="color:#E4572E">■</span> 사람의 판단 &#160; <span style="color:#C99A2E">■</span> AI 제안 &#160; <span style="color:#0F6B63">■</span> Trusted 검증 &#160;·&#160; 출처: docs/architecture.md 1장 · README v0.2 흐름</p>
+<aside>사람의 판단은 세 곳이다: 요구를 쓰고, PLAN을 승인하고, Merge한다. 그 사이 구현, 검증, 리뷰, 수정은 자동으로 돈다. 수정 한도를 넘거나 재설계가 필요하면 STOP으로 사람에게 돌아온다. Merge 뒤 LEARN과 Product Discovery가 다음 후보를 제안하고, 사람이 고른 것만 새 요구가 된다.</aside>
+</section>
+<section id="repos" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<!-- cards y352-772: Framework 128-568, App 740-1180, executor 1352-1792 -->
+<svg aria-label="저장소 사이의 흐름: Framework가 App에 배포본을 주고, App과 executor가 요청과 결과를 주고받는다" style="position:absolute;left:0px;top:0px" width="1920" height="1080" viewBox="0 0 1920 1080"><defs><marker id="k" orient="auto" markerWidth="4" markerHeight="4" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#15201D"/></marker><marker id="t" orient="auto" markerWidth="4" markerHeight="4" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#0F6B63"/></marker><marker id="v" orient="auto" markerWidth="4" markerHeight="4" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#E4572E"/></marker></defs><path d="M568 470 H734" fill="none" stroke="#15201D" stroke-width="3" marker-end="url(#k)"/><path d="M1180 520 H1346" fill="none" stroke="#0F6B63" stroke-width="3" marker-end="url(#t)"/><path d="M1352 650 H1186" fill="none" stroke="#E4572E" stroke-width="3" marker-end="url(#v)"/></svg>
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 구성</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">12 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">저장소 세 개가 역할을 나눈다</h2>
+</div>
+<div style="position:absolute;left:128px;top:352px;width:440px;height:420px;background:#FAF8F2;border:2px solid #15201D;border-radius:6px;padding:36px;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#6E7773">PUBLIC</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.1">Framework</p>
+<p style="font-size:24px;color:#4F5B57;line-height:1.5">workflow 21개와 trusted handler, 헌장·설계 문서, 배포 소유 목록(85 entry)</p>
+</div>
+<div style="position:absolute;left:740px;top:352px;width:440px;height:420px;background:#D5E5E0;border:3px solid #0F6B63;border-radius:6px;padding:36px;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">PUBLIC</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.1">App</p>
+<p style="font-size:24px;color:#2E3B37;line-height:1.5">App 코드·테스트와 배포본 사본(바이트 동일). Issue·PR·Actions가 사람이 보는 면이다.</p>
+</div>
+<div style="position:absolute;left:1352px;top:352px;width:440px;height:420px;background:#15201D;border-radius:6px;padding:36px;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#E3BE5E">PRIVATE · 팀 소유</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:48px;font-weight:700;line-height:1.1;color:#F2EEE4">executor</p>
+<p style="font-size:24px;color:#AEB8B3;line-height:1.5">AI 단계별 poller와 self-hosted runner, 팀 전용 Claude 구독. allowlist 밖 요청은 호출 전에 거부한다.</p>
+</div>
+<p style="position:absolute;left:576px;top:396px;width:156px;text-align:center;font-size:24px;line-height:1.25">배포본 복사<br><span style="color:#4F5B57">SHA 고정</span></p>
+<p style="position:absolute;left:1188px;top:446px;width:156px;text-align:center;font-size:24px;line-height:1.25;color:#0F6B63">요청 댓글<br>+ dispatch</p>
+<p style="position:absolute;left:1188px;top:664px;width:156px;text-align:center;font-size:24px;line-height:1.25;color:#B23E1A">Claude 1회<br>결과 댓글</p>
+<p style="position:absolute;left:128px;top:812px;width:1664px;font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700">App workflow는 AI를 직접 부르지 않는다. <span style="color:#0F6B63">결과는 trusted 단계가 다시 검증한다.</span></p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/architecture.md 4장 · docs/usage.md 2장 · 예: erpsarang/transportation_guide</p>
+</section>
+<section id="roles" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 역할</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">13 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">누가 무엇을 하고, 하지 않는가</h2>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:40px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6E7773;width:520px">주체</p><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6E7773;flex:1">하는 일</p><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6E7773;width:500px">하지 않는 일</p></div>
+<div style="display:flex;gap:40px;align-items:center;border-top:1px solid #CFC7B5;padding:20px 0px 0px 0px"><div style="width:520px;display:flex;gap:20px;align-items:center"><div style="width:24px;height:24px;background:#E4572E"></div><p style="font-size:30px;font-weight:700">사람</p></div><p style="font-size:24px;flex:1;line-height:1.4">요구 작성 · PLAN-승인 · 최종 Merge · 후보 채택/기각 · STOP 뒤 판단</p><p style="font-size:24px;color:#4F5B57;width:500px;line-height:1.4">판단 없는 클릭 반복</p></div>
+<div style="display:flex;gap:40px;align-items:center;border-top:1px solid #CFC7B5;padding:20px 0px 0px 0px"><div style="width:520px;display:flex;gap:20px;align-items:center"><div style="width:24px;height:24px;border:3px dashed #C99A2E"></div><div style="display:flex;flex-direction:column;gap:2px"><p style="font-size:30px;font-weight:700">read-only AI</p><p style="font-size:24px;color:#4F5B57">Planner · Learner · Evaluator</p></div></div><p style="font-size:24px;flex:1;line-height:1.4">bounded Context를 읽고 제안</p><p style="font-size:24px;color:#4F5B57;width:500px;line-height:1.4">저장소 수정, 자기 제안 승인</p></div>
+<div style="display:flex;gap:40px;align-items:center;border-top:1px solid #CFC7B5;padding:20px 0px 0px 0px"><div style="width:520px;display:flex;gap:20px;align-items:center"><div style="width:24px;height:24px;border:3px dashed #C99A2E"></div><div style="display:flex;flex-direction:column;gap:2px"><p style="font-size:30px;font-weight:700">untrusted Worker</p><p style="font-size:24px;color:#4F5B57">IMPLEMENT · FIX</p></div></div><p style="font-size:24px;flex:1;line-height:1.4">승인된 scope 안에서 candidate 생성</p><p style="font-size:24px;color:#4F5B57;width:500px;line-height:1.4">write credential, scope 밖 변경, 직접 publish</p></div>
+<div style="display:flex;gap:40px;align-items:center;border-top:1px solid #CFC7B5;padding:20px 0px 0px 0px"><div style="width:520px;display:flex;gap:20px;align-items:center"><div style="width:24px;height:24px;border:3px dashed #C99A2E"></div><p style="font-size:30px;font-weight:700">Semantic Reviewer</p></div><p style="font-size:24px;flex:1;line-height:1.4">exact SHA를 읽고 판단을 제안</p><p style="font-size:24px;color:#4F5B57;width:500px;line-height:1.4">판단 확정, push, merge</p></div>
+<div style="display:flex;gap:40px;align-items:center;border-top:1px solid #CFC7B5;padding:20px 0px 0px 0px"><div style="width:520px;display:flex;gap:20px;align-items:center"><div style="width:24px;height:24px;background:#0F6B63"></div><p style="font-size:30px;font-weight:700">Trusted control-plane</p></div><p style="font-size:24px;flex:1;line-height:1.4">결정적 검증 · provenance 기록 · routing</p><p style="font-size:24px;color:#4F5B57;width:500px;line-height:1.4">AI 판단, 사람 authority 대체</p></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: CHARTER.md 제7장 · 프레임워크 안의 AI는 저장소 문서를 지시로 읽지 않는다</p>
+</section>
+<section id="plan" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · A–C 요구와 PLAN</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">14 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">요구가 들어오면 PLAN이 나온다</h2>
+</div>
+<div style="display:flex;gap:64px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:20px;align-items:center"><div style="width:48px;height:48px;background:#E4572E;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700;color:#15201D">A</p></div><p style="font-size:30px;font-weight:700">요구 접수</p></div>
+<ul style="font-size:30px;line-height:1.5;color:#2E3B37;padding:0px 0px 0px 28px">
+<li>제목 [업무 요구] Issue를 열면 PLAN이 자동 시작</li>
+<li>저장소 구성원이 연 Issue만 → 외부인에 AI 비용 없음</li>
+<li>Discovery 후보도 같은 PLAN으로, 출처는 source 기록</li>
+<li>Requirement Lint가 AI 없이 R1–R4 조언 댓글</li>
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:20px;align-items:center"><div style="width:48px;height:48px;border:3px dashed #C99A2E;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700;color:#7A5A12">B</p></div><p style="font-size:30px;font-weight:700">Read-only AI PLAN</p></div>
+<div style="display:flex;gap:12px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;border:2px solid #0F6B63;padding:4px 14px">12 files · 80KB</p>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;border:2px solid #0F6B63;padding:4px 14px">allowedPaths ≤ 8</p>
+</div>
+<ul style="font-size:30px;line-height:1.5;color:#2E3B37;padding:0px 0px 0px 28px">
+<li>sonnet 기본, “복잡한 요구” 체크 시 opus</li>
+<li>검증 명령은 npm test · npm run build만</li>
+<li>trusted 검증이 근거·경로 대조, 영향 테스트 보강</li>
+</ul>
+</div>
+</div>
+<div style="flex:1"></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:20px;background:#15201D;padding:32px 48px">
+<div style="display:flex;gap:20px;align-items:center"><div style="width:48px;height:48px;background:#0F6B63;display:flex;align-items:center;justify-content:center"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700;color:#F2EEE4">C</p></div><p style="font-size:30px;font-weight:700;color:#F2EEE4">재시작 · 재시도 · 복구 — 모두 상한이 있다</p></div>
+<div style="display:flex;gap:48px">
+<div style="flex:1;display:flex;gap:20px;align-items:center"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#E3BE5E;line-height:1">4</p><p style="font-size:24px;color:#AEB8B3;line-height:1.4">본문을 고치면 재PLAN<br>Issue당 다른 본문 4개</p></div>
+<div style="flex:1;display:flex;gap:20px;align-items:center"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#E3BE5E;line-height:1">2</p><p style="font-size:24px;color:#AEB8B3;line-height:1.4">EXECUTION_FAILED만 재시도<br>(Issue, digest)당 2회</p></div>
+<div style="flex:1;display:flex;gap:20px;align-items:center"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#E3BE5E;line-height:1">2</p><p style="font-size:24px;color:#AEB8B3;line-height:1.4">승인 뒤 base가 움직이면 복구<br>승인당 2회, 재승인 필요</p></div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 1-1장·4장 · plan.yml · plan-retry.ts · plan-recovery.ts</p>
+</section>
+<section id="approve" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · D–G 승인에서 Rail 입구까지</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">15 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">승인된 PLAN만 구현 권한이 된다</h2>
+</div>
+<div style="flex:1;display:flex;align-items:stretch;gap:20px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#F7DCD1;border-top:8px solid #E4572E;padding:28px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">D · 사람</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.15">PLAN-승인</p>
+<p style="font-size:24px;line-height:1.5">사람이 정확히 이 한 줄을 댓글로 남긴다.</p>
+<p style="font-size:24px;line-height:1.5;color:#4F5B57">digest · run · artifact · target SHA · 댓글 ID를 다시 검증</p>
+<div style="flex:1"></div>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">Trust Boundary #1</p>
+</div>
+<svg aria-label="다음" style="align-self:center" width="40" height="24" viewBox="0 0 40 24"><path d="M2 12 H28" stroke="#15201D" stroke-width="3" fill="none"/><path d="M26 4 L38 12 L26 20 Z" fill="#15201D"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#D5E5E0;border-top:8px solid #0F6B63;padding:28px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">E · Trusted</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.15">Handoff</p>
+<p style="font-size:24px;line-height:1.5">scope를 재해석 없이 ImplementContract로 바꾼다.</p>
+<p style="font-size:24px;line-height:1.5;color:#2E3B37">원문 384KB 보관, Worker prompt엔 96KB까지</p>
+</div>
+<svg aria-label="다음" style="align-self:center" width="40" height="24" viewBox="0 0 40 24"><path d="M2 12 H28" stroke="#15201D" stroke-width="3" fill="none"/><path d="M26 4 L38 12 L26 20 Z" fill="#15201D"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#F1E6C8;border-top:8px dashed #C99A2E;padding:28px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#7A5A12">F · AI</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.15">IMPLEMENT</p>
+<p style="font-size:24px;line-height:1.5">credential 없이 edit JSON만 낸다.</p>
+<p style="font-size:24px;line-height:1.5;color:#4F5B57">경로·anchor 검사 후 CI. 실패하면 repair 최대 2회</p>
+</div>
+<svg aria-label="다음" style="align-self:center" width="40" height="24" viewBox="0 0 40 24"><path d="M2 12 H28" stroke="#15201D" stroke-width="3" fill="none"/><path d="M26 4 L38 12 L26 20 Z" fill="#15201D"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#D5E5E0;border-top:8px solid #0F6B63;padding:28px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">G · Trusted</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.15">PLAN Bridge</p>
+<p style="font-size:24px;line-height:1.5">CI를 통과한 candidate를 Rail 입력으로.</p>
+<p style="font-size:24px;line-height:1.5;color:#2E3B37">PLAN provenance를 그대로 보존</p>
+</div>
+</div>
+<p style="font-size:24px;line-height:1.4;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px"><b>fail-closed</b> · 승인 뒤 본문이나 target SHA가 바뀌면 그 승인은 거부된다. 조용히 대체하지 않는다.</p>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 5–6장 · plan-authorize.yml · plan-implement-worker.yml</p>
+</section>
+<section id="rail" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · H Trusted Rail</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">16 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">Trusted Rail의 네 단계</h2>
+</div>
+<div style="flex:1;display:flex;gap:16px;align-items:stretch">
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;border-top:4px solid #0F6B63;padding:20px 0px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700">SEAL</p>
+<p style="font-size:24px;line-height:1.5">candidate를 실행하지 않고 identity·base·bytes digest를 검증해 봉인한다</p>
+<div style="flex:1"></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;color:#0F6B63">read</p>
+</div>
+<svg aria-label="다음" style="align-self:center" width="40" height="24" viewBox="0 0 40 24"><path d="M2 12 H28" stroke="#0F6B63" stroke-width="3" fill="none"/><path d="M26 4 L38 12 L26 20 Z" fill="#0F6B63"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;border-top:4px solid #E4572E;padding:20px 0px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700">PUBLISH</p>
+<p style="font-size:24px;line-height:1.5">sealed patch만 ai-publish/ 브랜치에 force 없이 올린다. main에는 push하지 않는다</p>
+<div style="flex:1"></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;color:#B23E1A">write</p>
+</div>
+<svg aria-label="다음" style="align-self:center" width="40" height="24" viewBox="0 0 40 24"><path d="M2 12 H28" stroke="#0F6B63" stroke-width="3" fill="none"/><path d="M26 4 L38 12 L26 20 Z" fill="#0F6B63"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;border-top:4px solid #0F6B63;padding:20px 0px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700">VERIFY</p>
+<p style="font-size:24px;line-height:1.5"><b>1</b> prepare · exact SHA 결정<br><b>2</b> candidate · 격리, secret 없음<br><b>3</b> finalize · 새 runner에서</p>
+<div style="flex:1"></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;color:#0F6B63">read</p>
+</div>
+<svg aria-label="다음" style="align-self:center" width="40" height="24" viewBox="0 0 40 24"><path d="M2 12 H28" stroke="#0F6B63" stroke-width="3" fill="none"/><path d="M26 4 L38 12 L26 20 Z" fill="#0F6B63"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;border-top:4px dashed #C99A2E;padding:20px 0px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700">REVIEW</p>
+<p style="font-size:24px;line-height:1.5"><b>1</b> prepare · digest 재계산<br><b>2</b> agent · opus 정적 검토<br><b>3</b> finalize · 일관성 검사</p>
+<div style="flex:1"></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;color:#0F6B63">read</p>
+</div>
+</div>
+<div style="display:flex">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:8px;background:#0F6B63;padding:28px 36px"><p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700;color:#F2EEE4">PASS</p><p style="font-size:24px;color:#D5E5E0">BLOCKER 0개 → MERGE_READY</p></div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:8px;background:#F1E6C8;padding:28px 36px"><p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700;color:#7A5A12">LOCAL_FIX</p><p style="font-size:24px;color:#4F5B57">모두 LOCAL → FIXING, 최대 2회</p></div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:8px;background:#15201D;padding:28px 36px"><p style="font-family:'JetBrains Mono', monospace;font-size:30px;font-weight:700;color:#F2EEE4">STRUCTURAL</p><p style="font-size:24px;color:#AEB8B3">STRUCTURAL BLOCKER → STOPPED</p></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/trust-model.md · trusted-rail.yml · semantic-review.yml · 권한은 job 단위로 준다</p>
+</section>
+<section id="fix" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · I–K 수정, PR, Merge</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">17 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">고치거나 멈추고, 사람 앞에 놓는다</h2>
+</div>
+<div style="flex:1;display:flex">
+<div style="flex:1;display:flex;flex-direction:column;gap:18px;padding:0px 40px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">I · ORCHESTRATOR · FIX</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.25">판단은 이미 끝났다. 결정적으로 보낸다</p>
+<p style="font-size:24px;line-height:1.5;color:#2E3B37">LOCAL_FIX면 allowedPaths 원문과 LOCAL BLOCKER만 sonnet에 1회. 수정본은 SEAL부터 Rail 전체를 다시 지난다.</p>
+<div style="flex:1"></div>
+<div style="display:flex;gap:16px;align-items:baseline;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#C99A2E;line-height:1">2</p><p style="font-size:24px;color:#4F5B57">번까지. 세 번째는 STOPPED</p></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:18px;border-left:1px solid #CFC7B5;padding:0px 40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">J · MERGE_READY PR</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.25">권한이 merge를 구조적으로 막는다</p>
+<div style="display:flex;flex-direction:column;gap:8px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px"><span style="color:#0F6B63">✓</span> pull-requests: write</p>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px"><span style="color:#0F6B63">✓</span> contents: read</p>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px"><span style="color:#E4572E">✕</span> merge · push · auto</p>
+</div>
+<div style="flex:1"></div>
+<p style="font-size:24px;line-height:1.5;color:#4F5B57;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px">PASS일 때만. reviewed SHA = branch HEAD = PR head를 강제한다.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:18px;background:#E4572E;padding:36px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700">K · HUMAN MERGE</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.25">확인하고, 사람이 Merge한다</p>
+<div style="display:flex;flex-direction:column;gap:10px">
+<p style="font-size:24px">□ PR HEAD = reviewed SHA</p>
+<p style="font-size:24px">□ 변경 파일이 승인 범위 안</p>
+<p style="font-size:24px">□ CI · provenance 정상</p>
+<p style="font-size:24px">□ 운영·보안 영향 없음</p>
+</div>
+<div style="flex:1"></div>
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;border-top:2px solid #15201D;padding:16px 0px 0px 0px">Trust Boundary #2</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/trust-model.md Orchestrator·Merge · docs/usage.md 2-1장, 8–9장</p>
+</section>
+<section id="learn" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · L–M Merge 이후</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">18 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">Merge 뒤에는 배우고 제안한다</h2>
+</div>
+<div style="flex:1;display:flex">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;padding:0px 56px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#7A5A12">L · LEARN</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700">사이클이 어떻게 흘렀나</p>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">01</p><p style="font-size:24px;line-height:1.45;flex:1">실제 Merge만 감지한다. open PR은 완료가 아니다</p></div>
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">02</p><p style="font-size:24px;line-height:1.45;flex:1">Completed Cycle Record와 bounded Input Pack</p></div>
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#7A5A12;width:40px">03</p><p style="font-size:24px;line-height:1.45;flex:1">Learner(sonnet)가 Pack만 읽고 evidence ID에 근거한다</p></div>
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">04</p><p style="font-size:24px;line-height:1.45;flex:1">proposal-only 후보. 자동 Issue·구현은 없다</p></div>
+</div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;border-left:1px solid #CFC7B5;padding:0px 0px 0px 56px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#7A5A12">M · PRODUCT DISCOVERY</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700">App이 사용자에게 충분한가</p>
+<div style="display:flex;align-items:center;gap:12px">
+<div style="flex:1;display:flex;flex-direction:column;gap:4px;border:2px solid #0F6B63;padding:14px 18px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#0F6B63;line-height:1">131KB</p><p style="font-size:24px;color:#4F5B57">Snapshot</p></div>
+<svg aria-label="다음" width="32" height="24" viewBox="0 0 32 24"><path d="M2 12 H20" stroke="#15201D" stroke-width="3" fill="none"/><path d="M18 4 L30 12 L18 20 Z" fill="#15201D"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:4px;border:2px dashed #C99A2E;padding:14px 18px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#7A5A12;line-height:1">3→1</p><p style="font-size:24px;color:#4F5B57">opus 비교</p></div>
+<svg aria-label="다음" width="32" height="24" viewBox="0 0 32 24"><path d="M2 12 H20" stroke="#15201D" stroke-width="3" fill="none"/><path d="M18 4 L30 12 L18 20 Z" fill="#15201D"/></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:4px;border:2px solid #E4572E;padding:14px 18px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#B23E1A;line-height:1">≤ 1</p><p style="font-size:24px;color:#4F5B57">Issue</p></div>
+</div>
+<p style="font-size:24px;line-height:1.5;color:#2E3B37">제품 source 전체·README·최근 이력을 본다. Framework 파일은 빠진다.</p>
+<div style="flex:1"></div>
+<div style="display:flex;flex-direction:column;gap:6px;background:#15201D;padding:20px 28px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#E3BE5E">자동 시작(opt-in): 모두 만족할 때</p>
+<p style="font-size:24px;color:#F2EEE4">Merge 3건 · 열린 후보 없음 · 24시간 · 실행 중 run 없음</p>
+</div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 10–11-1장 · not_planned와 사유로 닫은 후보는 다시 제안되지 않는다</p>
+</section>
+<section id="states" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<!-- A-row y340-430: CANDIDATE 128, AUTHORIZED 472, IMPLEMENTING 816, SEALED 1160, PUBLISHED 1504 (w288)
+     B-row y540-630: MERGED 472, MERGE_READY 816, REVIEWING 1160, VERIFIED 1504
+     C-row y720-810: STOPPED 816, FIXING 1160 ; note 128-760 y720-850 -->
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 상태 머신</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">19 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">정의된 전환만 허용된다</h2>
+</div>
+<svg aria-label="상태 전환도" style="position:absolute;left:0px;top:0px" width="1920" height="1080" viewBox="0 0 1920 1080"><defs><marker id="k" orient="auto" markerWidth="4" markerHeight="4" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#15201D"/></marker></defs><g fill="none" stroke="#15201D" stroke-width="3" marker-end="url(#k)"><path d="M416 385 H466"/><path d="M760 385 H810"/><path d="M1104 385 H1154"/><path d="M1448 385 H1498"/><path d="M1648 430 V534"/><path d="M1504 585 H1454"/><path d="M1160 585 H1110"/><path d="M816 585 H766"/><path d="M1304 630 V714"/><path d="M1200 630 V675 H960 V714"/></g><path d="M1476 560 V610" fill="none" stroke="#F2EEE4" stroke-width="12"/><path d="M1448 765 H1476 V485 H1340 V436" fill="none" stroke="#15201D" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#k)"/></svg>
+<div style="position:absolute;left:128px;top:340px;width:288px;height:90px;background:#FAF8F2;border:2px solid #15201D;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">CANDIDATE</p></div>
+<div style="position:absolute;left:472px;top:340px;width:288px;height:90px;background:#FAF8F2;border:2px solid #15201D;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">AUTHORIZED</p><p style="font-size:24px;color:#6E7773">AUTHORIZE</p></div>
+<div style="position:absolute;left:816px;top:340px;width:288px;height:90px;background:#FAF8F2;border:2px solid #15201D;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">IMPLEMENTING</p><p style="font-size:24px;color:#6E7773">START_IMPLEMENT</p></div>
+<div style="position:absolute;left:1160px;top:340px;width:288px;height:90px;background:#D5E5E0;border:2px solid #0F6B63;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">SEALED</p><p style="font-size:24px;color:#2E3B37">SEAL</p></div>
+<div style="position:absolute;left:1504px;top:340px;width:288px;height:90px;background:#D5E5E0;border:2px solid #0F6B63;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">PUBLISHED</p><p style="font-size:24px;color:#2E3B37">RECORD_PUBLISHED</p></div>
+<div style="position:absolute;left:1504px;top:540px;width:288px;height:90px;background:#D5E5E0;border:2px solid #0F6B63;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">VERIFIED</p><p style="font-size:24px;color:#2E3B37">VERIFY exact SHA</p></div>
+<div style="position:absolute;left:1160px;top:540px;width:288px;height:90px;background:#F1E6C8;border:2px dashed #C99A2E;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">REVIEWING</p><p style="font-size:24px;color:#4F5B57">START_REVIEW</p></div>
+<div style="position:absolute;left:816px;top:540px;width:288px;height:90px;background:#0F6B63;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700;color:#F2EEE4">MERGE_READY</p><p style="font-size:24px;color:#D5E5E0">PASS</p></div>
+<div style="position:absolute;left:472px;top:540px;width:288px;height:90px;background:#E4572E;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">MERGED</p><p style="font-size:24px">Human Merge 기록</p></div>
+<div style="position:absolute;left:1160px;top:720px;width:288px;height:90px;background:#F1E6C8;border:2px dashed #C99A2E;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700">FIXING</p><p style="font-size:24px;color:#4F5B57">fixCount + 1</p></div>
+<div style="position:absolute;left:816px;top:720px;width:288px;height:90px;background:#15201D;border-radius:4px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px"><p style="font-family:'JetBrains Mono', monospace;font-size:26px;font-weight:700;color:#F2EEE4">STOPPED</p><p style="font-size:24px;color:#AEB8B3">STRUCTURAL · 횟수 ≥ 2</p></div>
+<p style="position:absolute;left:1316px;top:644px;width:148px;font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#7A5A12;line-height:1.25">LOCAL_FIX<br>횟수 &lt; 2</p>
+<p style="position:absolute;left:1492px;top:660px;width:300px;font-size:24px;color:#4F5B57">수정본은 SEAL로</p>
+<div style="position:absolute;left:128px;top:720px;width:632px;height:180px;border:2px solid #15201D;border-radius:4px;padding:20px 28px;display:flex;flex-direction:column;justify-content:center;gap:6px"><p style="font-size:24px;font-weight:700">자동 merge 이벤트는 없다</p><p style="font-size:24px;color:#4F5B57">정의되지 않은 전환은 모두 오류다</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#4F5B57">REVIEWING → MERGED ✕<br>STOPPED → FIXING ✕</p></div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/state-machine.md · src/self-improvement/state.ts</p>
+</section>
+<section id="invariants" data-transition="fade" style="background:#15201D;color:#F2EEE4;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #F2EEE4;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#6FC2B5">02 · 신뢰 경계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#AEB8B3">20 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">모든 값이 같아야 넘어간다</h2>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#AEB8B3">exact SHA 사슬</p>
+<div style="display:flex;align-items:center;gap:16px">
+<div style="flex:1;border:2px solid #6FC2B5;padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:4px"><p style="font-size:24px;font-weight:700">branch HEAD</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#AEB8B3">remote</p></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E3BE5E;line-height:1">=</p>
+<div style="flex:1;border:2px solid #6FC2B5;padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:4px"><p style="font-size:24px;font-weight:700">published</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#AEB8B3">publish.json</p></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E3BE5E;line-height:1">=</p>
+<div style="flex:1;border:2px solid #6FC2B5;padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:4px"><p style="font-size:24px;font-weight:700">verified</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#AEB8B3">verify.json</p></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E3BE5E;line-height:1">=</p>
+<div style="flex:1;border:2px solid #6FC2B5;padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:4px"><p style="font-size:24px;font-weight:700">reviewed</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#AEB8B3">review.json</p></div>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;color:#E3BE5E;line-height:1">=</p>
+<div style="flex:1;background:#E4572E;padding:22px 18px;display:flex;flex-direction:column;align-items:center;gap:4px"><p style="font-size:24px;font-weight:700;color:#15201D">PR head</p><p style="font-size:24px;color:#15201D">사람이 Merge</p></div>
+</div>
+<p style="font-size:24px;color:#AEB8B3">요구 digest도 같아야 한다 · <span style="font-family:'JetBrains Mono', monospace;color:#F2EEE4">review.requirementsDigest == authorize.requirements.digest</span></p>
+</div>
+<div style="flex:1;display:flex;gap:48px;align-items:end">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:1px solid #3A4843;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#E3BE5E">01</p><p style="font-size:30px;font-weight:700">권한 분리</p><p style="font-size:24px;color:#AEB8B3;line-height:1.5">contents:write는 PUBLISH job 하나, pull-requests:write는 PR job 하나에만</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:1px solid #3A4843;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#E3BE5E">02</p><p style="font-size:30px;font-weight:700">runner 분리</p><p style="font-size:24px;color:#AEB8B3;line-height:1.5">candidate를 실행하는 runner엔 handler·secret·credential이 없다</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:1px solid #3A4843;padding:20px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#E3BE5E">03</p><p style="font-size:30px;font-weight:700">trust anchor</p><p style="font-size:24px;color:#AEB8B3;line-height:1.5">Actions artifact. Issue 댓글이나 현재 브랜치 텍스트는 신뢰 입력이 아니다</p></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#AEB8B3">출처: docs/trust-model.md VERIFY·REVIEW·Merge</p>
+</section>
+<section id="cost" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · AI 실행과 비용</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">21 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">AI 호출은 팀 executor에서</h2>
+</div>
+<div style="flex:1;display:flex;gap:56px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<table style="font-size:30px;color:#15201D;width:1000px">
+<tr style="background:#15201D"><th style="width:26%;color:#F2EEE4">단계</th><th style="width:24%;color:#F2EEE4">모델</th><th style="width:28%;color:#F2EEE4">호출</th><th style="width:22%;color:#F2EEE4">도구</th></tr>
+<tr style="background:#FAF8F2"><td>PLAN</td><td>sonnet · opus*</td><td>요청당 1회</td><td>스위치 시 읽기</td></tr>
+<tr style="background:#F2EEE4"><td>IMPLEMENT</td><td>sonnet</td><td>1회 + repair ≤ 2</td><td>스위치 시 읽기</td></tr>
+<tr style="background:#FAF8F2"><td>REVIEW</td><td>opus</td><td>Rail당 1회</td><td>없음</td></tr>
+<tr style="background:#F2EEE4"><td>FIX</td><td>sonnet</td><td>1회 × 최대 2번</td><td>없음</td></tr>
+<tr style="background:#FAF8F2"><td>LEARN</td><td>sonnet</td><td>Merge당 1회</td><td>없음</td></tr>
+<tr style="background:#F2EEE4"><td>Discovery</td><td>opus</td><td>1회, 재시도 없음</td><td>없음</td></tr>
+</table>
+<p style="font-size:24px;color:#6E7773;line-height:1.4">* “복잡한 요구” 체크 시 opus · effort medium · 읽기 도구는 Read·Glob·Grep만, 격리된 checkout 안</p>
+</div>
+<div style="width:520px;display:flex;flex-direction:column;gap:24px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#15201D;padding:32px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#E3BE5E">ISOLATION</p><p style="font-size:30px;font-weight:700;color:#F2EEE4;line-height:1.3">구독과 자격은 공유하지 않는다</p><p style="font-size:24px;color:#AEB8B3;line-height:1.5">Framework·App, App·App이 같은 executor나 계정을 쓰지 않는다. allowlist 밖은 호출 전 거부</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border:2px solid #15201D;padding:32px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">TIMEOUT</p><p style="font-size:30px;font-weight:700;line-height:1.3">기다림에도 상한</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">결과를 약 15분(PLAN 10분) 기다린다. FAILED marker를 보면 즉시 멈춘다</p></div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/architecture.md 4장 · docs/usage.md 2장 · CHARTER.md 부록 A 모델 배치</p>
+</section>
+<section id="intervene" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 사람 개입과 STOP</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">22 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">판단이 적은 개입부터 줄인다</h2>
+</div>
+<div style="flex:1;display:flex;gap:56px">
+<div style="flex:1;display:flex;flex-direction:column">
+<div style="flex:1;display:flex;gap:32px;align-items:center;background:#E4572E;padding:24px 32px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;width:120px">남긴다</p><div style="flex:1;display:flex;flex-direction:column;gap:6px"><p style="font-size:30px;font-weight:700">판단이 있는 개입</p><p style="font-size:24px;line-height:1.4">PLAN-승인(#1) · 최종 Merge(#2) · 후보 채택·기각 · STOP 뒤 판단</p></div></div>
+<div style="flex:1;display:flex;gap:32px;align-items:center;background:#F7DCD1;padding:24px 32px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;width:120px;color:#B23E1A">조건부</p><div style="flex:1;display:flex;flex-direction:column;gap:6px"><p style="font-size:30px;font-weight:700">시작 trigger</p><p style="font-size:24px;line-height:1.4;color:#2E3B37">요구 Issue 작성 · Product Discovery 실행(opt-in 자동 시작)</p></div></div>
+<div style="flex:1;display:flex;gap:32px;align-items:center;border:2px dashed #B9B09C;padding:22px 30px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;width:120px;color:#6E7773">없앤다</p><div style="flex:1;display:flex;flex-direction:column;gap:6px"><p style="font-size:30px;font-weight:700">운영 수작업</p><p style="font-size:24px;line-height:1.4;color:#4F5B57">bot PR CI 승인 · 멈춘 Worker 복구 · 동기화 commit · 사용량 수집</p></div></div>
+</div>
+<div style="width:520px;display:flex;flex-direction:column;gap:20px;background:#15201D;padding:40px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#E3BE5E">STOP 조건</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;color:#F2EEE4;line-height:1.25">멈추는 것이 정상이다</p>
+<ul style="font-size:24px;line-height:1.6;color:#F2EEE4;padding:0px 0px 0px 28px">
+<li>bounded repair 소진</li>
+<li>Framework·control-plane 결함</li>
+<li>blocker가 또 blocker를 요구</li>
+<li>identity·provenance 불명확</li>
+<li>비용·시간 budget 초과</li>
+</ul>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: CHARTER.md 제10장 · docs/architecture.md 5장</p>
+</section>
+<section id="govern" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 거버넌스</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">23 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">누가 발견했느냐로 경로가 갈린다</h2>
+</div>
+<div style="display:flex">
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;padding:0px 48px 0px 0px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A">HUMAN-DIRECTED MAINTENANCE</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.3">사람이 무엇을 바꿀지<br><span style="color:#B23E1A">이미 정했다</span></p>
+<p style="font-size:24px;color:#4F5B57;line-height:1.5">문서 현행화 · 작은 유지보수 · 관측된 Framework blocker 복구. AI 세션과 직접 branch·PR. 범위 확인, CI, Human-only Merge는 그대로</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;border-left:1px solid #CFC7B5;padding:0px 0px 0px 48px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">SELF-IMPROVEMENT</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:700;line-height:1.3">App이 개선 대상을<br><span style="color:#0F6B63">스스로 발견했다</span></p>
+<p style="font-size:24px;color:#4F5B57;line-height:1.5">LEARN · Product Discovery 후보 → 사람 선택 → PLAN 사이클. 제안일 뿐, 자기 승인은 없다</p>
+</div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:20px;background:#15201D;padding:36px 44px">
+<p style="font-size:30px;font-weight:700;color:#F2EEE4">프레임워크를 바꾸려면 한 문장으로 설명돼야 한다</p>
+<div style="display:flex;gap:40px">
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;border-top:3px solid #E4572E;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700;color:#F2EEE4">관측된 실패</p><p style="font-size:24px;color:#AEB8B3">Issue·run·SHA를 가리킨다</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;border-top:3px solid #E3BE5E;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700;color:#F2EEE4">목적을 향한 전진</p><p style="font-size:24px;color:#AEB8B3">개입·비용 감소, 증거 강화</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;border-top:3px solid #6FC2B5;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700;color:#F2EEE4">경계 유지</p><p style="font-size:24px;color:#AEB8B3">Framework와 App의 분리</p></div>
+</div>
+<p style="font-size:24px;color:#AEB8B3">완료 조건은 테스트 통과가 아니라 실제 App에서 한 사이클이 끝까지 도는 것</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: README “Self-Improvement 적용 경계” · CHARTER.md 제5장</p>
+</section>
+<section id="limits" data-transition="fade" style="background:#E8E2D4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#0F6B63">02 · 알려진 한계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">24 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">지금 알고 있는 한계</h2>
+</div>
+<div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0px">
+<div style="display:flex;gap:28px;border-bottom:1px solid #B9B09C;padding:0px 40px 32px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#B23E1A;line-height:1;width:72px">1</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">GitHub + Node 전제</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">다른 언어는 npm test·build가 그 언어를 부르게 해서만 쓴다. 예: 표준 라이브러리만 쓰는 Python App</p></div></div>
+<div style="display:flex;gap:28px;border-bottom:1px solid #B9B09C;border-left:1px solid #B9B09C;padding:0px 0px 32px 40px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#B23E1A;line-height:1;width:72px">2</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">승인자 검사가 얕다</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">계정 유형 User만 본다. 공개 저장소에선 외부인의 PLAN-승인도 PR까지 간다. Merge는 여전히 사람만</p></div></div>
+<div style="display:flex;gap:28px;padding:32px 40px 0px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#B23E1A;line-height:1;width:72px">3</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">개인 계정 소유 App만</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">결과 댓글을 저장소 소유자 계정 것만 받는다. Organization 소유 App은 아직 미지원</p></div></div>
+<div style="display:flex;gap:28px;border-left:1px solid #B9B09C;padding:32px 0px 0px 40px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#B23E1A;line-height:1;width:72px">4</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">v0.3 이후 후보</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">범용 GRAPH 엔진 · GitHub 외 adapter · Node 외 verifier · 장기 provenance 저장소 · 운영 UI</p></div></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/trust-model.md · docs/usage.md 2장·2-2장 · docs/roadmap.md v0.3</p>
+</section>
+<section id="p3" data-transition="push" style="background:#15201D;color:#F2EEE4;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:end;gap:32px">
+<p style="position:absolute;left:1000px;top:40px;width:820px;font-family:'Hahmlet', Georgia, serif;font-size:400px;font-weight:800;line-height:1;text-align:right;color:transparent;-webkit-text-stroke:3px #E3BE5E">03</p>
+<div style="width:120px;height:8px;background:#C99A2E"></div>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#AEB8B3">PART 03 · 슬라이드 25–34</p>
+<h1 style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:700;line-height:1.1;letter-spacing:-2px">새 App 개발 가이드</h1>
+<p style="font-size:30px;color:#AEB8B3;line-height:1.45;width:960px">빈 저장소에서 첫 Merge까지, 0단계부터 12단계</p>
+</section>
+<section id="roadmap" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<!-- track y600, dots x = 192 + 128*i (i=0..12), r=26; labels above (even i) top 488, below (odd i) top 684 -->
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 전체 지도</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">26 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">열세 단계, 네 묶음</h2>
+</div>
+<div style="display:flex;gap:40px;align-items:center">
+<div style="display:flex;gap:12px;align-items:center"><div style="width:24px;height:24px;border-radius:50%;background:#E4572E"></div><p style="font-size:24px;color:#4F5B57">사람이 판단하는 단계</p></div>
+<div style="display:flex;gap:12px;align-items:center"><div style="width:24px;height:24px;border-radius:50%;background:#0F6B63"></div><p style="font-size:24px;color:#4F5B57">자동으로 도는 단계</p></div>
+<div style="display:flex;gap:12px;align-items:center"><div style="width:24px;height:24px;border-radius:50%;background:#15201D"></div><p style="font-size:24px;color:#4F5B57">설정·유지 작업</p></div>
+</div>
+<svg aria-label="0단계부터 12단계까지의 타임라인" style="position:absolute;left:0px;top:0px" width="1920" height="1080" viewBox="0 0 1920 1080"><path d="M128 600 H1792" stroke="#CFC7B5" stroke-width="4" fill="none"/><g stroke="#15201D" stroke-width="2"><path d="M192 572 V528"/><path d="M320 628 V672"/><path d="M448 572 V528"/><path d="M576 628 V672"/><path d="M704 572 V528"/><path d="M832 628 V672"/><path d="M960 572 V528"/><path d="M1088 628 V672"/><path d="M1216 572 V528"/><path d="M1344 628 V672"/><path d="M1472 572 V528"/><path d="M1600 628 V672"/><path d="M1728 572 V528"/></g><circle cx="192" cy="600" r="26" fill="#15201D"/><circle cx="320" cy="600" r="26" fill="#15201D"/><circle cx="448" cy="600" r="26" fill="#15201D"/><circle cx="576" cy="600" r="26" fill="#15201D"/><circle cx="704" cy="600" r="26" fill="#15201D"/><circle cx="832" cy="600" r="26" fill="#E4572E"/><circle cx="960" cy="600" r="26" fill="#E4572E"/><circle cx="1088" cy="600" r="26" fill="#E4572E"/><circle cx="1216" cy="600" r="26" fill="#0F6B63"/><circle cx="1344" cy="600" r="26" fill="#E4572E"/><circle cx="1472" cy="600" r="26" fill="#0F6B63"/><circle cx="1600" cy="600" r="26" fill="#E4572E"/><circle cx="1728" cy="600" r="26" fill="#15201D"/></svg>
+<p style="position:absolute;left:168px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">0</p>
+<p style="position:absolute;left:296px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">1</p>
+<p style="position:absolute;left:424px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">2</p>
+<p style="position:absolute;left:552px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">3</p>
+<p style="position:absolute;left:680px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">4</p>
+<p style="position:absolute;left:808px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#15201D">5</p>
+<p style="position:absolute;left:936px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#15201D">6</p>
+<p style="position:absolute;left:1064px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#15201D">7</p>
+<p style="position:absolute;left:1192px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">8</p>
+<p style="position:absolute;left:1320px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#15201D">9</p>
+<p style="position:absolute;left:1448px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">10</p>
+<p style="position:absolute;left:1576px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#15201D">11</p>
+<p style="position:absolute;left:1704px;top:584px;width:48px;text-align:center;font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#F2EEE4">12</p>
+<p style="position:absolute;left:92px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">적합성 확인</p>
+<p style="position:absolute;left:220px;top:684px;width:200px;text-align:center;font-size:24px;font-weight:600">저장소 골격</p>
+<p style="position:absolute;left:348px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">배포본 붙이기</p>
+<p style="position:absolute;left:476px;top:684px;width:200px;text-align:center;font-size:24px;font-weight:600">executor 준비</p>
+<p style="position:absolute;left:604px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">저장소 설정</p>
+<p style="position:absolute;left:732px;top:684px;width:200px;text-align:center;font-size:24px;font-weight:600">첫 요구 쓰기</p>
+<p style="position:absolute;left:860px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">PLAN 읽기</p>
+<p style="position:absolute;left:988px;top:684px;width:200px;text-align:center;font-size:24px;font-weight:600">PLAN-승인</p>
+<p style="position:absolute;left:1116px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">자동 진행 관찰</p>
+<p style="position:absolute;left:1244px;top:684px;width:200px;text-align:center;font-size:24px;font-weight:600">PR 확인·Merge</p>
+<p style="position:absolute;left:1372px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">LEARN 확인</p>
+<p style="position:absolute;left:1500px;top:684px;width:200px;text-align:center;font-size:24px;font-weight:600">Discovery</p>
+<p style="position:absolute;left:1628px;top:488px;width:200px;text-align:center;font-size:24px;font-weight:600">동기화</p>
+<div style="position:absolute;left:128px;top:776px;width:632px;height:72px;background:#15201D;display:flex;align-items:center;justify-content:center"><p style="font-size:24px;font-weight:700;color:#F2EEE4">준비 · 한 번만</p></div>
+<div style="position:absolute;left:768px;top:776px;width:640px;height:72px;background:#E4572E;display:flex;align-items:center;justify-content:center"><p style="font-size:24px;font-weight:700;color:#15201D">첫 사이클 · 요구마다 반복</p></div>
+<div style="position:absolute;left:1416px;top:776px;width:248px;height:72px;background:#0F6B63;display:flex;align-items:center;justify-content:center"><p style="font-size:24px;font-weight:700;color:#F2EEE4">학습·개선</p></div>
+<div style="position:absolute;left:1672px;top:776px;width:120px;height:72px;border:2px solid #15201D;display:flex;align-items:center;justify-content:center"><p style="font-size:24px;font-weight:700">유지</p></div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">근거: docs/usage.md 2–11장 · transportation_guide와 meeting-action-items의 실제 bootstrap</p>
+</section>
+<section id="start" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 0–1단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">27 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">맞는 App인지 보고 골격을 세운다</h2>
+</div>
+<div style="flex:1;display:flex;gap:64px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#B23E1A">0단계 · 코드가 강제하는 조건</p>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">01</p><p style="font-size:30px;line-height:1.4;flex:1">루트 package.json에 <b>test</b>와 <b>build</b></p></div>
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">02</p><p style="font-size:30px;line-height:1.4;flex:1">package.json · tsconfig.json은 PLAN이 항상 읽는다</p></div>
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">03</p><p style="font-size:30px;line-height:1.4;flex:1">코드는 src/, 테스트는 test/ 또는 *.test.*</p></div>
+<div style="display:flex;gap:24px;align-items:baseline;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:40px">04</p><p style="font-size:30px;line-height:1.4;flex:1">App 저장소는 <b>개인 계정</b> 소유</p></div>
+<p style="font-size:24px;color:#4F5B57;line-height:1.5;border-top:1px solid #CFC7B5;padding:16px 0px 0px 0px">검증된 환경: Node 22 + TypeScript, 외부 API·자체 secret 없음. 다른 언어는 표준 라이브러리만.</p>
+</div>
+</div>
+<div style="width:680px;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#B23E1A">1단계 · 저장소와 골격</p>
+<div style="display:flex;flex-direction:column;gap:6px;background:#15201D;padding:28px 32px">
+<p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#F2EEE4">my-app/</p>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#E3BE5E">├─ README.md    제품 설명서</p>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#AEB8B3">├─ package.json test · build</p>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#AEB8B3">├─ src/         런타임 코드</p>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;color:#AEB8B3">└─ test/        자동 테스트</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#F7DCD1;padding:28px 32px">
+<p style="font-size:30px;font-weight:700">README가 중요한 이유</p>
+<p style="font-size:24px;line-height:1.5;color:#2E3B37">PLAN과 Discovery는 README에서 App의 목적을 읽는다. 사용자, 입력, 결과, 단계별 범위, 기술 제약을 적는다.</p>
+</div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 2-2장 “App이 지켜야 할 것”</p>
+</section>
+<section id="bootstrap" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 2단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">28 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">배포본을 붙인다</h2>
+</div>
+<div style="flex:1;display:flex;gap:64px">
+<div style="width:820px;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;background:#0F6B63"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">.github/workflows/*</p><p style="font-size:24px;font-weight:700;color:#0F6B63">Framework · 19</p></div>
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;background:#0F6B63"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">src/self-improvement/</p><p style="font-size:24px;font-weight:700;color:#0F6B63">Framework</p></div>
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;background:#0F6B63"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">policy/ · .framework-runtime/</p><p style="font-size:24px;font-weight:700;color:#0F6B63">Framework</p></div>
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;border:2px solid #15201D"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">FRAMEWORK.md</p><p style="font-size:24px;font-weight:700">표식 · source SHA</p></div>
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;background:#E4572E"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">.github/workflows/ci.yml</p><p style="font-size:24px;font-weight:700;color:#B23E1A">App</p></div>
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;background:#E4572E"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">.github/ISSUE_TEMPLATE/</p><p style="font-size:24px;font-weight:700;color:#B23E1A">App</p></div>
+<div style="display:flex;gap:24px;align-items:center;border-bottom:1px solid #CFC7B5;padding:0px 0px 10px 0px"><div style="width:20px;height:20px;background:#E4572E"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">src/&lt;app&gt;/ · test/ · README.md</p><p style="font-size:24px;font-weight:700;color:#B23E1A">App</p></div>
+<div style="display:flex;gap:24px;align-items:center"><div style="width:20px;height:20px;background:#E4572E"></div><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">package.json · package-lock.json</p><p style="font-size:24px;font-weight:700;color:#B23E1A">App</p></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#E4572E;width:40px;line-height:1">1</p><p style="font-size:24px;line-height:1.5;flex:1">Framework 기본 브랜치의 최신 SHA를 고른다</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#E4572E;width:40px;line-height:1">2</p><p style="font-size:24px;line-height:1.5;flex:1">소유 목록 <b>85 entry</b>를 sourcePath → targetPath로 복사. Framework의 package.json·lock은 .framework-runtime/으로</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#E4572E;width:40px;line-height:1">3</p><p style="font-size:24px;line-height:1.5;flex:1">원본과 <b>바이트 단위로 대조</b>한다</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#E4572E;width:40px;line-height:1">4</p><p style="font-size:24px;line-height:1.5;flex:1">목록 밖 세 파일: Issue 템플릿, ci.yml, FRAMEWORK.md</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:40px;font-weight:800;color:#E4572E;width:40px;line-height:1">5</p><p style="font-size:24px;line-height:1.5;flex:1">루트 devDependencies에 tsx · typescript · @types/node</p></div>
+<p style="font-size:24px;font-weight:700;background:#15201D;color:#F2EEE4;padding:16px 24px">bootstrap은 PR로 올리고 사람이 Merge한다</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773"><span style="color:#0F6B63">■</span> Framework 소유 &#160; <span style="color:#E4572E">■</span> App 소유 &#160;·&#160; 근거: policy/framework-distribution-ownership.v1.json · transportation_guide 커밋 dcff4f1</p>
+</section>
+<section id="executor" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 3–4단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">29 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">팀 executor를 만들고 연결한다</h2>
+</div>
+<div style="flex:1;display:flex;gap:56px">
+<div style="width:720px;display:flex;flex-direction:column;justify-content:space-between;background:#15201D;padding:36px 40px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#E3BE5E">3단계 · executor (Private)</p>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:30px;font-weight:800;color:#E3BE5E;width:28px">1</p><p style="font-size:24px;color:#F2EEE4;line-height:1.45;flex:1">subscription-ai-executor를 팀 계정에 Private 복제</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:30px;font-weight:800;color:#E3BE5E;width:28px">2</p><p style="font-size:24px;color:#F2EEE4;line-height:1.45;flex:1">EXECUTOR_ALLOWED_REPOSITORIES = App 저장소</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:30px;font-weight:800;color:#E3BE5E;width:28px">3</p><p style="font-size:24px;color:#F2EEE4;line-height:1.45;flex:1">FRAMEWORK_BRIDGE_TOKEN: App 소유 계정의 Issues RW · Actions R</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:30px;font-weight:800;color:#E3BE5E;width:28px">4</p><p style="font-size:24px;color:#F2EEE4;line-height:1.45;flex:1">self-hosted runner + <b>팀 전용</b> Claude 로그인</p></div>
+<div style="display:flex;gap:20px;align-items:baseline"><p style="font-family:'Hahmlet', Georgia, serif;font-size:30px;font-weight:800;color:#AEB8B3;width:28px">5</p><p style="font-size:24px;color:#AEB8B3;line-height:1.45;flex:1">선택: PLAN·IMPLEMENT 격리 읽기 도구 스위치</p></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#B23E1A">4단계 · App 저장소 설정</p>
+<div style="display:flex;gap:16px;align-items:center;border-top:1px solid #CFC7B5;padding:12px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">AI_EXECUTOR_REPOSITORY</p><p style="font-size:24px;font-weight:700;color:#F2EEE4;background:#E4572E;padding:2px 12px">필수</p></div>
+<div style="display:flex;gap:16px;align-items:center;border-top:1px solid #CFC7B5;padding:12px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">EXECUTOR_DISPATCH_TOKEN</p><p style="font-size:24px;font-weight:700;color:#F2EEE4;background:#E4572E;padding:2px 12px">필수</p></div>
+<div style="display:flex;gap:16px;align-items:center;border-top:1px solid #CFC7B5;padding:12px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">MERGE_READY_APP_ID · KEY</p><p style="font-size:24px;font-weight:700;color:#F2EEE4;background:#0F6B63;padding:2px 12px">권장</p></div>
+<div style="display:flex;gap:16px;align-items:center;border-top:1px solid #CFC7B5;padding:12px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">TRUSTED_PUBLISH_TOKEN</p><p style="font-size:24px;font-weight:700;color:#4F5B57;border:2px solid #4F5B57;padding:0px 10px">조건부</p></div>
+<div style="display:flex;gap:16px;align-items:center;border-top:1px solid #CFC7B5;padding:12px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">AUTO_PRODUCT_DISCOVERY=on</p><p style="font-size:24px;font-weight:700;color:#4F5B57;border:2px solid #4F5B57;padding:0px 10px">선택</p></div>
+<div style="display:flex;gap:16px;align-items:center;border-top:1px solid #CFC7B5;padding:12px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;flex:1">AUTO_REPLAN=off</p><p style="font-size:24px;font-weight:700;color:#4F5B57;border:2px solid #4F5B57;padding:0px 10px">선택</p></div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">Merge-Ready App이 없으면 bot PR의 CI를 사람이 한 번 승인해야 한다 · secret 값은 어디에도 적지 않는다 · 출처: docs/usage.md 2장</p>
+</section>
+<section id="requirement" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 5단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">30 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">첫 요구는 사용자의 말로 쓴다</h2>
+</div>
+<div style="flex:1;display:flex;gap:56px">
+<div style="width:820px;display:flex;flex-direction:column;background:#FAF8F2;border:2px solid #15201D">
+<div style="display:flex;gap:16px;align-items:center;background:#15201D;padding:16px 24px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#E3BE5E">Issue</p><p style="font-size:24px;font-weight:700;color:#F2EEE4">[업무 요구] 목적지까지 가장 빠른 수단</p></div>
+<div style="display:flex;flex-direction:column;gap:8px;padding:24px 28px">
+<p style="font-size:24px;font-weight:700;color:#0F6B63">## 어떤 업무가 불편한가요?</p>
+<p style="font-size:24px;line-height:1.4">처음 가는 곳마다 어떤 수단이 빠른지 따로 찾아야 한다.</p>
+<p style="font-size:24px;font-weight:700;color:#0F6B63">## 어떻게 바뀌면 좋겠나요?</p>
+<p style="font-size:24px;line-height:1.4">주소를 넣으면 도보·자전거·자동차가 빠른 순으로 나온다.</p>
+<p style="font-size:24px;font-weight:700;color:#0F6B63">## 잘 되었다고 판단할 수 있는 예</p>
+<p style="font-size:24px;line-height:1.4">가장 빠른 수단이 맨 위에 온다. 자동 테스트가 통과한다.</p>
+<p style="font-size:24px;font-weight:700;color:#0F6B63">## 복잡한 요구인가요?</p>
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px">- [ ] 복잡한 요구입니다</p>
+</div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;flex-direction:column;gap:6px;border-top:3px solid #E4572E;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700">사용자 관점으로</p><p style="font-size:24px;color:#4F5B57;line-height:1.45">누가, 어떤 상황에서, 무엇이 나아지는가. 구현 방법은 안 써도 된다</p></div>
+<div style="display:flex;flex-direction:column;gap:6px;border-top:3px solid #E4572E;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700">한 Issue는 한 변경</p><p style="font-size:24px;color:#4F5B57;line-height:1.45">허용 파일은 8개까지. 보강 테스트·lock도 이 안이다</p></div>
+<div style="display:flex;flex-direction:column;gap:6px;border-top:3px solid #E4572E;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700">경로는 backtick으로</p><p style="font-size:24px;color:#4F5B57;line-height:1.45">아는 파일은 `src/…`로, 손대지 않을 파일은 “이 Issue 밖”이라고</p></div>
+<div style="display:flex;flex-direction:column;gap:6px;border-top:3px solid #E4572E;padding:14px 0px 0px 0px"><p style="font-size:30px;font-weight:700">짧게</p><p style="font-size:24px;color:#4F5B57;line-height:1.45">제목·본문 JSON이 8,192바이트를 넘으면 LEARN이 실패. 한글은 글자당 3바이트</p></div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">예시: transportation_guide README의 도메인 · 출처: docs/usage.md 1장, 1-1장, 4장 · Issue 템플릿</p>
+</section>
+<section id="review" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 6–7단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">31 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">PLAN을 읽고 납득되면 승인한다</h2>
+</div>
+<div style="flex:1;display:flex;gap:56px">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:24px;align-items:center;background:#D5E5E0;padding:18px 24px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63">LINT</p><p style="font-size:24px;line-height:1.4;flex:1">R1 오류, R3·R4 경고가 있으면 본문을 고친다 → PLAN 자동 재시작</p></div>
+<p style="font-size:30px;font-weight:700">PLAN 댓글에서 확인할 것</p>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-size:24px;font-weight:700;color:#0F6B63">□</p><p style="font-size:24px;line-height:1.45;flex:1">구현 접근이 요구와 맞는가</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-size:24px;font-weight:700;color:#0F6B63">□</p><p style="font-size:24px;line-height:1.45;flex:1">allowedPaths와 보강 테스트가 필요한 범위인가</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-size:24px;font-weight:700;color:#0F6B63">□</p><p style="font-size:24px;line-height:1.45;flex:1">required·forbidden이 완료 조건과 금지를 담았나</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-size:24px;font-weight:700;color:#0F6B63">□</p><p style="font-size:24px;line-height:1.45;flex:1">ready=true, 남은 blocking question 없음</p></div>
+<p style="font-size:24px;color:#4F5B57;line-height:1.5">납득되지 않으면 승인하지 말고 본문을 고친다. 진행하지 않을 요구는 사유를 남기고 닫는다.</p>
+</div>
+<div style="width:640px;display:flex;flex-direction:column;justify-content:center;gap:28px;background:#E4572E;padding:48px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700">Issue에 이 한 줄만</p>
+<p style="font-family:'Hahmlet', Georgia, serif;font-size:120px;font-weight:800;line-height:1;letter-spacing:-2px">PLAN-<br>승인</p>
+<p style="font-size:30px;font-weight:700;line-height:1.35">구현 authority로 가는 유일한 입구</p>
+<p style="font-size:24px;line-height:1.5">승인 뒤 본문을 고치면 그 승인은 무효. 새 PLAN에 다시 승인한다.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 1-1장, 4–5장</p>
+</section>
+<section id="monitor" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 8단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">32 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">자동 진행 중 이 댓글이 보이면</h2>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;gap:32px"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6E7773;width:500px">보이는 것</p><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6E7773;width:460px">뜻</p><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6E7773;flex:1">할 일</p></div>
+<div style="display:flex;gap:32px;align-items:center;border-top:2px solid #15201D;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A;width:500px">PLAN_FAILED · 경로/범위</p><p style="font-size:24px;width:460px">trusted 검증이 PLAN을 거부</p><p style="font-size:24px;flex:1">본문 수정, 크면 Issue 분할</p></div>
+<div style="display:flex;gap:32px;align-items:center;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#0F6B63;width:500px">PLAN 자동 재시도 (n/2)</p><p style="font-size:24px;width:460px">executor 실행 실패를 다시 시도</p><p style="font-size:24px;flex:1">기다린다</p></div>
+<div style="display:flex;gap:32px;align-items:center;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A;width:500px">STOPPED · timeout</p><p style="font-size:24px;width:460px">runner가 job을 제때 못 집음</p><p style="font-size:24px;flex:1">runner를 살리고 그 단계 재시작</p></div>
+<div style="display:flex;gap:32px;align-items:center;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A;width:500px">STOPPED · KIND_FAILED</p><p style="font-size:24px;width:460px">executor 검증·호출·게시 실패</p><p style="font-size:24px;flex:1">executor poller 로그 확인</p></div>
+<div style="display:flex;gap:32px;align-items:center;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#B23E1A;width:500px">STRUCTURAL · FIX 소진</p><p style="font-size:24px;width:460px">재설계 필요, 수리 한도 소진</p><p style="font-size:24px;flex:1">요구를 다시 설계하거나 분할</p></div>
+<div style="display:flex;gap:32px;align-items:center;border-top:1px solid #CFC7B5;padding:14px 0px 0px 0px"><p style="font-family:'JetBrains Mono', monospace;font-size:24px;font-weight:700;color:#4F5B57;width:500px">PLAN 자동 시작 상한</p><p style="font-size:24px;width:460px">서로 다른 본문 4개를 넘김</p><p style="font-size:24px;flex:1">Actions에서 PLAN 직접 실행</p></div>
+<p style="font-size:24px;font-weight:700;background:#15201D;color:#F2EEE4;padding:16px 24px">진행 중에는 executor runner가 켜져 있어야 한다 · 상태는 Issue의 HumanStatus 댓글과 Actions에서 본다</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 2장 주의, 4장 PLAN 재시작·재시도</p>
+</section>
+<section id="finish" data-transition="fade" style="background:#F2EEE4;color:#15201D;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;border-bottom:2px solid #15201D;padding:0px 0px 24px 0px">
+<div style="display:flex;justify-content:space-between;align-items:center"><p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:#B23E1A">03 · 9–12단계</p><p style="font-family:'JetBrains Mono', monospace;font-size:24px;color:#6E7773">33 / 34</p></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:700;line-height:1.15;letter-spacing:-1px">Merge, 학습, 다음 과제, 동기화</h2>
+</div>
+<div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0px">
+<div style="display:flex;gap:28px;border-bottom:1px solid #CFC7B5;padding:0px 40px 28px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#E4572E;line-height:1;width:96px">9</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">PR 확인 후 Merge</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">HEAD = reviewed SHA · 범위 안 · CI·provenance 정상 · 운영·보안 영향 없음. 사람이 직접 Merge</p></div></div>
+<div style="display:flex;gap:28px;border-bottom:1px solid #CFC7B5;border-left:1px solid #CFC7B5;padding:0px 0px 28px 40px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#0F6B63;line-height:1;width:96px">10</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">LEARN 확인</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">닫힌 요구 Issue 댓글에 결과가 남는다. 가치 있는 후보는 사람이 새 [업무 요구]로 옮긴다</p></div></div>
+<div style="display:flex;gap:28px;padding:28px 40px 0px 0px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#E4572E;line-height:1;width:96px">11</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">Product Discovery</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">Merge가 쌓이면 실행(또는 opt-in). 후보는 PLAN-승인하거나, <b style="color:#15201D">사유를 남기고 not_planned</b>로 닫는다</p></div></div>
+<div style="display:flex;gap:28px;border-left:1px solid #CFC7B5;padding:28px 0px 0px 40px"><p style="font-family:'Hahmlet', Georgia, serif;font-size:64px;font-weight:800;color:#15201D;line-height:1;width:96px">12</p><div style="flex:1;display:flex;flex-direction:column;gap:10px"><p style="font-size:30px;font-weight:700">Framework 동기화</p><p style="font-size:24px;color:#4F5B57;line-height:1.5">결함은 App에서 고치지 않는다. Framework에서 고친 SHA를 다시 복사·대조하고 FRAMEWORK.md를 갱신</p></div></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:24px;color:#6E7773">출처: docs/usage.md 9–11-1장 · CHARTER.md 제6장 7항</p>
+</section>
+<section id="close" data-transition="fade" style="background:#15201D;color:#F2EEE4;font-family:'IBM Plex Sans KR', Arial, sans-serif;padding:128px;display:flex;gap:96px;align-items:stretch">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#E3BE5E">34 / 34 · 마치며</p>
+<div style="display:flex;flex-direction:column;gap:32px">
+<div style="width:120px;height:8px;background:#E4572E"></div>
+<h2 style="font-family:'Hahmlet', Georgia, serif;font-size:96px;font-weight:700;line-height:1.15;letter-spacing:-2px">개입은 줄이고,<br>authority는<br>사람에게</h2>
+<p style="font-size:30px;color:#AEB8B3;line-height:1.45">STOP은 정상 상태이고, 최종 Merge는 언제나 사람이 한다.</p>
+</div>
+<p style="font-size:24px;color:#AEB8B3">자세히: docs/introduction.md · CHARTER.md · docs/usage.md</p>
+</div>
+<div style="width:760px;display:flex;flex-direction:column;justify-content:center;gap:0px">
+<p style="font-family:'JetBrains Mono', 'IBM Plex Sans KR', monospace;font-size:24px;font-weight:700;color:#6FC2B5;padding:0px 0px 16px 0px">첫 사이클 체크리스트</p>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #3A4843;padding:18px 0px"><p style="font-size:24px;color:#E4572E">□</p><p style="font-size:24px;line-height:1.4">개인 계정 App 저장소 · README · test/build 통과</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #3A4843;padding:18px 0px"><p style="font-size:24px;color:#E4572E">□</p><p style="font-size:24px;line-height:1.4">배포본 복사·바이트 대조 + 템플릿·ci.yml·FRAMEWORK.md</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #3A4843;padding:18px 0px"><p style="font-size:24px;color:#E4572E">□</p><p style="font-size:24px;line-height:1.4">Private executor · allowlist · runner + 팀 Claude</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #3A4843;padding:18px 0px"><p style="font-size:24px;color:#E4572E">□</p><p style="font-size:24px;line-height:1.4">AI_EXECUTOR_REPOSITORY · DISPATCH_TOKEN 설정</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #3A4843;padding:18px 0px"><p style="font-size:24px;color:#E4572E">□</p><p style="font-size:24px;line-height:1.4">첫 [업무 요구] → Lint → PLAN → PLAN-승인</p></div>
+<div style="display:flex;gap:20px;align-items:baseline;border-top:1px solid #3A4843;border-bottom:1px solid #3A4843;padding:18px 0px"><p style="font-size:24px;color:#E4572E">□</p><p style="font-size:24px;line-height:1.4">PR 확인 → Human Merge → LEARN 댓글</p></div>
+</div>
+</section>
+</div>
+<script>
+// 각 슬라이드를 창 너비에 맞춰 축소해 보여 준다. 인쇄할 때는 원래 크기로 한 장씩 나온다.
+document.querySelectorAll('.deck > section').forEach(function (s) {
+  var f = document.createElement('div');
+  f.className = 'frame';
+  s.parentNode.insertBefore(f, s);
+  f.appendChild(s);
+});
+function fit() {
+  var w = Math.min(window.innerWidth - 48, 1920), k = w / 1920;
+  document.querySelectorAll('.frame').forEach(function (f) {
+    f.style.width = w + 'px';
+    f.style.height = (1080 * k) + 'px';
+    f.firstElementChild.style.transform = 'scale(' + k + ')';
+  });
+}
+window.addEventListener('resize', fit);
+fit();
+</script>
+</body>
+</html>

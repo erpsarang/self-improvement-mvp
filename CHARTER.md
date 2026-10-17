@@ -223,6 +223,7 @@ effort     medium, 호출당 max-turns 1, 도구 전부 차단
 | `docs/architecture.md` | Trust Boundary 설계 authority | 헌장 제2장 1순위를 구조로 구현. 헌장은 이것을 느슨하게 하지 않는다 |
 | `docs/trust-model.md` | Trusted / untrusted 실행 경계의 세부 | 제7장의 근거 |
 | `docs/usage.md` | 사람이 실제로 쓰는 흐름 | 제10장 개입 지점의 현재 모습 |
+| `docs/introduction.md` | 소개 자료: 배경·목표·의의, 작동 방식 A–Z, 새 App 개발 절차 가이드 (시점 기록) | 제1·2·7·10장을 처음 읽는 사람에게 풀어 소개한다. 헌장과 어긋나면 헌장을 따른다 |
 | `docs/roadmap.md` | 증명한 능력과 다음 확장 | 제4장·제5장의 적용 결과 |
 | `docs/state-machine.md` | bounded 반복과 STOP의 정의 | 제5장 5·6항 |
 | `docs/distribution-manifest.md`, `policy/framework-distribution-ownership.v1.json` | 프레임워크 소유 경로와 배포본 검증 | 제6장 2항 |
@@ -235,3 +236,4 @@ effort     medium, 호출당 max-turns 1, 도구 전부 차단
 | 2026-10-02 | 최초 채택 | 한 달의 개발과 첫 E2E 증명 뒤, 프레임워크 고도화를 계속하면서 목적을 잃지 않기 위한 기준을 고정 |
 | 2026-10-04 | 부록 A의 #362 행 정정 (본문 변경 없음) | 채택 시점의 원인 추정(poller cron 백업 부재로 인한 dispatch 유실)이 기록과 맞지 않았다. 원인은 executor runner 가용성이었고, 잘못된 추정이 사실처럼 남아 있으면 관측되지 않은 실패에 대한 방어(cron 백업)를 부를 수 있다. 부록 A는 시점 기록이므로 원래 추정을 지우지 않고 정정을 덧붙인다 |
 | 2026-10-10 | 부록 A의 #223 행 갱신 (본문 변경 없음) | #223 증명 항목 1~3을 충족했다. 부록 A는 시점 기록이므로 원래 문장("증명 미완")을 지우지 않고 갱신을 덧붙인다 |
+| 2026-10-17 | 부록 B에 `docs/introduction.md` 행 추가 (본문 변경 없음) | 소개 자료를 추가하면서, 헌장에서 시작하는 사람이 문서 지도로 찾을 수 있게 한다 |
