@@ -1,6 +1,8 @@
 # 자기 개선 개발 프레임워크 소개
 
 > 이 문서는 2026-10-17 시점의 소개 자료다. 설계 authority는 [`architecture.md`](architecture.md), 실제 사용 흐름은 [`usage.md`](usage.md)이며, 이 문서와 어긋나면 그 문서와 코드를 따른다.
+>
+> 같은 내용을 슬라이드로 정리한 것은 [`slides/introduction.pdf`](slides/introduction.pdf)(HTML판 [`slides/introduction.html`](slides/introduction.html))에 있다.
 
 자기 개선 개발 프레임워크(저장소 `erpsarang/self-improvement-mvp`, 정식 이름 AI Development Framework)는 사람이 통제권을 지킨 채 AI의 개발 노동을 안전하게 쓰는 GitHub Actions 기반 프레임워크다. 이 문서는 기본 브랜치 `6f4bfe1`(PR #400, v0.2 라인) 기준이다.
 
